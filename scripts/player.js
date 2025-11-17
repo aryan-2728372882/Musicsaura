@@ -260,21 +260,14 @@ audio.ontimeupdate = () => {
     }
   }
 
-  // Check if user has listened for more than 1:30 (90 seconds) total
+  // Check if user has listened for more than 1:30 (90 seconds) total - just mark as eligible
   if (!hasCountedSong && !audio.paused && songPlayStartTime > 0) {
     const currentSessionTime = (Date.now() - songPlayStartTime) / 1000;
     const totalTime = totalListenedTime + currentSessionTime;
     
     if (totalTime >= 90) {
-      hasCountedSong = true;
-      
-      // Calculate actual time at the moment of 90 seconds
-      const exactMinutes = totalTime / 60;
-      // Round to nearest 30 seconds (0.5 minutes)
-      const roundedMinutes = Math.round(exactMinutes * 2) / 2;
-      
-      console.log('90 seconds reached! Total time:', totalTime.toFixed(2), 'seconds =', roundedMinutes, 'minutes');
-      updateUserStats(roundedMinutes);
+      hasCountedSong = true; // Mark as eligible for counting
+      console.log('✅ 90 seconds reached! Will count full play time when song ends or is skipped.');
     }
   }
 };
@@ -290,18 +283,19 @@ seekBar.oninput = () => {
 audio.onended = () => {
   if (fadeInterval) clearInterval(fadeInterval);
   
-  // Calculate final listened time if song completed and wasn't counted yet
-  if (!hasCountedSong && songPlayStartTime > 0) {
+  // Calculate final listened time when song ends
+  if (songPlayStartTime > 0) {
     const sessionTime = (Date.now() - songPlayStartTime) / 1000;
     totalListenedTime += sessionTime;
-    
-    if (totalListenedTime >= 90) {
-      hasCountedSong = true;
-      const exactMinutes = totalListenedTime / 60;
-      const roundedMinutes = Math.round(exactMinutes * 2) / 2;
-      console.log('Song ended. Total time:', totalListenedTime.toFixed(2), 'seconds =', roundedMinutes, 'minutes');
-      updateUserStats(roundedMinutes);
-    }
+    songPlayStartTime = 0;
+  }
+  
+  // If song was listened to for at least 90 seconds, count the FULL time
+  if (hasCountedSong && totalListenedTime >= 90) {
+    const exactMinutes = totalListenedTime / 60;
+    const roundedMinutes = Math.round(exactMinutes * 2) / 2;
+    console.log('🎵 Song ended. Total time:', totalListenedTime.toFixed(2), 'seconds =', roundedMinutes, 'minutes');
+    updateUserStats(roundedMinutes);
   }
   
   if (repeat === 'one') {
@@ -325,6 +319,19 @@ audio.onpause = () => {
 
 // Play next song in playlist
 function playNextSong() {
+  // Before switching songs, count current song if eligible
+  if (hasCountedSong && songPlayStartTime > 0) {
+    const sessionTime = (Date.now() - songPlayStartTime) / 1000;
+    totalListenedTime += sessionTime;
+    
+    if (totalListenedTime >= 90) {
+      const exactMinutes = totalListenedTime / 60;
+      const roundedMinutes = Math.round(exactMinutes * 2) / 2;
+      console.log('⏭️ Skipping song. Total time:', totalListenedTime.toFixed(2), 'seconds =', roundedMinutes, 'minutes');
+      updateUserStats(roundedMinutes);
+    }
+  }
+  
   if (playlist.length === 0) {
     pause();
     return;
