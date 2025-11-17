@@ -56,14 +56,6 @@
     "genre": "Haryanvi"
   },
   {
-    "title": "Lofar",
-    "artist": "Masoom Sharma",
-    "link": "https://c.saavncdn.com/820/Lofar-Haryanvi-2024-20240223181833-500x500.jpg",
-    "thumbnail": "https://file.garden/aRgAQiYidD0tulQV/Haryanvi/Lofar.mp3",
-    "keywords": ["Lofar", "Masoom", "Sharma"],
-    "genre": "Haryanvi"
-  },
-  {
     "title": "Naam Chale",
     "artist": "Vikram Sarkar",
     "link": "https://file.garden/aRgAQiYidD0tulQV/Haryanvi/Naam%20Chale.mp3",
@@ -77,6 +69,14 @@
     "link": "https://file.garden/aRgAQiYidD0tulQV/Haryanvi/Nazra%20Ke%20Teer.mp3",
     "thumbnail": "https://c.saavncdn.com/260/Nazra-Ke-Teer-Haryanvi-2024-20241022211056-500x500.jpg",
     "keywords": ["Nazra", "Ke", "Teer", "Vikram", "Sarkar", "Guri", "Nimana"],
+    "genre": "Haryanvi"
+  },
+  {
+    "title": "Lofar",
+    "artist": "Masoom Sharma",
+    "link": "https://file.garden/aRgAQiYidD0tulQV/Haryanvi/Lofar.mp3",
+    "thumbnail": "https://i.ytimg.com/vi/NQ6PNyZbs88/mqdefault.jpg",
+    "keywords": ["Lofar", "Masoom", "Sharma"],
     "genre": "Haryanvi"
   },
   {
