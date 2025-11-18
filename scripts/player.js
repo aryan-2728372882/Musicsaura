@@ -1,4 +1,4 @@
-// scripts/player.js - Fixed: No Wake Lock, Smooth Fades, Zoom Issue
+// scripts/player.js - BUFFERING FIX: No volume changes during playback
 import { auth, db } from "./firebase-config.js";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
@@ -21,7 +21,6 @@ let songPlayStartTime = 0;
 let totalListenedTime = 0;
 let hasCountedSong = false;
 let fadeInterval = null;
-let targetVolume = 1.0;
 let playlist = [];
 let currentIndex = 0;
 let keepAliveInterval = null;
@@ -29,8 +28,10 @@ let audioContext = null;
 let sourceNode = null;
 let gainNode = null;
 let isInitialized = false;
+let isFading = false;
 
-audio.volume = 0; // Start at 0 for smooth fade in
+// CRITICAL: Start at full volume to prevent buffering
+audio.volume = 1.0;
 
 // ===========================
 // AUDIO CONTEXT SETUP
@@ -50,6 +51,7 @@ function initAudioContext() {
       sampleRate: 44100
     });
     
+    // Use gain node for smooth fading without touching audio.volume
     gainNode = audioContext.createGain();
     gainNode.gain.value = 1.0;
     
@@ -58,7 +60,7 @@ function initAudioContext() {
     gainNode.connect(audioContext.destination);
     
     isInitialized = true;
-    console.log('🎧 Audio Context initialized:', audioContext.state);
+    console.log('🎧 Audio Context initialized with Gain Node');
     
     if (audioContext.state === 'suspended') {
       audioContext.resume();
@@ -72,7 +74,7 @@ function forceResumeAudioContext() {
   if (audioContext && audioContext.state !== 'running') {
     audioContext.resume().then(() => {
       console.log('▶️ Audio Context resumed');
-    }).catch(e => console.log('Resume failed:', e));
+    }).catch(e => {});
   }
 }
 
@@ -81,12 +83,12 @@ function forceResumeAudioContext() {
 });
 
 // ===========================
-// KEEP ALIVE - NO WAKE LOCK
+// KEEP ALIVE
 // ===========================
 function startKeepAlive() {
   if (keepAliveInterval) return;
   
-  console.log('💓 Keep-alive started (no wake lock - screen can sleep)');
+  console.log('💓 Keep-alive started');
   
   keepAliveInterval = setInterval(() => {
     if (audioContext) {
@@ -97,7 +99,11 @@ function startKeepAlive() {
       const state = audioContext.state;
       if (state === 'running' && !audio.paused) {
         if (audio.readyState >= 2) {
-          audio.volume = audio.volume;
+          // Touch current time without changing it
+          const ct = audio.currentTime;
+          if (ct > 0) {
+            audio.currentTime = ct;
+          }
         }
       }
     }
@@ -108,9 +114,7 @@ function startKeepAlive() {
           type: 'PLAYBACK_ACTIVE',
           timestamp: Date.now()
         });
-      } catch (e) {
-        console.log('SW ping failed:', e);
-      }
+      } catch (e) {}
     }
     
     updatePositionState();
@@ -130,25 +134,10 @@ function stopKeepAlive() {
 // MEDIA SESSION API
 // ===========================
 if ('mediaSession' in navigator) {
-  navigator.mediaSession.setActionHandler('play', () => {
-    console.log('Media Session: play');
-    play();
-  });
-  
-  navigator.mediaSession.setActionHandler('pause', () => {
-    console.log('Media Session: pause');
-    pause();
-  });
-  
-  navigator.mediaSession.setActionHandler('nexttrack', () => {
-    console.log('Media Session: next');
-    playNextSong();
-  });
-  
-  navigator.mediaSession.setActionHandler('previoustrack', () => {
-    console.log('Media Session: previous');
-    playPreviousSong();
-  });
+  navigator.mediaSession.setActionHandler('play', () => play());
+  navigator.mediaSession.setActionHandler('pause', () => pause());
+  navigator.mediaSession.setActionHandler('nexttrack', () => playNextSong());
+  navigator.mediaSession.setActionHandler('previoustrack', () => playPreviousSong());
   
   navigator.mediaSession.setActionHandler('seekto', (details) => {
     if (details.seekTime != null && audio.duration) {
@@ -177,8 +166,6 @@ function updateMediaSession(song) {
       album: song.genre || 'MelodyTunes',
       artwork: artwork
     });
-    
-    console.log('📝 Media Session updated:', song.title);
   }
 }
 
@@ -203,7 +190,7 @@ function setPlaybackState(state) {
 }
 
 // ===========================
-// VISIBILITY CHANGE HANDLER
+// VISIBILITY CHANGE
 // ===========================
 document.addEventListener('visibilitychange', async () => {
   const isHidden = document.hidden || document.visibilityState === 'hidden';
@@ -212,7 +199,7 @@ document.addEventListener('visibilitychange', async () => {
   
   if (isHidden) {
     if (!audio.paused) {
-      console.log('📱 Screen off/backgrounded - music continues (Spotify mode)');
+      console.log('📱 Screen off - music continues');
       
       if (audioContext && audioContext.state === 'suspended') {
         await audioContext.resume();
@@ -224,7 +211,7 @@ document.addEventListener('visibilitychange', async () => {
     }
   } else {
     if (!audio.paused) {
-      console.log('📱 Screen on/foregrounded');
+      console.log('📱 Screen on');
       
       if (audioContext && audioContext.state === 'suspended') {
         await audioContext.resume();
@@ -236,14 +223,12 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 document.addEventListener('freeze', () => {
-  console.log('❄️ Page frozen');
   if (!audio.paused && audioContext) {
     audioContext.resume().catch(e => {});
   }
 });
 
 document.addEventListener('resume', () => {
-  console.log('🔥 Page resumed');
   if (!audio.paused && audioContext) {
     audioContext.resume().catch(e => {});
     updatePositionState();
@@ -266,53 +251,74 @@ function hidePlayer() {
 }
 
 // ===========================
-// SMOOTH FADE IN/OUT
+// SMOOTH FADE USING GAIN NODE
 // ===========================
 function fadeIn() {
-  if (fadeInterval) clearInterval(fadeInterval);
+  if (!gainNode) {
+    console.log('⚠️ Gain node not available, skipping fade');
+    return;
+  }
   
-  audio.volume = 0;
-  const fadeDuration = 20000; // 20 seconds for very smooth fade in
+  if (fadeInterval) clearInterval(fadeInterval);
+  isFading = true;
+  
+  // CRITICAL: Keep audio.volume at 1.0, use gainNode instead
+  audio.volume = 1.0;
+  gainNode.gain.value = 0;
+  
+  const fadeDuration = 20000; // 20 seconds
   const steps = 200;
   const stepDuration = fadeDuration / steps;
-  const volumeIncrement = targetVolume / steps;
+  const gainIncrement = 1.0 / steps;
   
   let currentStep = 0;
   
-  console.log('🔊 Fading in over 20 seconds...');
+  console.log('🔊 Fading in (Gain Node, 20s)...');
   
   fadeInterval = setInterval(() => {
     currentStep++;
-    audio.volume = Math.min(currentStep * volumeIncrement, targetVolume);
+    gainNode.gain.value = Math.min(currentStep * gainIncrement, 1.0);
     
     if (currentStep >= steps) {
       clearInterval(fadeInterval);
       fadeInterval = null;
+      isFading = false;
       console.log('✅ Fade in complete');
     }
   }, stepDuration);
 }
 
 function fadeOut(callback) {
-  if (fadeInterval) clearInterval(fadeInterval);
+  if (!gainNode) {
+    console.log('⚠️ Gain node not available, skipping fade');
+    if (callback) callback();
+    return;
+  }
   
-  const fadeDuration = 10000; // 10 seconds for smooth fade out
+  if (fadeInterval) clearInterval(fadeInterval);
+  isFading = true;
+  
+  // CRITICAL: Keep audio.volume at 1.0, use gainNode instead
+  audio.volume = 1.0;
+  
+  const fadeDuration = 10000; // 10 seconds
   const steps = 100;
   const stepDuration = fadeDuration / steps;
-  const startVolume = audio.volume;
-  const volumeDecrement = startVolume / steps;
+  const startGain = gainNode.gain.value;
+  const gainDecrement = startGain / steps;
   
   let currentStep = 0;
   
-  console.log('🔉 Fading out over 10 seconds...');
+  console.log('🔉 Fading out (Gain Node, 10s)...');
   
   fadeInterval = setInterval(() => {
     currentStep++;
-    audio.volume = Math.max(startVolume - (currentStep * volumeDecrement), 0);
+    gainNode.gain.value = Math.max(startGain - (currentStep * gainDecrement), 0);
     
-    if (currentStep >= steps || audio.volume <= 0) {
+    if (currentStep >= steps || gainNode.gain.value <= 0) {
       clearInterval(fadeInterval);
       fadeInterval = null;
+      isFading = false;
       console.log('✅ Fade out complete');
       if (callback) callback();
     }
@@ -337,16 +343,18 @@ export const player = {
     totalListenedTime = 0;
     hasCountedSong = false;
 
+    // CRITICAL: Initialize audio context FIRST
     initAudioContext();
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise(resolve => setTimeout(resolve, 100));
 
+    // CRITICAL: Configure audio element properly
     audio.crossOrigin = 'anonymous';
     audio.preload = 'auto';
     audio.autoplay = false;
     audio.src = song.link;
     
-    // Start at 0 for fade in
-    audio.volume = 0;
+    // CRITICAL: Keep volume at 1.0 always (use gain node for fading)
+    audio.volume = 1.0;
     
     titleEl.textContent = song.title;
 
@@ -363,21 +371,37 @@ export const player = {
         if (audio.readyState >= 2) {
           resolve();
         } else {
-          audio.addEventListener('canplay', resolve, { once: true });
-          audio.addEventListener('error', reject, { once: true });
+          const canplayHandler = () => {
+            audio.removeEventListener('canplay', canplayHandler);
+            audio.removeEventListener('error', errorHandler);
+            resolve();
+          };
+          const errorHandler = () => {
+            audio.removeEventListener('canplay', canplayHandler);
+            audio.removeEventListener('error', errorHandler);
+            reject(new Error('Load failed'));
+          };
+          
+          audio.addEventListener('canplay', canplayHandler, { once: true });
+          audio.addEventListener('error', errorHandler, { once: true });
           setTimeout(() => reject(new Error('Timeout')), 10000);
         }
       });
     };
 
     try {
+      // Load audio
       audio.load();
+      
+      // Wait until ready
       await playWhenReady();
       
+      // Resume audio context
       if (audioContext && audioContext.state === 'suspended') {
         await audioContext.resume();
       }
       
+      // Play
       await audio.play();
       
       console.log('✅ Playback started');
@@ -385,7 +409,7 @@ export const player = {
       playBtn.textContent = 'pause';
       songPlayStartTime = Date.now();
       
-      // Start smooth fade in
+      // Start smooth fade in using GAIN NODE (not audio.volume)
       fadeIn();
       
       startKeepAlive();
@@ -395,6 +419,7 @@ export const player = {
     } catch (e) {
       console.error('❌ Play failed:', e);
       
+      // Retry once
       try {
         await audio.play();
         playBtn.textContent = 'pause';
@@ -404,7 +429,7 @@ export const player = {
         setPlaybackState('playing');
       } catch (e2) {
         console.error('❌ Retry failed:', e2);
-        alert('Playback failed. Check connection.');
+        alert('Playback failed. Check your connection.');
       }
     }
   }
@@ -422,8 +447,8 @@ function play() {
         playBtn.textContent = 'pause';
         songPlayStartTime = Date.now();
         
-        // Fade in if starting from beginning
-        if (audio.currentTime < 5) {
+        // Fade in if near start
+        if (audio.currentTime < 5 && gainNode) {
           fadeIn();
         }
         
@@ -437,7 +462,7 @@ function play() {
       playBtn.textContent = 'pause';
       songPlayStartTime = Date.now();
       
-      if (audio.currentTime < 5) {
+      if (audio.currentTime < 5 && gainNode) {
         fadeIn();
       }
       
@@ -459,12 +484,14 @@ function pause() {
     console.log('⏸️ Paused. Total:', totalListenedTime.toFixed(2), 's');
   }
   
-  if (fadeInterval) clearInterval(fadeInterval);
+  if (fadeInterval) {
+    clearInterval(fadeInterval);
+    isFading = false;
+  }
   stopKeepAlive();
   setPlaybackState('paused');
 }
 
-// Play/Pause button
 playBtn.parentElement.onclick = () => {
   if (audio.paused) {
     play();
@@ -473,7 +500,6 @@ playBtn.parentElement.onclick = () => {
   }
 };
 
-// Previous button
 prevBtn.disabled = false;
 prevBtn.style.opacity = '1';
 prevBtn.style.cursor = 'pointer';
@@ -483,7 +509,6 @@ prevBtn.onclick = () => {
   }
 };
 
-// Next button
 nextBtn.disabled = false;
 nextBtn.style.opacity = '1';
 nextBtn.style.cursor = 'pointer';
@@ -493,7 +518,6 @@ nextBtn.onclick = () => {
   }
 };
 
-// Repeat button
 repeatBtn.parentElement.onclick = () => {
   if (repeat === 'off') {
     repeat = 'one';
@@ -517,13 +541,14 @@ audio.ontimeupdate = () => {
     
     // Start fade-out 10 seconds before end
     const timeRemaining = audio.duration - audio.currentTime;
-    if (timeRemaining <= 10 && timeRemaining > 9.9 && !fadeInterval && audio.volume > 0) {
+    if (timeRemaining <= 10 && timeRemaining > 9.9 && !isFading && gainNode) {
       fadeOut(() => {
         if (repeat === 'one') {
           audio.currentTime = 0;
           songPlayStartTime = Date.now();
           totalListenedTime = 0;
           hasCountedSong = false;
+          if (gainNode) gainNode.gain.value = 1.0;
           audio.play().then(() => fadeIn());
         }
       });
@@ -544,7 +569,10 @@ audio.ontimeupdate = () => {
 audio.onended = () => {
   console.log('🏁 Song ended');
   
-  if (fadeInterval) clearInterval(fadeInterval);
+  if (fadeInterval) {
+    clearInterval(fadeInterval);
+    isFading = false;
+  }
   
   if (songPlayStartTime > 0) {
     const sessionTime = (Date.now() - songPlayStartTime) / 1000;
@@ -564,6 +592,7 @@ audio.onended = () => {
     songPlayStartTime = Date.now();
     totalListenedTime = 0;
     hasCountedSong = false;
+    if (gainNode) gainNode.gain.value = 1.0;
     audio.play().then(() => fadeIn());
   } else {
     setTimeout(() => playNextSong(), 500);
@@ -571,7 +600,10 @@ audio.onended = () => {
 };
 
 audio.onpause = () => {
-  if (fadeInterval) clearInterval(fadeInterval);
+  if (fadeInterval) {
+    clearInterval(fadeInterval);
+    isFading = false;
+  }
 };
 
 audio.onerror = (e) => {
@@ -602,7 +634,6 @@ audio.onloadedmetadata = () => {
   updatePositionState();
 };
 
-// Seek bar
 seekBar.oninput = () => {
   if (audio.duration && !isNaN(audio.duration)) {
     audio.currentTime = (seekBar.value / 100) * audio.duration;
@@ -715,4 +746,4 @@ onAuthStateChanged(auth, user => {
   };
 });
 
-console.log('🎵 Player loaded - Spotify mode (no wake lock)');
+console.log('🎵 Player loaded - BUFFERING FIXED (Gain Node method)');
