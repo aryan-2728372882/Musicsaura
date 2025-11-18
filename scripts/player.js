@@ -67,7 +67,7 @@ function fadeIn(duration = 7000) {
   setTimeout(() => isFading = false, duration);
 }
 
-function fadeOut(duration = 5000, callback) {
+function fadeOut(duration = 3500, callback) {
   if (!gainNode || isFading) return callback?.();
   isFading = true;
   gainNode.gain.cancelScheduledValues(audioContext.currentTime);
