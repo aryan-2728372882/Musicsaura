@@ -228,7 +228,10 @@ export const player = {
   },
 
   async playSong(song) {
-    if (!song?.link) return;
+    if (!song?.link) {
+      console.error('No song link provided:', song);
+      return;
+    }
 
     console.log('Playing:', song.title);
     
@@ -243,14 +246,20 @@ export const player = {
     
     const fixedUrl = fixDropboxUrl(song.link);
     
+    if (!fixedUrl || fixedUrl === 'undefined') {
+      console.error('Invalid URL after fix:', fixedUrl);
+      return;
+    }
+    
     // CRITICAL: Set these BEFORE src
     audio.crossOrigin = "anonymous";
     audio.preload = "auto";
-    audio.autoplay = false; // Let us control play
+    audio.autoplay = false;
     
     // Clear any existing source
     audio.pause();
-    audio.src = '';
+    audio.removeAttribute('src');
+    audio.load();
     
     // Small delay then set source
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -267,6 +276,7 @@ export const player = {
     return new Promise((resolve) => {
       const canPlayHandler = async () => {
         audio.removeEventListener('canplay', canPlayHandler);
+        audio.removeEventListener('error', errorHandler);
         
         try {
           await audio.play();
@@ -274,13 +284,12 @@ export const player = {
           startServiceWorkerKeepAlive();
           startFade("in");
           
-          // Preload next song immediately after current starts playing
+          // Preload next song after current starts
           setTimeout(() => preloadNextSong(), 5000);
           
           resolve();
         } catch (err) {
           console.error('Play failed:', err);
-          // Retry once
           setTimeout(async () => {
             try {
               await audio.play();
@@ -295,11 +304,20 @@ export const player = {
         }
       };
       
-      audio.addEventListener('canplay', canPlayHandler);
+      const errorHandler = (e) => {
+        audio.removeEventListener('canplay', canPlayHandler);
+        audio.removeEventListener('error', errorHandler);
+        console.error('Load error:', e);
+        resolve();
+      };
+      
+      audio.addEventListener('canplay', canPlayHandler, { once: true });
+      audio.addEventListener('error', errorHandler, { once: true });
       
       // Timeout fallback
       setTimeout(() => {
         audio.removeEventListener('canplay', canPlayHandler);
+        audio.removeEventListener('error', errorHandler);
         audio.play().catch(() => {});
         resolve();
       }, 3000);

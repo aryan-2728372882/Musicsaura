@@ -41,13 +41,13 @@ input, textarea {
   position: fixed;
   top: 0;
   left: 0;
-  grid-template-rows: auto auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr;
   grid-template-areas:
     "top"
     "search"
     "trigger"
-    "main"
-    "player";
+    "main";
+  /* Player is now fixed, not in grid */
 }
 
 /* TOP BAR */
@@ -228,6 +228,7 @@ input, textarea {
 .content {
   grid-area: main;
   padding: 1rem 1.5rem;
+  padding-bottom: 120px; /* Space for fixed player */
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
@@ -290,6 +291,8 @@ input, textarea {
   /* Prevent layout shift */
   transform: translateZ(0);
   -webkit-transform: translateZ(0);
+  /* FIXED: Card itself must be clickable */
+  pointer-events: auto;
 }
 
 .song-card:active { 
@@ -304,7 +307,7 @@ input, textarea {
   height: 140px;
   object-fit: cover;
   display: block;
-  /* CRITICAL: Prevent zoom on image */
+  /* CRITICAL: Prevent zoom on image but allow parent click */
   pointer-events: none;
   touch-action: none;
   -webkit-user-select: none;
@@ -321,6 +324,7 @@ input, textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* FIXED: Text also shouldn't block clicks */
   pointer-events: none;
 }
 
@@ -346,22 +350,39 @@ input, textarea {
   transform: scale(0.97);
 }
 
-/* PLAYER */
+/* PLAYER - FIXED: Always visible at bottom */
 .player {
-  grid-area: player;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
   display: flex;
   align-items: center;
   padding: .8rem;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   box-shadow: 0 -4px 12px rgba(0,0,0,0.08);
   gap: .8rem;
-  transition: transform .25s ease;
+  transition: transform .3s ease;
   transform: translateY(100%);
   touch-action: manipulation;
-  position: relative;
   z-index: 1001;
+  /* Ensure it's above everything */
+  min-height: 80px;
+  max-height: 100px;
 }
-.player.visible { transform: translateY(0); }
+.player.visible { 
+  transform: translateY(0);
+}
+
+/* Add safe area padding for notched devices */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .player {
+    padding-bottom: max(0.8rem, env(safe-area-inset-bottom));
+  }
+}
 
 .thumb-placeholder {
   width: 48px;
@@ -460,10 +481,33 @@ input, textarea {
   .genre-menu { width: 160px; margin-left: 10px; }
   .song-card img { height: 120px; }
   .top-bar { height: 70px; padding: 1rem; }
-  .content { padding: 1rem; }
+  .content { 
+    padding: 1rem;
+    padding-bottom: 100px; /* More space for player on mobile */
+  }
   .song-grid {
     grid-template-columns: repeat(auto-fill, minmax(140px,1fr));
     gap: 0.8rem;
+  }
+  .player {
+    padding: 0.6rem 0.8rem;
+    min-height: 70px;
+    gap: 0.6rem;
+  }
+  .thumb-placeholder {
+    width: 42px;
+    height: 42px;
+  }
+  #player-title {
+    font-size: 0.85rem;
+  }
+  .controls {
+    gap: 0.3rem;
+  }
+  .icon-btn {
+    padding: 0.3rem;
+    min-width: 36px;
+    min-height: 36px;
   }
 }
 
@@ -474,7 +518,11 @@ input, textarea {
 .dark-theme .genre-menu { background: #1e1e1e; color: #eee; box-shadow: 0 8px 28px rgba(0,0,0,0.6); }
 .dark-theme .genre-item { color: #eee; }
 .dark-theme .genre-item:active { background: #4a90e2; color: #fff; }
-.dark-theme .player { background: #1e1e1e; }
+.dark-theme .player { 
+  background: rgba(30, 30, 30, 0.98);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
 .dark-theme .content { background: #121212; }
 
 /* CRITICAL: Android scroll fix - prevent momentum scroll issues */

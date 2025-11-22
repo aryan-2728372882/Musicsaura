@@ -50,18 +50,24 @@ self.addEventListener('fetch', event => {
       fetch(fixed, { 
         credentials: 'omit',
         mode: 'cors',
-        cache: 'default', // Allow browser caching
-        // CRITICAL: Keep connection alive
+        cache: 'default',
         keepalive: true
       })
       .then(response => {
-        // Clone response for better reliability
-        return response.clone();
+        // Return response directly (don't clone used response)
+        if (response.ok) {
+          return response;
+        }
+        // If not OK, try original request
+        return fetch(event.request, { keepalive: true });
       })
       .catch(err => {
         console.error('Audio fetch failed:', err);
         // Fallback to original request
-        return fetch(event.request, { keepalive: true });
+        return fetch(event.request, { keepalive: true }).catch(() => {
+          // Return empty response if all fails
+          return new Response(null, { status: 404 });
+        });
       })
     );
     return;

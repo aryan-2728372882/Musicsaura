@@ -80,32 +80,32 @@
       <section id="grid" class="song-grid" aria-live="polite"></section>
       <section id="search-grid" class="song-grid" hidden aria-live="polite"></section>
     </main>
-
-    <!-- PLAYER -->
-    <footer id="player" class="player" hidden>
-      <div class="thumb-placeholder"></div>
-      <div class="info">
-        <h4 id="player-title">Select a song</h4>
-        <audio id="audio" preload="auto" crossorigin="anonymous"></audio>
-        <input type="range" id="seek" value="0" max="100" class="seek-bar" aria-label="Seek" />
-      </div>
-
-      <div class="controls">
-        <button id="prev" class="icon-btn" aria-label="Previous">
-          <span class="material-icons">skip_previous</span>
-        </button>
-        <button id="play-pause" class="icon-btn" aria-label="Play/Pause">
-          <span class="material-icons">play_arrow</span>
-        </button>
-        <button id="next" class="icon-btn" aria-label="Next">
-          <span class="material-icons">skip_next</span>
-        </button>
-        <button id="repeat" class="icon-btn" aria-label="Repeat">
-          <span class="material-icons">repeat</span>
-        </button>
-      </div>
-    </footer>
   </div>
+
+  <!-- PLAYER - MOVED OUTSIDE APP GRID (Fixed Position) -->
+  <footer id="player" class="player" hidden>
+    <div class="thumb-placeholder"></div>
+    <div class="info">
+      <h4 id="player-title">Select a song</h4>
+      <audio id="audio" preload="auto" crossorigin="anonymous"></audio>
+      <input type="range" id="seek" value="0" max="100" class="seek-bar" aria-label="Seek" />
+    </div>
+
+    <div class="controls">
+      <button id="prev" class="icon-btn" aria-label="Previous">
+        <span class="material-icons">skip_previous</span>
+      </button>
+      <button id="play-pause" class="icon-btn" aria-label="Play/Pause">
+        <span class="material-icons">play_arrow</span>
+      </button>
+      <button id="next" class="icon-btn" aria-label="Next">
+        <span class="material-icons">skip_next</span>
+      </button>
+      <button id="repeat" class="icon-btn" aria-label="Repeat">
+        <span class="material-icons">repeat</span>
+      </button>
+    </div>
+  </footer>
 
   <!-- ANDROID SCROLL FIX -->
   <script>
@@ -157,18 +157,28 @@
       }, { passive: true });
     });
 
-    // Prevent zoom on song card tap
+    // Fix click handling for song cards
     document.addEventListener('DOMContentLoaded', () => {
-      // Use event delegation for song cards
-      document.addEventListener('click', (e) => {
-        const card = e.target.closest('.song-card');
-        if (card) {
-          e.preventDefault();
-          e.stopPropagation();
-          // Fire the click handler
-          card.click();
-        }
-      }, true);
+      // Wait for app.js to load and attach handlers
+      setTimeout(() => {
+        // Re-enable clicks after preventing zoom
+        const observer = new MutationObserver(() => {
+          document.querySelectorAll('.song-card').forEach(card => {
+            // Ensure card itself is clickable
+            card.style.pointerEvents = 'auto';
+          });
+        });
+        
+        observer.observe(document.getElementById('grid'), {
+          childList: true,
+          subtree: true
+        });
+        
+        observer.observe(document.getElementById('search-grid'), {
+          childList: true,
+          subtree: true
+        });
+      }, 100);
     });
   </script>
 
