@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "service-worker.js",
   "scripts": {
-    "start": "live-server"
-  },
+  "start": "live-server --no-browser --watch --no-cache"
+},
   "dependencies": {},
   "author": "",
   "license": "ISC",
