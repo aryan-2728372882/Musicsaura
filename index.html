@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <!-- FIXED: Removed user-scalable=0 to allow scrolling while keeping zoom disabled -->
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
+  <!-- CRITICAL: Prevent zoom on tap -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#4a90e2" />
   <meta name="description" content="Stream Hindi, Punjabi, Haryanvi & Bhojpuri music with seamless background playback" />
   
@@ -16,7 +16,7 @@
   <title>MelodyTunes - Indian Music Player</title>
 
   <!-- Favicon -->
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%234a90e2'/%3E%3Ctext x='50' y='70' font-size='60' fill='white' text-anchor='middle' font-family='Arial'%3E♪%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%234a90e2'/%3E%3Ctext x='50' y='70' font-size='60' fill='white' text-anchor='middle' font-family='Arial'%3Eâ™ª%3C/text%3E%3C/svg%3E">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="styles/styles.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -36,80 +36,6 @@
     }
   }
   </script>
-
-  <style>
-    /* Prevent text selection and zoom that can pause audio */
-    body {
-      -webkit-touch-callout: none;
-      -webkit-user-select: none;
-      -khtml-user-select: none;
-      -moz-user-select: none;
-      -ms-user-select: none;
-      user-select: none;
-      touch-action: manipulation; /* Prevent double-tap zoom */
-    }
-    
-    input, textarea {
-      -webkit-user-select: text;
-      user-select: text;
-    }
-    
-    body {
-      overscroll-behavior-y: contain;
-      overflow-x: hidden;
-    }
-    
-    /* Prevent zoom on song cards */
-    .song-card {
-      touch-action: manipulation;
-      -webkit-user-select: none;
-      user-select: none;
-    }
-    
-    .song-card img {
-      pointer-events: none; /* Prevent accidental zoom on image */
-      touch-action: manipulation;
-    }
-    
-    /* FIXED: Remove position: fixed and use proper viewport height */
-    html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      width: 100%;
-      position: relative; /* Changed from fixed */
-      overflow: hidden; /* Only hidden at root level */
-    }
-    
-    .app {
-      height: 100vh;
-      height: 100dvh; /* Use dynamic viewport height */
-      overflow: hidden;
-    }
-    
-    .content {
-      overflow-y: auto;
-      overflow-x: hidden;
-      -webkit-overflow-scrolling: touch;
-      /* FIXED: Ensure scroll container has proper height */
-      height: 100%;
-    }
-
-    /* Add scroll restoration */
-    .content::-webkit-scrollbar {
-      width: 8px;
-    }
-    .content::-webkit-scrollbar-track {
-      background: transparent;
-    }
-    .content::-webkit-scrollbar-thumb {
-      background: rgba(0,0,0,0.2);
-      border-radius: 4px;
-    }
-    .dark-theme .content::-webkit-scrollbar-thumb {
-      background: rgba(255,255,255,0.2);
-    }
-  </style>
 </head>
 
 <body class="light-theme">
@@ -150,7 +76,7 @@
     </div>
 
     <!-- MAIN CONTENT -->
-    <main class="content">
+    <main class="content" id="main-content">
       <section id="grid" class="song-grid" aria-live="polite"></section>
       <section id="search-grid" class="song-grid" hidden aria-live="polite"></section>
     </main>
@@ -181,20 +107,68 @@
     </footer>
   </div>
 
-  <!-- FIXED: Added scroll restoration script -->
+  <!-- ANDROID SCROLL FIX -->
   <script>
+    // Prevent double-tap zoom globally
+    let lastTouchEnd = 0;
+    document.addEventListener('touchend', (e) => {
+      const now = Date.now();
+      if (now - lastTouchEnd <= 300) {
+        e.preventDefault();
+      }
+      lastTouchEnd = now;
+    }, { passive: false });
+
+    // Fix scroll momentum on Android
     document.addEventListener('DOMContentLoaded', () => {
-      const content = document.querySelector('.content');
+      const content = document.getElementById('main-content');
       
-      // Restore scroll position after page load
-      setTimeout(() => {
-        content.scrollTo(0, 0);
-      }, 100);
+      // Ensure scroll container is properly initialized
+      content.scrollTop = 0;
       
-      // Handle scroll restoration after navigation
+      // Handle scroll restoration
+      let scrollTimeout;
+      content.addEventListener('scroll', () => {
+        clearTimeout(scrollTimeout);
+        scrollTimeout = setTimeout(() => {
+          // Ensure scroll position is maintained
+          const currentScroll = content.scrollTop;
+          requestAnimationFrame(() => {
+            content.scrollTop = currentScroll;
+          });
+        }, 50);
+      }, { passive: true });
+      
+      // Prevent scroll issues on page show
       window.addEventListener('pageshow', () => {
-        content.scrollTo(0, 0);
+        content.scrollTop = 0;
       });
+      
+      // Fix for Android Chrome scroll lag
+      let isScrolling = false;
+      content.addEventListener('touchstart', () => {
+        isScrolling = true;
+      }, { passive: true });
+      
+      content.addEventListener('touchend', () => {
+        setTimeout(() => {
+          isScrolling = false;
+        }, 100);
+      }, { passive: true });
+    });
+
+    // Prevent zoom on song card tap
+    document.addEventListener('DOMContentLoaded', () => {
+      // Use event delegation for song cards
+      document.addEventListener('click', (e) => {
+        const card = e.target.closest('.song-card');
+        if (card) {
+          e.preventDefault();
+          e.stopPropagation();
+          // Fire the click handler
+          card.click();
+        }
+      }, true);
     });
   </script>
 
