@@ -1,4 +1,4 @@
-// scripts/player.js – MELODYTUNES FINAL 2025 (NO 403, NO CORS, PERFECT)
+// scripts/player.js — MELODYTUNES 2025 - TRUE BACKGROUND PLAYBACK FIX
 import { auth, db } from "./firebase-config.js";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
@@ -22,13 +22,15 @@ let totalListenedTime = 0;
 let hasCountedSong = false;
 let playlist = [];
 let currentIndex = 0;
-let keepAliveInterval = null;
 
 // SMOOTH FADE CONFIGURATION
 let fadeInDuration = 15000;
 let fadeOutDuration = 8000;
 let fadeInterval = null;
 let isFading = false;
+
+// CRITICAL: Prevent garbage collection of audio
+window.audioElement = audio; // Keep global reference
 
 // RESET FADE STATE ON SONG CHANGE
 function resetFadeState() {
@@ -69,7 +71,7 @@ function stopFade() {
   isFading = false; 
 }
 
-// 2025 DROPBOX FIX – KEEPS rlkey + ADDS raw=1 (NO MORE 403!)
+// DROPBOX URL FIX
 function fixDropboxUrl(url) {
   if (!url.includes('dropbox.com')) return url;
   try {
@@ -83,54 +85,108 @@ function fixDropboxUrl(url) {
   return url + (url.includes('?') ? '&raw=1' : '?raw=1');
 }
 
-// Audio Context & Immortal Background
+// Audio Context - WITH GLOBAL REFERENCE TO PREVENT GC
 let audioContext = null;
+let sourceNode = null;
+let gainNode = null;
+
 function initAudioContext() {
   if (!audioContext || audioContext.state === 'closed') {
     const AC = window.AudioContext || window.webkitAudioContext;
     audioContext = new AC({ latencyHint: 'playback' });
-    const source = audioContext.createMediaElementSource(audio);
-    source.connect(audioContext.destination);
+    
+    // Create nodes that won't be garbage collected
+    sourceNode = audioContext.createMediaElementSource(audio);
+    gainNode = audioContext.createGain();
+    
+    // Connect: source -> gain -> destination
+    sourceNode.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    // Keep global references
+    window.audioContext = audioContext;
+    window.sourceNode = sourceNode;
+    window.gainNode = gainNode;
   }
-  if (audioContext.state === 'suspended') audioContext.resume();
+  
+  if (audioContext.state === 'suspended') {
+    audioContext.resume();
+  }
 }
-['click', 'touchstart', 'keydown'].forEach(evt => 
-  document.addEventListener(evt, () => initAudioContext(), { passive: true, once: true })
+
+// Initialize IMMEDIATELY on load
+document.addEventListener('DOMContentLoaded', initAudioContext);
+['click', 'touchstart', 'touchend'].forEach(evt => 
+  document.addEventListener(evt, initAudioContext, { passive: true, once: true })
 );
 
-function startKeepAlive() {
-  if (keepAliveInterval) return;
-  keepAliveInterval = setInterval(() => {
+// AGGRESSIVE SERVICE WORKER KEEPALIVE
+let swKeepAliveInterval = null;
+
+function startServiceWorkerKeepAlive() {
+  if (swKeepAliveInterval) return;
+  
+  swKeepAliveInterval = setInterval(() => {
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({ type: 'KEEP_ALIVE' });
+      navigator.serviceWorker.controller.postMessage({ 
+        type: 'KEEP_ALIVE',
+        playing: !audio.paused,
+        currentTime: audio.currentTime,
+        song: currentSong?.title
+      });
     }
-  }, 12000);
-}
-function stopKeepAlive() { 
-  clearInterval(keepAliveInterval); 
-  keepAliveInterval = null; 
+    
+    // Also ping audioContext
+    if (audioContext?.state === 'suspended') {
+      audioContext.resume();
+    }
+  }, 3000); // Every 3 seconds
 }
 
-// Media Session
+function stopServiceWorkerKeepAlive() {
+  if (swKeepAliveInterval) {
+    clearInterval(swKeepAliveInterval);
+    swKeepAliveInterval = null;
+  }
+}
+
+// ENHANCED Media Session - THIS IS CRITICAL FOR BACKGROUND PLAYBACK
 if ('mediaSession' in navigator) {
-  ['play', 'pause', 'nexttrack', 'previoustrack'].forEach(action =>
-    navigator.mediaSession.setActionHandler(action, () => {
-      if (action === 'play') play();
-      if (action === 'pause') pause();
-      if (action === 'nexttrack') playNextSong();
-      if (action === 'previoustrack') playPreviousSong();
-    })
-  );
+  navigator.mediaSession.setActionHandler('play', () => play());
+  navigator.mediaSession.setActionHandler('pause', () => pause());
+  navigator.mediaSession.setActionHandler('previoustrack', () => playPreviousSong());
+  navigator.mediaSession.setActionHandler('nexttrack', () => playNextSong());
+  
+  try {
+    navigator.mediaSession.setActionHandler('seekbackward', () => {
+      audio.currentTime = Math.max(0, audio.currentTime - 10);
+    });
+    navigator.mediaSession.setActionHandler('seekforward', () => {
+      audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 10);
+    });
+  } catch (e) {
+    console.log('Seek actions not supported');
+  }
 }
 
 function updateMediaSession(song) {
   if (!song || !('mediaSession' in navigator)) return;
+  
   navigator.mediaSession.metadata = new MediaMetadata({
     title: song.title || 'Unknown',
     artist: song.artist || 'Unknown Artist',
     album: song.genre || 'MelodyTunes',
-    artwork: song.thumbnail ? [{ src: song.thumbnail, sizes: '512x512', type: 'image/jpeg' }] : []
+    artwork: song.thumbnail ? [
+      { src: song.thumbnail, sizes: '96x96', type: 'image/jpeg' },
+      { src: song.thumbnail, sizes: '128x128', type: 'image/jpeg' },
+      { src: song.thumbnail, sizes: '192x192', type: 'image/jpeg' },
+      { src: song.thumbnail, sizes: '256x256', type: 'image/jpeg' },
+      { src: song.thumbnail, sizes: '384x384', type: 'image/jpeg' },
+      { src: song.thumbnail, sizes: '512x512', type: 'image/jpeg' }
+    ] : []
   });
+  
+  navigator.mediaSession.playbackState = 'playing';
 }
 
 function showPlayer() { 
@@ -138,7 +194,33 @@ function showPlayer() {
   playerEl.classList.add('visible'); 
 }
 
-// MAIN PLAYER – FINAL FIXED
+// PRELOAD NEXT SONG - CRITICAL FOR CONTINUOUS PLAYBACK
+let preloadAudio = null;
+
+function preloadNextSong() {
+  if (!playlist.length || playlist.length < 2) return;
+  
+  const nextIndex = (currentIndex + 1) % playlist.length;
+  const nextSong = playlist[nextIndex];
+  
+  if (!nextSong?.link) return;
+  
+  // Create new audio element for preloading
+  if (!preloadAudio) {
+    preloadAudio = new Audio();
+    preloadAudio.crossOrigin = "anonymous";
+    preloadAudio.preload = "auto";
+    window.preloadAudio = preloadAudio; // Prevent GC
+  }
+  
+  const fixedUrl = fixDropboxUrl(nextSong.link);
+  preloadAudio.src = fixedUrl;
+  preloadAudio.load();
+  
+  console.log('Preloaded next song:', nextSong.title);
+}
+
+// MAIN PLAYER
 export const player = {
   setPlaylist(songs, index = 0) { 
     playlist = songs; 
@@ -148,7 +230,8 @@ export const player = {
   async playSong(song) {
     if (!song?.link) return;
 
-    // Reset fade state before new song
+    console.log('Playing:', song.title);
+    
     resetFadeState();
     
     currentSong = song;
@@ -157,8 +240,20 @@ export const player = {
     hasCountedSong = false;
 
     initAudioContext();
+    
     const fixedUrl = fixDropboxUrl(song.link);
+    
+    // CRITICAL: Set these BEFORE src
     audio.crossOrigin = "anonymous";
+    audio.preload = "auto";
+    audio.autoplay = false; // Let us control play
+    
+    // Clear any existing source
+    audio.pause();
+    audio.src = '';
+    
+    // Small delay then set source
+    await new Promise(resolve => setTimeout(resolve, 50));
     audio.src = fixedUrl;
 
     titleEl.textContent = song.title;
@@ -167,31 +262,76 @@ export const player = {
     showPlayer();
 
     audio.load();
-    audio.play().then(() => {
-      playBtn.textContent = 'pause';
-      startKeepAlive();
-      startFade("in");
-    }).catch(() => setTimeout(() => audio.play().catch(() => {}), 300));
+    
+    // Wait for enough data
+    return new Promise((resolve) => {
+      const canPlayHandler = async () => {
+        audio.removeEventListener('canplay', canPlayHandler);
+        
+        try {
+          await audio.play();
+          playBtn.textContent = 'pause';
+          startServiceWorkerKeepAlive();
+          startFade("in");
+          
+          // Preload next song immediately after current starts playing
+          setTimeout(() => preloadNextSong(), 5000);
+          
+          resolve();
+        } catch (err) {
+          console.error('Play failed:', err);
+          // Retry once
+          setTimeout(async () => {
+            try {
+              await audio.play();
+              playBtn.textContent = 'pause';
+              startServiceWorkerKeepAlive();
+              resolve();
+            } catch (e) {
+              console.error('Retry failed:', e);
+              resolve();
+            }
+          }, 500);
+        }
+      };
+      
+      audio.addEventListener('canplay', canPlayHandler);
+      
+      // Timeout fallback
+      setTimeout(() => {
+        audio.removeEventListener('canplay', canPlayHandler);
+        audio.play().catch(() => {});
+        resolve();
+      }, 3000);
+    });
   }
 };
 
 // Controls
 function play() { 
-  initAudioContext(); 
+  initAudioContext();
+  
   audio.play().then(() => { 
     playBtn.textContent = 'pause'; 
     songPlayStartTime = Date.now(); 
-    startKeepAlive(); 
-    if (audio.currentTime < 5) startFade("in"); 
+    startServiceWorkerKeepAlive();
+    if (audio.currentTime < 5) startFade("in");
+    updateMediaSession(currentSong);
+  }).catch(err => {
+    console.error('Play error:', err);
   }); 
 }
+
 function pause() { 
   audio.pause(); 
   playBtn.textContent = 'play_arrow'; 
   stopFade(); 
   if (songPlayStartTime) totalListenedTime += (Date.now() - songPlayStartTime) / 1000; 
   songPlayStartTime = 0; 
-  stopKeepAlive(); 
+  stopServiceWorkerKeepAlive();
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.playbackState = 'paused';
+  }
 }
 
 playBtn.parentElement.onclick = () => audio.paused ? play() : pause();
@@ -202,11 +342,29 @@ repeatBtn.parentElement.onclick = () => {
   repeatBtn.textContent = repeat === 'one' ? 'repeat_one' : 'repeat'; 
 };
 
+// Update position state for lock screen
 audio.ontimeupdate = () => {
-  if (!audio.duration) return;
+  if (!audio.duration || isNaN(audio.duration)) return;
+  
   seekBar.value = (audio.currentTime / audio.duration) * 100;
+  
+  // Update Media Session position state
+  if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
+    try {
+      navigator.mediaSession.setPositionState({
+        duration: audio.duration,
+        playbackRate: 1,
+        position: audio.currentTime
+      });
+    } catch (e) {
+      // Ignore
+    }
+  }
+  
   const remaining = audio.duration - audio.currentTime;
-  if (remaining <= 8 && remaining > 7.5 && !isFading) startFade("out");
+  if (remaining <= 8 && remaining > 7.5 && !isFading) {
+    startFade("out");
+  }
 
   if (!hasCountedSong && !audio.paused && songPlayStartTime) {
     const total = totalListenedTime + (Date.now() - songPlayStartTime) / 1000;
@@ -214,12 +372,17 @@ audio.ontimeupdate = () => {
   }
 };
 
+// CRITICAL: Handle song end PROPERLY
 audio.onended = () => {
+  console.log('Song ended, repeat:', repeat);
+  
   if (songPlayStartTime) totalListenedTime += (Date.now() - songPlayStartTime) / 1000;
+  
   if (hasCountedSong && totalListenedTime >= 90) {
     const minutes = Math.round((totalListenedTime / 60) * 2) / 2;
     updateUserStats(minutes);
   }
+  
   if (repeat === 'one') {
     audio.currentTime = 0; 
     songPlayStartTime = Date.now(); 
@@ -228,17 +391,84 @@ audio.onended = () => {
     audio.play(); 
     playBtn.textContent = 'pause'; 
     startFade("in");
-  } else setTimeout(playNextSong, 400);
+  } else {
+    // Play next song IMMEDIATELY - NO setTimeout
+    playNextSong();
+  }
 };
 
-audio.onerror = () => setTimeout(playNextSong, 2000);
-seekBar.oninput = () => audio.duration && (audio.currentTime = (seekBar.value / 100) * audio.duration);
+// Better error handling - DON'T skip song immediately
+audio.onerror = (e) => {
+  console.error('Audio error:', e, audio.error);
+  
+  // Only skip if it's a real error, not just loading
+  if (audio.error && audio.error.code === audio.error.MEDIA_ERR_NETWORK) {
+    console.log('Network error, retrying current song...');
+    
+    // Retry current song once
+    setTimeout(() => {
+      if (currentSong) {
+        const retryUrl = fixDropboxUrl(currentSong.link);
+        audio.src = retryUrl;
+        audio.load();
+        audio.play().catch(() => {
+          // If retry fails, skip to next
+          setTimeout(() => playNextSong(), 1000);
+        });
+      }
+    }, 1000);
+  } else {
+    // Other errors - skip to next
+    setTimeout(() => playNextSong(), 2000);
+  }
+};
+
+// Handle visibility changes
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !audio.paused) {
+    // Resume on return
+    if (audioContext?.state === 'suspended') {
+      audioContext.resume();
+    }
+    audio.play().catch(() => {});
+  }
+});
+
+// Handle audio interruptions (calls, notifications)
+audio.addEventListener('pause', () => {
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.playbackState = 'paused';
+  }
+});
+
+audio.addEventListener('play', () => {
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.playbackState = 'playing';
+  }
+  
+  // Resume context if needed
+  if (audioContext?.state === 'suspended') {
+    audioContext.resume();
+  }
+});
+
+seekBar.oninput = () => {
+  if (audio.duration) {
+    audio.currentTime = (seekBar.value / 100) * audio.duration;
+  }
+};
 
 function playNextSong() { 
-  if (!playlist.length) return pause(); 
+  if (!playlist.length) {
+    console.log('No playlist');
+    return pause(); 
+  }
+  
+  console.log('Playing next song...');
   currentIndex = (currentIndex + 1) % playlist.length; 
   player.playSong(playlist[currentIndex]); 
 }
+
 function playPreviousSong() {
   if (audio.currentTime > 3) { 
     audio.currentTime = 0; 
@@ -262,7 +492,9 @@ async function updateUserStats(minutes) {
       lastPlayed: serverTimestamp(),
       lastActive: new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }) + " IST"
     });
-  } catch (e) {}
+  } catch (e) {
+    console.error('Stats update error:', e);
+  }
 }
 
 onAuthStateChanged(auth, user => {
@@ -271,4 +503,25 @@ onAuthStateChanged(auth, user => {
   profileBtn.onclick = () => location.href = user.email === "prabhakararyan2007@gmail.com" ? "admin-dashboard.html" : "user-dashboard.html";
 });
 
-console.log('MelodyTunes Player – FINAL 2025: NO 403, NO CORS, 100% WORKING');
+// Keep a heartbeat going to prevent sleep
+let heartbeatInterval = setInterval(() => {
+  if (!audio.paused) {
+    // Touch the audio element
+    audio.volume = audio.volume;
+    
+    // Ping service worker
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'HEARTBEAT',
+        time: Date.now()
+      });
+    }
+  }
+}, 5000);
+
+// Keep heartbeat alive forever
+window.addEventListener('beforeunload', () => {
+  clearInterval(heartbeatInterval);
+});
+
+console.log('MelodyTunes Player — TRUE BACKGROUND PLAYBACK (Screen Off Compatible)');
