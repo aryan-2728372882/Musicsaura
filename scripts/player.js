@@ -89,24 +89,29 @@ function fixDropboxUrl(url) {
 let audioContext = null;
 let sourceNode = null;
 let gainNode = null;
+let hasConnectedSource = false; // FIX: Track if source is already connected
 
 function initAudioContext() {
   if (!audioContext || audioContext.state === 'closed') {
     const AC = window.AudioContext || window.webkitAudioContext;
     audioContext = new AC({ latencyHint: 'playback' });
     
-    // Create nodes that won't be garbage collected
-    sourceNode = audioContext.createMediaElementSource(audio);
-    gainNode = audioContext.createGain();
-    
-    // Connect: source -> gain -> destination
-    sourceNode.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    // Keep global references
-    window.audioContext = audioContext;
-    window.sourceNode = sourceNode;
-    window.gainNode = gainNode;
+    // FIX: Only create source node once
+    if (!hasConnectedSource) {
+      sourceNode = audioContext.createMediaElementSource(audio);
+      gainNode = audioContext.createGain();
+      
+      // Connect: source -> gain -> destination
+      sourceNode.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      hasConnectedSource = true;
+      
+      // Keep global references
+      window.audioContext = audioContext;
+      window.sourceNode = sourceNode;
+      window.gainNode = gainNode;
+    }
   }
   
   if (audioContext.state === 'suspended') {
@@ -235,7 +240,9 @@ export const player = {
 
     console.log('Playing:', song.title);
     
-    resetFadeState();
+    // FIX: Stop any ongoing fade and reset volume properly
+    stopFade();
+    audio.volume = 0; // Start from 0 for fade in
     
     currentSong = song;
     songPlayStartTime = Date.now();
@@ -251,18 +258,19 @@ export const player = {
       return;
     }
     
+    // FIX: Properly pause and clear before setting new source
+    audio.pause();
+    audio.src = ''; // Clear source first
+    
+    // FIX: Wait a bit for cleanup
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
     // CRITICAL: Set these BEFORE src
     audio.crossOrigin = "anonymous";
     audio.preload = "auto";
     audio.autoplay = false;
     
-    // Clear any existing source
-    audio.pause();
-    audio.removeAttribute('src');
-    audio.load();
-    
-    // Small delay then set source
-    await new Promise(resolve => setTimeout(resolve, 50));
+    // Set new source
     audio.src = fixedUrl;
 
     titleEl.textContent = song.title;
@@ -272,15 +280,26 @@ export const player = {
 
     audio.load();
     
-    // Wait for enough data
+    // FIX: Better loading and playing logic
     return new Promise((resolve) => {
+      let hasResolved = false;
+      
       const canPlayHandler = async () => {
+        if (hasResolved) return;
+        hasResolved = true;
+        
         audio.removeEventListener('canplay', canPlayHandler);
+        audio.removeEventListener('loadeddata', loadedDataHandler);
         audio.removeEventListener('error', errorHandler);
         
         try {
+          // FIX: Ensure AudioContext is ready
+          if (audioContext?.state === 'suspended') {
+            await audioContext.resume();
+          }
+          
           await audio.play();
-          playBtn.textContent = 'pause';
+          playBtn.textContent = 'pause'; // FIX: Update button immediately
           startServiceWorkerKeepAlive();
           startFade("in");
           
@@ -290,37 +309,64 @@ export const player = {
           resolve();
         } catch (err) {
           console.error('Play failed:', err);
+          // FIX: Retry with user interaction
           setTimeout(async () => {
             try {
+              if (audioContext?.state === 'suspended') {
+                await audioContext.resume();
+              }
               await audio.play();
               playBtn.textContent = 'pause';
               startServiceWorkerKeepAlive();
+              startFade("in");
               resolve();
             } catch (e) {
               console.error('Retry failed:', e);
+              playBtn.textContent = 'play_arrow'; // FIX: Reset button on failure
               resolve();
             }
           }, 500);
         }
       };
       
+      const loadedDataHandler = () => {
+        canPlayHandler();
+      };
+      
       const errorHandler = (e) => {
+        if (hasResolved) return;
+        hasResolved = true;
+        
         audio.removeEventListener('canplay', canPlayHandler);
+        audio.removeEventListener('loadeddata', loadedDataHandler);
         audio.removeEventListener('error', errorHandler);
         console.error('Load error:', e);
+        playBtn.textContent = 'play_arrow'; // FIX: Reset button on error
         resolve();
       };
       
       audio.addEventListener('canplay', canPlayHandler, { once: true });
+      audio.addEventListener('loadeddata', loadedDataHandler, { once: true });
       audio.addEventListener('error', errorHandler, { once: true });
       
-      // Timeout fallback
+      // FIX: Extended timeout for slow networks
       setTimeout(() => {
+        if (hasResolved) return;
+        hasResolved = true;
+        
         audio.removeEventListener('canplay', canPlayHandler);
+        audio.removeEventListener('loadeddata', loadedDataHandler);
         audio.removeEventListener('error', errorHandler);
-        audio.play().catch(() => {});
+        
+        audio.play().then(() => {
+          playBtn.textContent = 'pause';
+          startServiceWorkerKeepAlive();
+          startFade("in");
+        }).catch(() => {
+          playBtn.textContent = 'play_arrow';
+        });
         resolve();
-      }, 3000);
+      }, 5000); // Increased timeout
     });
   }
 };
@@ -328,6 +374,11 @@ export const player = {
 // Controls
 function play() { 
   initAudioContext();
+  
+  // FIX: Resume AudioContext before play
+  if (audioContext?.state === 'suspended') {
+    audioContext.resume();
+  }
   
   audio.play().then(() => { 
     playBtn.textContent = 'pause'; 
@@ -337,6 +388,7 @@ function play() {
     updateMediaSession(currentSong);
   }).catch(err => {
     console.error('Play error:', err);
+    playBtn.textContent = 'play_arrow'; // FIX: Reset on error
   }); 
 }
 
@@ -394,6 +446,10 @@ audio.ontimeupdate = () => {
 audio.onended = () => {
   console.log('Song ended, repeat:', repeat);
   
+  // FIX: Stop fade and reset volume
+  stopFade();
+  audio.volume = 1; // Reset to full volume
+  
   if (songPlayStartTime) totalListenedTime += (Date.now() - songPlayStartTime) / 1000;
   
   if (hasCountedSong && totalListenedTime >= 90) {
@@ -406,11 +462,12 @@ audio.onended = () => {
     songPlayStartTime = Date.now(); 
     totalListenedTime = 0; 
     hasCountedSong = false;
+    audio.volume = 0; // Start fade
     audio.play(); 
     playBtn.textContent = 'pause'; 
     startFade("in");
   } else {
-    // Play next song IMMEDIATELY - NO setTimeout
+    // FIX: Ensure next song plays with clean state
     playNextSong();
   }
 };
@@ -418,6 +475,9 @@ audio.onended = () => {
 // Better error handling - DON'T skip song immediately
 audio.onerror = (e) => {
   console.error('Audio error:', e, audio.error);
+  
+  // FIX: Update button state on error
+  playBtn.textContent = 'play_arrow';
   
   // Only skip if it's a real error, not just loading
   if (audio.error && audio.error.code === audio.error.MEDIA_ERR_NETWORK) {
@@ -429,7 +489,9 @@ audio.onerror = (e) => {
         const retryUrl = fixDropboxUrl(currentSong.link);
         audio.src = retryUrl;
         audio.load();
-        audio.play().catch(() => {
+        audio.play().then(() => {
+          playBtn.textContent = 'pause';
+        }).catch(() => {
           // If retry fails, skip to next
           setTimeout(() => playNextSong(), 1000);
         });
@@ -454,12 +516,20 @@ document.addEventListener('visibilitychange', () => {
 
 // Handle audio interruptions (calls, notifications)
 audio.addEventListener('pause', () => {
+  // FIX: Only update button if pause wasn't triggered by user
+  if (!audio.ended) {
+    playBtn.textContent = 'play_arrow';
+  }
+  
   if ('mediaSession' in navigator) {
     navigator.mediaSession.playbackState = 'paused';
   }
 });
 
 audio.addEventListener('play', () => {
+  // FIX: Always update button on play
+  playBtn.textContent = 'pause';
+  
   if ('mediaSession' in navigator) {
     navigator.mediaSession.playbackState = 'playing';
   }
