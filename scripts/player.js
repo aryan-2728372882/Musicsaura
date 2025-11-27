@@ -113,15 +113,11 @@ function initAudioContext() {
         window.audioContext = audioContext;
         window.sourceNode = sourceNode;
         window.gainNode = gainNode;
-        
-        console.log('AudioContext initialized');
       }
     }
     
     if (audioContext.state === 'suspended') {
-      audioContext.resume().then(() => {
-        console.log('AudioContext resumed');
-      });
+      audioContext.resume();
     }
   } catch (e) {
     console.error('AudioContext init error:', e);
@@ -153,15 +149,12 @@ function startServiceWorkerKeepAlive() {
     // FIX: Also ping audioContext AND check gain
     if (audioContext) {
       if (audioContext.state === 'suspended') {
-        audioContext.resume().then(() => {
-          console.log('AudioContext auto-resumed in keepalive');
-        });
+        audioContext.resume();
       }
       
       // FIX: Ensure gain is always at 1
       if (gainNode && gainNode.gain.value !== 1) {
         gainNode.gain.value = 1;
-        console.log('Gain reset to 1');
       }
     }
   }, 3000); // Every 3 seconds
@@ -240,8 +233,6 @@ function preloadNextSong() {
   const fixedUrl = fixDropboxUrl(nextSong.link);
   preloadAudio.src = fixedUrl;
   preloadAudio.load();
-  
-  console.log('Preloaded next song:', nextSong.title);
 }
 
 // MAIN PLAYER
@@ -256,8 +247,6 @@ export const player = {
       console.error('No song link provided:', song);
       return;
     }
-
-    console.log('Playing:', song.title);
     
     // FIX: Stop any ongoing fade and reset volume properly
     stopFade();
@@ -273,7 +262,6 @@ export const player = {
     // FIX: Force resume AudioContext
     if (audioContext?.state === 'suspended') {
       await audioContext.resume();
-      console.log('AudioContext resumed before song load');
     }
     
     const fixedUrl = fixDropboxUrl(song.link);
@@ -294,7 +282,6 @@ export const player = {
     
     // FIX: Set new source directly without clearing
     audio.src = fixedUrl;
-    console.log('Loading:', fixedUrl);
 
     titleEl.textContent = song.title;
     thumbEl.style.backgroundImage = song.thumbnail ? `url(${song.thumbnail})` : '';
@@ -311,24 +298,20 @@ export const player = {
       
       const attemptPlay = async () => {
         playAttempts++;
-        console.log(`Play attempt ${playAttempts}/${maxAttempts}`);
         
         try {
           // FIX: Ensure AudioContext is ready EVERY time
           if (audioContext?.state === 'suspended') {
             await audioContext.resume();
-            console.log('AudioContext resumed in attemptPlay');
           }
           
           // FIX: Check if audio is ready
           if (audio.readyState < 2) {
-            console.log('Audio not ready, waiting...');
             await new Promise(r => setTimeout(r, 300));
           }
           
           await audio.play();
           playBtn.textContent = 'pause';
-          console.log('Playback started successfully');
           startServiceWorkerKeepAlive();
           startFade("in");
           
@@ -340,13 +323,12 @@ export const player = {
             resolve();
           }
         } catch (err) {
-          console.error(`Play attempt ${playAttempts} failed:`, err);
+          console.error(`Play failed (attempt ${playAttempts}):`, err);
           
           if (playAttempts < maxAttempts) {
             // Retry after delay
             setTimeout(() => attemptPlay(), 800);
           } else {
-            console.error('All play attempts failed');
             playBtn.textContent = 'play_arrow';
             if (!hasResolved) {
               hasResolved = true;
@@ -358,13 +340,11 @@ export const player = {
       
       const canPlayHandler = () => {
         if (hasResolved) return;
-        console.log('Can play event fired');
         attemptPlay();
       };
       
       const loadedDataHandler = () => {
         if (hasResolved) return;
-        console.log('Loaded data event fired');
         attemptPlay();
       };
       
@@ -373,7 +353,6 @@ export const player = {
         
         // FIX: Ignore empty src errors during transition
         if (audio.error?.code === 4) {
-          console.log('Ignoring empty src error during load');
           return;
         }
         
@@ -394,7 +373,6 @@ export const player = {
       // FIX: Timeout for slow networks
       setTimeout(() => {
         if (hasResolved) return;
-        console.log('Timeout reached, forcing play attempt');
         audio.removeEventListener('error', errorHandler);
         attemptPlay();
       }, 5000);
@@ -475,8 +453,6 @@ audio.ontimeupdate = () => {
 
 // CRITICAL: Handle song end PROPERLY
 audio.onended = () => {
-  console.log('Song ended, repeat:', repeat);
-  
   // FIX: Stop fade and reset volume
   stopFade();
   
@@ -519,21 +495,18 @@ audio.onended = () => {
 
 // Better error handling - DON'T skip song immediately
 audio.onerror = (e) => {
-  console.error('Audio error:', e, audio.error);
-  
   // FIX: Ignore empty src errors (code 4) - they happen during transitions
   if (audio.error?.code === 4) {
-    console.log('Ignoring empty src error');
     return;
   }
+  
+  console.error('Audio error:', audio.error);
   
   // FIX: Update button state on error
   playBtn.textContent = 'play_arrow';
   
   // Only skip if it's a real error, not just loading
   if (audio.error && audio.error.code === audio.error.MEDIA_ERR_NETWORK) {
-    console.log('Network error, retrying current song...');
-    
     // Retry current song once
     setTimeout(() => {
       if (currentSong) {
@@ -599,11 +572,9 @@ seekBar.oninput = () => {
 
 function playNextSong() { 
   if (!playlist.length) {
-    console.log('No playlist');
     return pause(); 
   }
   
-  console.log('Playing next song...');
   currentIndex = (currentIndex + 1) % playlist.length; 
   player.playSong(playlist[currentIndex]); 
 }
