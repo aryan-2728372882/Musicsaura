@@ -1,4 +1,4 @@
-// service-worker.js — MELODYTUNES 2025 - SCREEN OFF PLAYBACK FIX (CLEAN LOGS: 1 LINE PER SONG)
+// service-worker.js — MELODYTUNES 2025 - SCREEN OFF PLAYBACK FIX
 const CACHE_NAME = 'melodytunes-v13';
 const CORE_ASSETS = ['/', '/index.html', '/auth.html', '/manifest.json', '/styles/styles.css', '/scripts/player.js', '/scripts/app.js', '/scripts/firebase-config.js', '/assets/logo.png'];
 
@@ -18,6 +18,7 @@ function fixDropboxUrl(url) {
 
 // Install
 self.addEventListener('install', e => {
+  console.log('SW installing...');
   e.waitUntil(
     caches.open(CACHE_NAME)
       .then(c => c.addAll(CORE_ASSETS))
@@ -27,6 +28,7 @@ self.addEventListener('install', e => {
 
 // Activate
 self.addEventListener('activate', e => {
+  console.log('SW activating...');
   e.waitUntil(
     caches.keys()
       .then(names => Promise.all(
@@ -43,6 +45,7 @@ self.addEventListener('fetch', event => {
   // AUDIO FILES: Critical for background playback
   if (/\.(mp3|m4a|aac|wav|ogg)($|\?)/i.test(url)) {
     const fixed = fixDropboxUrl(url);
+    
     event.respondWith(
       fetch(fixed, { 
         credentials: 'omit',
@@ -50,8 +53,18 @@ self.addEventListener('fetch', event => {
         cache: 'default',
         keepalive: true
       })
-      .then(response => response.ok ? response : fetch(event.request, { keepalive: true }))
-      .catch(() => fetch(event.request, { keepalive: true }).catch(() => new Response(null, { status: 404 })))
+      .then(response => {
+        if (response.ok) {
+          return response;
+        }
+        return fetch(event.request, { keepalive: true });
+      })
+      .catch(err => {
+        console.error('Audio fetch failed:', err);
+        return fetch(event.request, { keepalive: true }).catch(() => {
+          return new Response(null, { status: 404 });
+        });
+      })
     );
     return;
   }
@@ -65,56 +78,77 @@ self.addEventListener('fetch', event => {
   // App shell → cache-first
   event.respondWith(
     caches.match(event.request)
-      .then(cached => cached || fetch(event.request).then(res => {
-        if (res.status === 200) {
-          caches.open(CACHE_NAME).then(c => c.put(event.request, res.clone()));
-        }
-        return res;
-      }))
+      .then(cached => {
+        if (cached) return cached;
+        
+        return fetch(event.request).then(res => {
+          if (res.status === 200) {
+            caches.open(CACHE_NAME).then(c => c.put(event.request, res.clone()));
+          }
+          return res;
+        });
+      })
   );
 });
 
-// ENHANCED: Message handling — ONE LOG PER SONG ONLY
+// ENHANCED: Message handling — ONLY ONE LOG PER SONG
 let keepAliveTimer = null;
 let lastKeepAlive = Date.now();
-let currentSong = null; // Track current song to avoid duplicate logs
+let currentSong = null;   // ← NEW: tracks current song to prevent duplicate logs
 
 self.addEventListener('message', event => {
   const data = event.data;
-
-  // KEEP_ALIVE: Triggered when song starts playing
-  if (data?.type === 'KEEP_ALIVE' && data.playing && data.song) {
+  
+  if (data?.type === 'KEEP_ALIVE') {
     lastKeepAlive = Date.now();
-
-    // LOG EXACTLY ONCE PER SONG (only on change)
-    if (currentSong !== data.song) {
+    
+    // ← ONLY LOG WHEN SONG CHANGES → exactly 1 line per song
+    if (data.playing && data.song && currentSong !== data.song) {
       currentSong = data.song;
-      console.log(`%cSW: Keeping alive for → ${data.song}`, 'color: #4CAF50; font-weight: bold; font-size: 12px;');
+      console.log(`%cSW: Keeping alive - Playing: ${data.song}`, 'color: #4CAF50; font-weight: bold;');
     }
-
-    // Reset max-duration timer to keep SW alive
+    
     clearTimeout(keepAliveTimer);
-    keepAliveTimer = setTimeout(() => {}, 2147483647); // 2^31-1 ms ≈ 24.8 days
-
-    // Confirm to player
-    event.ports?.[0]?.postMessage({ alive: true, timestamp: Date.now() });
+    keepAliveTimer = setTimeout(() => {}, 2147483647);
+    
+    if (event.ports && event.ports[0]) {
+      event.ports[0].postMessage({ 
+        alive: true, 
+        timestamp: Date.now() 
+      });
+    }
   }
-
-  // HEARTBEAT / BACKGROUND_PING: Silent keep-alive pulses
-  if (data?.type === 'HEARTBEAT' || data?.type === 'BACKGROUND_PING') {
+  
+  // ← HEARTBEAT is now completely silent (no more spam)
+  if (data?.type === 'HEARTBEAT') {
+    lastKeepAlive = Date.now();
+    // console.log('SW: Heartbeat received');   ← removed
+  }
+  
+  if (data?.type === 'BACKGROUND_PING') {
     lastKeepAlive = Date.now();
   }
-
-  // SKIP_WAITING: For instant updates
+  
   if (data?.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
 });
 
-// REMOVED: Noisy 20-second SW_HEARTBEAT broadcaster (was spamming console)
-// → Deleted to eliminate all repeated logs and performance overhead
+// CRITICAL: Aggressive heartbeat to keep SW alive (kept exactly as you had it)
+setInterval(() => {
+  self.clients.matchAll({ includeUncontrolled: true, type: 'window' })
+    .then(clients => {
+      clients.forEach(client => {
+        client.postMessage({ 
+          type: 'SW_HEARTBEAT',
+          timestamp: Date.now(),
+          lastKeepAlive: lastKeepAlive
+        });
+      });
+    });
+}, 20000); // Every 20 seconds
 
-// Additional keepalive loop — prevents SW termination
+// Additional keepalive - prevent SW termination
 let wakeLockTimer;
 function preventTermination() {
   clearTimeout(wakeLockTimer);
@@ -122,14 +156,23 @@ function preventTermination() {
 }
 preventTermination();
 
-// Handle background sync (future)
-self.addEventListener('sync', event => {});
+// Handle background sync if needed
+self.addEventListener('sync', event => {
+  console.log('Background sync:', event.tag);
+});
 
-// Handle push notifications (future)
-self.addEventListener('push', event => {});
+// Handle push notifications (future feature)
+self.addEventListener('push', event => {
+  console.log('Push received:', event);
+});
 
-// Graceful error handling (silent)
-self.addEventListener('error', () => {});
-self.addEventListener('unhandledrejection', () => {});
+// CRITICAL: Handle fetch errors gracefully
+self.addEventListener('error', event => {
+  console.error('SW Error:', event.error);
+});
 
-console.log('MelodyTunes SW v13 — CLEAN LOGS + SCREEN OFF PLAYBACK OPTIMIZED');
+self.addEventListener('unhandledrejection', event => {
+  console.error('SW Unhandled Rejection:', event.reason);
+});
+
+console.log('MelodyTunes SW v13 — SCREEN OFF PLAYBACK OPTIMIZED');
