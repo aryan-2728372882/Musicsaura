@@ -1,4 +1,4 @@
-// scripts/player.js — Musicsaura 2025 - Clean DJ Background Playback
+// scripts/player.js — Musicsaura 2025 - Fixed AudioContext
 import { auth, db } from "./firebase-config.js";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
@@ -95,56 +95,64 @@ function fixDropboxUrl(url) {
          (url.includes('?') ? '&raw=1' : '?raw=1');
 }
 
-// Audio Context
+// Audio Context - FIXED: Only create on user gesture
 let audioContext = null;
 let sourceNode = null;
 let gainNode = null;
-let hasConnectedSource = false;
-
-function initAudioContext() {
-  try {
-    if (!audioContext || audioContext.state === 'closed') {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      audioContext = new AC({ 
-        latencyHint: 'playback',
-        sampleRate: 44100
-      });
-      
-      if (!hasConnectedSource) {
-        sourceNode = audioContext.createMediaElementSource(audio);
-        gainNode = audioContext.createGain();
-        gainNode.gain.value = 1;
-        
-        sourceNode.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-        
-        hasConnectedSource = true;
-        
-        window.audioContext = audioContext;
-        window.sourceNode = sourceNode;
-        window.gainNode = gainNode;
-      }
-    }
-    
-    if (audioContext.state === 'suspended') {
-      audioContext.resume();
-    }
-  } catch (e) {
-    console.error('AudioContext error:', e);
-  }
-}
-
-// Initialize on first interaction
 let audioContextInitialized = false;
-function initAudioContextOnce() {
-  if (!audioContextInitialized) {
-    initAudioContext();
+
+// This function only creates AudioContext AFTER user interaction
+function initAudioContext() {
+  if (audioContextInitialized) return audioContext;
+  
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioContext = new AC({ 
+      latencyHint: 'interactive', // Changed from 'playback'
+      sampleRate: 44100
+    });
+    
+    // Create nodes only once
+    sourceNode = audioContext.createMediaElementSource(audio);
+    gainNode = audioContext.createGain();
+    gainNode.gain.value = 1;
+    
+    sourceNode.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
     audioContextInitialized = true;
+    
+    // Store references
+    window.audioContext = audioContext;
+    window.sourceNode = sourceNode;
+    window.gainNode = gainNode;
+    
+    console.log('AudioContext initialized');
+    return audioContext;
+  } catch (e) {
+    console.error('AudioContext init error:', e);
+    return null;
   }
 }
-['click', 'touchstart'].forEach(evt => 
-  document.addEventListener(evt, initAudioContextOnce, { passive: true, once: true })
-);
+
+// Resume AudioContext (call this on user gestures)
+function resumeAudioContext() {
+  if (!audioContext) {
+    // Create AudioContext if it doesn't exist
+    initAudioContext();
+    return Promise.resolve();
+  }
+  
+  if (audioContext.state === 'suspended') {
+    return audioContext.resume().then(() => {
+      console.log('AudioContext resumed');
+    }).catch(err => {
+      console.error('Failed to resume AudioContext:', err);
+    });
+  }
+  
+  return Promise.resolve();
+}
 
 // Service Worker KeepAlive
 let swKeepAliveInterval = null;
@@ -159,10 +167,6 @@ function startServiceWorkerKeepAlive() {
         playing: !audio.paused,
         song: currentSong?.title
       });
-    }
-    
-    if (audioContext && audioContext.state === 'suspended') {
-      audioContext.resume();
     }
   }, 3000);
 }
@@ -261,12 +265,6 @@ export const player = {
     totalListenedTime = 0;
     hasCountedSong = false;
 
-    initAudioContext();
-    
-    if (audioContext?.state === 'suspended') {
-      await audioContext.resume();
-    }
-    
     const fixedUrl = fixDropboxUrl(song.link);
     
     if (!fixedUrl || fixedUrl === 'undefined') {
@@ -292,7 +290,8 @@ export const player = {
       
       const attemptPlay = async () => {
         try {
-          if (audioContext?.state === 'suspended') {
+          // Resume AudioContext if needed (this will work because it's triggered by play())
+          if (audioContext && audioContext.state === 'suspended') {
             await audioContext.resume();
           }
           
@@ -318,8 +317,10 @@ export const player = {
         }
       };
       
+      // Try to play immediately
       attemptPlay();
       
+      // Fallback on canplay
       const canPlayHandler = () => {
         if (!audio.paused && !hasResolved) {
           attemptPlay();
@@ -348,20 +349,21 @@ export const player = {
   }
 };
 
-// Controls
+// Controls - FIXED: Initialize AudioContext on first user gesture
 function play() { 
-  initAudioContext();
-  
-  audio.play().then(() => { 
-    playBtn.textContent = 'pause'; 
-    songPlayStartTime = Date.now(); 
-    startServiceWorkerKeepAlive();
-    startFade("in");
-    updateMediaSession(currentSong);
-  }).catch(err => {
-    console.error('Play error:', err);
-    playBtn.textContent = 'play_arrow';
-  }); 
+  // Ensure AudioContext is created/resumed on user gesture
+  resumeAudioContext().then(() => {
+    audio.play().then(() => { 
+      playBtn.textContent = 'pause'; 
+      songPlayStartTime = Date.now(); 
+      startServiceWorkerKeepAlive();
+      startFade("in");
+      updateMediaSession(currentSong);
+    }).catch(err => {
+      console.error('Play error:', err);
+      playBtn.textContent = 'play_arrow';
+    }); 
+  });
 }
 
 function pause() { 
@@ -375,6 +377,13 @@ function pause() {
     navigator.mediaSession.playbackState = 'paused';
   }
 }
+
+// Initialize AudioContext on first user interaction with player controls
+[playBtn.parentElement, prevBtn, nextBtn, repeatBtn.parentElement, seekBar].forEach(element => {
+  element.addEventListener('click', () => {
+    resumeAudioContext();
+  }, { once: true }); // Only need to do this once
+});
 
 playBtn.parentElement.onclick = () => audio.paused ? play() : pause();
 prevBtn.onclick = () => playlist.length && playPreviousSong();
@@ -564,10 +573,6 @@ let heartbeatInterval = setInterval(() => {
         time: Date.now()
       });
     }
-    
-    if (audioContext && audioContext.state === 'suspended') {
-      audioContext.resume().catch(() => {});
-    }
   }
 }, 5000);
 
@@ -583,3 +588,5 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/service-worker.js').catch(() => {});
   });
 }
+
+console.log('MusicsAura Player — AudioContext Fixed');
