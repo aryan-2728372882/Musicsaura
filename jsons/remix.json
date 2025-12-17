@@ -288,22 +288,6 @@
         "genre": "Remix"
     },
     {
-        "title": "Tere Liye",
-        "artist": "",
-        "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Tere%20Liye.mp3",
-        "thumbnail": "https://pendujatt.com.se/uploads/album/tere-liye-remix-madan-mohan.webp",
-        "keywords": ["tere", "liye", "remix", "dj", "umi", "prince", "atif"],
-        "genre": "Remix"
-    },
-    {
-        "title": "AAYEGA MAZA AB BARSAT KA",
-        "artist": "",
-        "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Aayega%20Maza%20Ab%20Barsaat%20Ka.mp3",
-        "thumbnail": "https://c.saavncdn.com/729/Aayega-Maza-Ab-Barsaat-Ka-From-Andaaz--Hindi-2003-20220325183353-500x500.jpg",
-        "keywords": ["aayega", "maza", "barsat", "remix", "mc", "stan", "emiway"],
-        "genre": "Remix"
-    },
-    {
         "title": "Tip Tip Barsa Paani",
         "artist": "",
         "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Tip%20Tip%20Barsa%20Pani.mp3",
@@ -317,22 +301,6 @@
         "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Chunnari%20Chunnari.mp3",
         "thumbnail": "https://i1.sndcdn.com/artworks-000545295708-xm2psz-t1080x1080.jpg",
         "keywords": ["chunnari", "remix", "dj"],
-        "genre": "Remix"
-    },
-    {
-        "title": "Ek Haseena Thi Ek Deewana Tha",
-        "artist": "",
-        "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Ek%20Haseena%20Thi%20Ek%20Deewana%20Tha.mp3",
-        "thumbnail": "https://i1.sndcdn.com/artworks-000233417117-4jhe4y-t1080x1080.jpg",
-        "keywords": ["ek", "haseena", "thi", "deewana", "tha", "remix", "dj"],
-        "genre": "Remix"
-    },
-    {
-        "title": "Mujhse Shadi Krogi",
-        "artist": "",
-        "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Mujhse%20Shadi%20Karogi.mp3",
-        "thumbnail": "https://a10.gaanacdn.com/gn_img/albums/01A3mar3NQ/01A3mar3NQ/size_m.jpg",
-        "keywords": ["mujhse", "shadi", "krogi", "remix", "dj"],
         "genre": "Remix"
     },
     {
@@ -357,14 +325,6 @@
         "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//AFGHAN%20JALEBI.mp3",
         "thumbnail": "https://c.saavncdn.com/951/Phantom-Hindi-2015-500x500.jpg",
         "keywords": ["afgan", "jalebi", "remix", "dj"],
-        "genre": "Remix"
-    },
-    {
-        "title": "Chura Liya Hai Tumne Jo Dil Ko",
-        "artist": "",
-        "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Chura%20Liya%20Hai%20Tumne%20Jo%20Dil%20Ko.mp3",
-        "thumbnail": "https://s.saregama.tech/image/c/fh_150/e/4b/b2/mere-jeevan-saathi_1399714748.jpg",
-        "keywords": ["chura", "liya", "hai", "tumne", "jo", "dil", "ko"],
         "genre": "Remix"
     },
     {
@@ -405,30 +365,6 @@
         "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Fevicol%20Se.mp3",
         "thumbnail": "https://c.saavncdn.com/652/Dabangg-2-Hindi-2012-20221213012606-500x500.jpg",
         "keywords": ["fevicol", "se", "remix", "dj", "dabangg", "2", "daler", "mehndi"],
-        "genre": "Remix"
-    },
-    {
-        "title": "Gale Lag Ja",
-        "artist": "",
-        "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Gale%20Lag%20Ja.mp3",
-        "thumbnail": "https://a10.gaanacdn.com/gn_img/albums/Dk9KNk23Bx/9KNg1gyG3B/size_m.jpg",
-        "keywords": ["gale", "lag", "ja", "remix", "dj"],
-        "genre": "Remix"
-    },
-    {
-        "title": "Afsana Banake bhool na jana",
-        "artist": "Imran Hashmi",
-        "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Afsana%20Banake.mp3",
-        "thumbnail": "https://i1.sndcdn.com/artworks-000136513435-6ydv21-t500x500.jpg",
-        "keywords": ["afsana", "banake", "bhool", "na", "jana", "remix", "dj", "imran", "hashmi"],
-        "genre": "Remix"
-    },  
-    {
-        "title": "Dil Kehta Hai Chal Unse Mil",
-        "artist": "Kumar Sanu, Alka Yagnik",
-        "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Dil%20Kehta%20Hai%20Chal%20Unse%20Mil.mp3",
-        "thumbnail": "https://c.saavncdn.com/472/Dil-Kehta-Hai-LO-FI-Hindi-2024-20240124114400-500x500.jpg",
-        "keywords": ["dil", "kehta", "hai", "chal", "unse", "mil", "remix", "dj", "kumar", "sanu", "alka", "yagnik"],
         "genre": "Remix"
     },
     {
