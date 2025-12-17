@@ -376,19 +376,19 @@
         "genre": "Remix"
     },
     {
-        "title": "",
-        "artist": "",
-        "link": "",
-        "thumbnail": "",
-        "keywords": [],
+        "title": "Shararat",
+        "artist": "Jasmine Sandlas, Madhubanti Bagchi, and Shashwat Sachdev",
+        "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes/Shararat.mp3",
+        "thumbnail": "https://i.ytimg.com/vi/Gayw5AQvWcQ/maxresdefault.jpg",
+        "keywords": ["Shararat", "remix", "dj", "jasmine", "sandlas", "madhubanti", "bagchi", "shashwat", "sachdev"],
         "genre": "Remix"
     },
     {
-        "title": "",
-        "artist": "",
-        "link": "",
-        "thumbnail": "",
-        "keywords": [],
+        "title": "First Kiss Remix",
+        "artist": "Yo Yo Honey Singh, Ipsitaa",
+        "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes/first%20kiss%20remix.m4a",
+        "thumbnail": "https://i.ytimg.com/vi/RyWkyinZEaw/hqdefault.jpg",
+        "keywords": ["First", "Kiss", "remix", "dj", "yo", "honey", "singh", "ipsitaa"],
         "genre": "Remix"
     },
     {
