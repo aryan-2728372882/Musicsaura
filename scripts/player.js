@@ -1,4 +1,4 @@
-// scripts/player.js — Musicsaura 2025 - Fixed AudioContext
+// scripts/player.js — Musicsaura 2025 - FIXED Volume & Stats
 import { auth, db } from "./firebase-config.js";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
@@ -23,27 +23,26 @@ let hasCountedSong = false;
 let playlist = [];
 let currentIndex = 0;
 
-// DJ Fade settings
-let fadeInDuration = 10000;
-let fadeOutDuration = 5000;
+// DJ Fade settings - OPTIMIZED
+let fadeInDuration = 800;
+let fadeOutDuration = 3000;
 let fadeInterval = null;
 let isFading = false;
 
 // Prevent garbage collection
 window.audioElement = audio;
 
-// Reset fade state
-function resetFadeState() {
-  stopFade();
-  audio.volume = 0.01;
-}
+// CRITICAL: Set audio element for instant streaming
+audio.preload = "metadata";
+audio.crossOrigin = "anonymous";
 
+// FIXED: Volume fade with proper bounds checking
 function startFade(direction) {
   if (isFading) return;
   isFading = true;
   
-  const startVol = direction === "in" ? 0.01 : 1;
-  const endVol = direction === "in" ? 1 : 0.01;
+  const startVol = direction === "in" ? 0.3 : 1.0;
+  const endVol = direction === "in" ? 1.0 : 0.01;
   const duration = direction === "in" ? fadeInDuration : fadeOutDuration;
   const startTime = Date.now();
 
@@ -52,15 +51,19 @@ function startFade(direction) {
     const elapsed = Date.now() - startTime;
     let progress = Math.min(elapsed / duration, 1);
     
-    const eased = progress < 0.5 
-      ? 4 * progress * progress * progress 
-      : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+    // Easing functions
+    const eased = direction === "in" 
+      ? progress * progress // Quadratic
+      : 1 - Math.pow(-2 * progress + 2, 3) / 2; // Cubic
     
-    audio.volume = startVol + (endVol - startVol) * eased;
+    // CRITICAL FIX: Clamp volume between 0 and 1
+    const newVolume = startVol + (endVol - startVol) * eased;
+    audio.volume = Math.max(0, Math.min(1, newVolume));
 
     if (progress >= 1) {
       clearInterval(fadeInterval);
       isFading = false;
+      
       if (direction === "out" && repeat === 'one') {
         audio.currentTime = 0;
         audio.play();
@@ -95,24 +98,22 @@ function fixDropboxUrl(url) {
          (url.includes('?') ? '&raw=1' : '?raw=1');
 }
 
-// Audio Context - FIXED: Only create on user gesture
+// Audio Context - Lazy init
 let audioContext = null;
 let sourceNode = null;
 let gainNode = null;
 let audioContextInitialized = false;
 
-// This function only creates AudioContext AFTER user interaction
 function initAudioContext() {
   if (audioContextInitialized) return audioContext;
   
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
     audioContext = new AC({ 
-      latencyHint: 'interactive', // Changed from 'playback'
+      latencyHint: 'interactive',
       sampleRate: 44100
     });
     
-    // Create nodes only once
     sourceNode = audioContext.createMediaElementSource(audio);
     gainNode = audioContext.createGain();
     gainNode.gain.value = 1;
@@ -121,13 +122,10 @@ function initAudioContext() {
     gainNode.connect(audioContext.destination);
     
     audioContextInitialized = true;
-    
-    // Store references
     window.audioContext = audioContext;
     window.sourceNode = sourceNode;
     window.gainNode = gainNode;
     
-    console.log('AudioContext initialized');
     return audioContext;
   } catch (e) {
     console.error('AudioContext init error:', e);
@@ -135,18 +133,14 @@ function initAudioContext() {
   }
 }
 
-// Resume AudioContext (call this on user gestures)
 function resumeAudioContext() {
   if (!audioContext) {
-    // Create AudioContext if it doesn't exist
     initAudioContext();
     return Promise.resolve();
   }
   
   if (audioContext.state === 'suspended') {
-    return audioContext.resume().then(() => {
-      console.log('AudioContext resumed');
-    }).catch(err => {
+    return audioContext.resume().catch(err => {
       console.error('Failed to resume AudioContext:', err);
     });
   }
@@ -218,7 +212,7 @@ function showPlayer() {
   playerEl.classList.add('visible'); 
 }
 
-// Preload next song
+// Aggressive preloading
 let preloadAudio = null;
 
 function preloadNextSong() {
@@ -244,7 +238,7 @@ function preloadNextSong() {
   }
 }
 
-// MAIN PLAYER
+// MAIN PLAYER - OPTIMIZED FOR SPEED
 export const player = {
   setPlaylist(songs, index = 0) { 
     playlist = songs; 
@@ -257,9 +251,14 @@ export const player = {
       return;
     }
     
+    // FIXED: Update stats for previous song before switching
+    await saveSongStats();
+    
+    // Stop previous playback
     stopFade();
     audio.pause();
     
+    // Reset tracking for new song
     currentSong = song;
     songPlayStartTime = Date.now();
     totalListenedTime = 0;
@@ -272,86 +271,74 @@ export const player = {
       return;
     }
     
-    audio.volume = 0.01;
-    audio.crossOrigin = "anonymous";
-    audio.preload = "auto";
-    audio.currentTime = 0;
-    audio.src = fixedUrl;
-
+    // INSTANT UI UPDATE
     titleEl.textContent = song.title;
     thumbEl.style.backgroundImage = song.thumbnail ? `url(${song.thumbnail})` : '';
     updateMediaSession(song);
     showPlayer();
-
-    audio.load();
     
-    return new Promise((resolve) => {
-      let hasResolved = false;
+    // Set initial volume (clamped)
+    audio.volume = 0.3;
+    
+    // Check if preloaded
+    const isPreloaded = preloadAudio && preloadAudio.src === fixedUrl && 
+                        preloadAudio.readyState >= 2;
+    
+    if (isPreloaded) {
+      audio.src = preloadAudio.src;
+      audio.currentTime = 0;
       
-      const attemptPlay = async () => {
-        try {
-          // Resume AudioContext if needed (this will work because it's triggered by play())
-          if (audioContext && audioContext.state === 'suspended') {
-            await audioContext.resume();
-          }
-          
-          await audio.play();
-          playBtn.textContent = 'pause';
-          startServiceWorkerKeepAlive();
-          startFade("in");
-          
-          setTimeout(() => preloadNextSong(), 3000);
-          
-          if (!hasResolved) {
-            hasResolved = true;
-            resolve();
-          }
-          
-        } catch (err) {
-          console.error('Play failed:', err);
-          playBtn.textContent = 'play_arrow';
-          if (!hasResolved) {
-            hasResolved = true;
-            resolve();
-          }
-        }
-      };
+      resumeAudioContext();
+      audio.play().then(() => {
+        playBtn.textContent = 'pause';
+        startServiceWorkerKeepAlive();
+        startFade("in");
+        setTimeout(() => preloadNextSong(), 1000);
+      }).catch(err => {
+        console.error('Preloaded play failed:', err);
+        playBtn.textContent = 'play_arrow';
+      });
       
-      // Try to play immediately
-      attemptPlay();
-      
-      // Fallback on canplay
+      return;
+    }
+    
+    // Fast load path
+    audio.src = fixedUrl;
+    resumeAudioContext();
+    
+    const playPromise = audio.play();
+    playBtn.textContent = 'pause';
+    startServiceWorkerKeepAlive();
+    
+    playPromise.then(() => {
+      startFade("in");
+      setTimeout(() => preloadNextSong(), 1000);
+    }).catch(err => {
       const canPlayHandler = () => {
-        if (!audio.paused && !hasResolved) {
-          attemptPlay();
-        }
-      };
-      
-      const errorHandler = () => {
-        if (!hasResolved) {
+        audio.play().then(() => {
+          playBtn.textContent = 'pause';
+          startFade("in");
+          setTimeout(() => preloadNextSong(), 1000);
+        }).catch(e => {
+          console.error('Delayed play failed:', e);
           playBtn.textContent = 'play_arrow';
-          resolve();
-        }
+        });
       };
       
       audio.addEventListener('canplay', canPlayHandler, { once: true });
-      audio.addEventListener('error', errorHandler, { once: true });
       
       setTimeout(() => {
-        if (!hasResolved) {
-          audio.removeEventListener('canplay', canPlayHandler);
-          audio.removeEventListener('error', errorHandler);
+        audio.removeEventListener('canplay', canPlayHandler);
+        if (audio.paused) {
           playBtn.textContent = 'play_arrow';
-          resolve();
         }
-      }, 8000);
+      }, 5000);
     });
   }
 };
 
-// Controls - FIXED: Initialize AudioContext on first user gesture
+// Controls
 function play() { 
-  // Ensure AudioContext is created/resumed on user gesture
   resumeAudioContext().then(() => {
     audio.play().then(() => { 
       playBtn.textContent = 'pause'; 
@@ -370,19 +357,24 @@ function pause() {
   audio.pause(); 
   playBtn.textContent = 'play_arrow'; 
   stopFade(); 
-  if (songPlayStartTime) totalListenedTime += (Date.now() - songPlayStartTime) / 1000; 
-  songPlayStartTime = 0; 
+  
+  // Track listen time
+  if (songPlayStartTime) {
+    totalListenedTime += (Date.now() - songPlayStartTime) / 1000;
+  }
+  songPlayStartTime = 0;
+  
   stopServiceWorkerKeepAlive();
   if ('mediaSession' in navigator) {
     navigator.mediaSession.playbackState = 'paused';
   }
 }
 
-// Initialize AudioContext on first user interaction with player controls
+// Initialize AudioContext on first interaction
 [playBtn.parentElement, prevBtn, nextBtn, repeatBtn.parentElement, seekBar].forEach(element => {
   element.addEventListener('click', () => {
     resumeAudioContext();
-  }, { once: true }); // Only need to do this once
+  }, { once: true });
 });
 
 playBtn.parentElement.onclick = () => audio.paused ? play() : pause();
@@ -414,46 +406,62 @@ audio.ontimeupdate = () => {
     startFade("out");
   }
 
+  // Track listening progress
   if (!hasCountedSong && !audio.paused && songPlayStartTime) {
-    const total = totalListenedTime + (Date.now() - songPlayStartTime) / 1000;
-    if (total >= 90) hasCountedSong = true;
+    const currentListenTime = totalListenedTime + (Date.now() - songPlayStartTime) / 1000;
+    if (currentListenTime >= 30) { // Count after 30 seconds
+      hasCountedSong = true;
+    }
   }
 };
 
+// FIXED: Save song stats function
+async function saveSongStats() {
+  if (!currentSong || !auth.currentUser) return;
+  
+  // Calculate total time listened
+  if (songPlayStartTime) {
+    totalListenedTime += (Date.now() - songPlayStartTime) / 1000;
+  }
+  
+  // Only save if listened for at least 30 seconds
+  if (totalListenedTime < 30) return;
+  
+  try {
+    const minutes = Math.max(0.5, Math.round((totalListenedTime / 60) * 2) / 2);
+    
+    await updateDoc(doc(db, "users", auth.currentUser.uid), {
+      songsPlayed: increment(1),
+      minutesListened: increment(minutes),
+      lastPlayed: serverTimestamp(),
+      lastActive: new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }) + " IST"
+    });
+    
+  } catch (e) {
+    console.error('Stats update error:', e);
+  }
+}
+
 // Handle song end
-audio.onended = () => {
+audio.onended = async () => {
   stopFade();
   
-  if (songPlayStartTime) totalListenedTime += (Date.now() - songPlayStartTime) / 1000;
-  
-  if (hasCountedSong && totalListenedTime >= 90) {
-    const minutes = Math.round((totalListenedTime / 60) * 2) / 2;
-    updateUserStats(minutes);
-  }
+  // Save stats before moving to next song
+  await saveSongStats();
   
   if (repeat === 'one') {
     audio.currentTime = 0; 
     songPlayStartTime = Date.now(); 
     totalListenedTime = 0; 
     hasCountedSong = false;
-    audio.volume = 0.01;
+    audio.volume = 0.3;
     
-    if (audioContext?.state === 'suspended') {
-      audioContext.resume().then(() => {
-        audio.play(); 
-        playBtn.textContent = 'pause'; 
-        startFade("in");
-      });
-    } else {
-      audio.play(); 
-      playBtn.textContent = 'pause'; 
-      startFade("in");
-    }
+    audio.play(); 
+    playBtn.textContent = 'pause'; 
+    startFade("in");
   } else if (repeat === 'all' || repeat === 'off') {
-    audio.volume = 1;
-    setTimeout(() => {
-      playNextSong();
-    }, 300);
+    audio.volume = 0.3;
+    playNextSong();
   }
 };
 
@@ -469,16 +477,16 @@ audio.onerror = (e) => {
       if (currentSong) {
         const retryUrl = fixDropboxUrl(currentSong.link);
         audio.src = retryUrl;
-        audio.load();
         audio.play().then(() => {
           playBtn.textContent = 'pause';
+          startFade("in");
         }).catch(() => {
-          setTimeout(() => playNextSong(), 1000);
+          setTimeout(() => playNextSong(), 500);
         });
       }
-    }, 1000);
+    }, 500);
   } else if (audio.error?.code !== 4) {
-    setTimeout(() => playNextSong(), 2000);
+    setTimeout(() => playNextSong(), 1000);
   }
 };
 
@@ -543,24 +551,9 @@ function playPreviousSong() {
   }
 }
 
-async function updateUserStats(minutes) {
-  const user = auth.currentUser;
-  if (!user || !currentSong) return;
-  try {
-    await updateDoc(doc(db, "users", user.uid), {
-      songsPlayed: increment(1),
-      minutesListened: increment(minutes),
-      lastPlayed: serverTimestamp(),
-      lastActive: new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }) + " IST"
-    });
-  } catch (e) {
-    console.error('Stats update error:', e);
-  }
-}
-
 onAuthStateChanged(auth, user => {
   if (!user) return location.href = "auth.html";
-  navAvatar.src = user.photoURL || `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='56'><circle cx='28' cy='28' r='28' fill='%234a90e2'/><text x='50%' y='50%' font-size='28' fill='white' text-anchor='middle' dy='.3em'>${(user.email?.[0] || 'U').toUpperCase()}</text></svg>`;
+  navAvatar.src = user.photoURL || `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='56'><circle cx='28' cy='28' r='28' fill='%234a90e2'/><text x='50%25' y='50%25' font-size='28' fill='white' text-anchor='middle' dy='.3em'>${(user.email?.[0] || 'U').toUpperCase()}</text></svg>`;
   profileBtn.onclick = () => location.href = user.email === "prabhakararyan2007@gmail.com" ? "admin-dashboard.html" : "user-dashboard.html";
 });
 
@@ -576,10 +569,15 @@ let heartbeatInterval = setInterval(() => {
   }
 }, 5000);
 
-// Clean up
+// FIXED: Save stats when user leaves
 window.addEventListener('beforeunload', () => {
   clearInterval(heartbeatInterval);
   stopServiceWorkerKeepAlive();
+  
+  // Try to save stats before leaving (may or may not complete)
+  if (currentSong && totalListenedTime >= 30) {
+    navigator.sendBeacon && saveSongStats();
+  }
 });
 
 // Register service worker
@@ -589,4 +587,9 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-console.log('MusicsAura Player — AudioContext Fixed');
+// Preload first song on page load
+window.addEventListener('load', () => {
+  if (playlist.length > 0) {
+    setTimeout(() => preloadNextSong(), 2000);
+  }
+});
