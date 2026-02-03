@@ -1,0 +1,8 @@
+{
+  "appId": "com.musicsaura.app",
+  "appName": "MusicsAura",
+  "webDir": "www",
+  "server": {
+    "url": "https://musicsaura.vercel.app/index"
+  }
+}

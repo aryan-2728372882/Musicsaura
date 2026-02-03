@@ -35,6 +35,8 @@ window.audioElement = audio;
 // CRITICAL: Set audio element for instant streaming
 audio.preload = "metadata";
 audio.crossOrigin = "anonymous";
+audio.setAttribute("playsinline", "");
+audio.setAttribute("webkit-playsinline", "");
 
 // FIXED: Volume fade with proper bounds checking
 function startFade(direction) {
@@ -172,6 +174,53 @@ function stopServiceWorkerKeepAlive() {
   }
 }
 
+// Cordova/Capacitor background mode (Android native wrapper)
+function enableBackgroundMode() {
+  const bg = window.cordova?.plugins?.backgroundMode;
+  if (!bg) return;
+  try {
+    bg.setDefaults?.({ silent: true, hidden: true });
+    if (!bg.isEnabled()) bg.enable();
+  } catch (e) {}
+}
+
+function disableBackgroundMode() {
+  const bg = window.cordova?.plugins?.backgroundMode;
+  if (!bg) return;
+  try {
+    if (bg.isEnabled()) bg.disable();
+  } catch (e) {}
+}
+
+// Wake Lock to reduce sleep interruptions during playback
+let wakeLock = null;
+
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+    });
+  } catch (e) {
+    // Ignore; not supported or denied
+  }
+}
+
+function releaseWakeLock() {
+  if (wakeLock) {
+    wakeLock.release().catch(() => {});
+    wakeLock = null;
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && !audio.paused) {
+    requestWakeLock();
+    enableBackgroundMode();
+  }
+});
+
 // Media Session
 if ('mediaSession' in navigator) {
   navigator.mediaSession.setActionHandler('play', () => play());
@@ -251,8 +300,8 @@ export const player = {
       return;
     }
     
-    // FIXED: Update stats for previous song before switching
-    await saveSongStats();
+    // Update stats for previous song without blocking playback
+    saveSongStats();
     
     // Stop previous playback
     stopFade();
@@ -309,6 +358,8 @@ export const player = {
     const playPromise = audio.play();
     playBtn.textContent = 'pause';
     startServiceWorkerKeepAlive();
+    requestWakeLock();
+    enableBackgroundMode();
     
     playPromise.then(() => {
       startFade("in");
@@ -344,6 +395,8 @@ function play() {
       playBtn.textContent = 'pause'; 
       songPlayStartTime = Date.now(); 
       startServiceWorkerKeepAlive();
+      requestWakeLock();
+      enableBackgroundMode();
       startFade("in");
       updateMediaSession(currentSong);
     }).catch(err => {
@@ -357,6 +410,8 @@ function pause() {
   audio.pause(); 
   playBtn.textContent = 'play_arrow'; 
   stopFade(); 
+  releaseWakeLock();
+  disableBackgroundMode();
   
   // Track listen time
   if (songPlayStartTime) {
@@ -418,6 +473,7 @@ audio.ontimeupdate = () => {
 // FIXED: Save song stats function
 async function saveSongStats() {
   if (!currentSong || !auth.currentUser) return;
+  if (navigator.onLine === false) return;
   
   // Calculate total time listened
   if (songPlayStartTime) {
@@ -429,13 +485,19 @@ async function saveSongStats() {
   
   try {
     const minutes = Math.max(0.5, Math.round((totalListenedTime / 60) * 2) / 2);
-    
-    await updateDoc(doc(db, "users", auth.currentUser.uid), {
+
+    const updatePromise = updateDoc(doc(db, "users", auth.currentUser.uid), {
       songsPlayed: increment(1),
       minutesListened: increment(minutes),
       lastPlayed: serverTimestamp(),
       lastActive: new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }) + " IST"
     });
+
+    // Don't let stats update block playback flow
+    await Promise.race([
+      updatePromise,
+      new Promise((resolve) => setTimeout(resolve, 2500))
+    ]);
     
   } catch (e) {
     console.error('Stats update error:', e);
@@ -443,11 +505,11 @@ async function saveSongStats() {
 }
 
 // Handle song end
-audio.onended = async () => {
+audio.onended = () => {
   stopFade();
   
-  // Save stats before moving to next song
-  await saveSongStats();
+  // Save stats without blocking next song
+  saveSongStats();
   
   if (repeat === 'one') {
     audio.currentTime = 0; 
@@ -471,6 +533,8 @@ audio.onerror = (e) => {
   
   console.error('Audio error:', audio.error);
   playBtn.textContent = 'play_arrow';
+  releaseWakeLock();
+  disableBackgroundMode();
   
   if (audio.error && audio.error.code === audio.error.MEDIA_ERR_NETWORK) {
     setTimeout(() => {
@@ -505,6 +569,8 @@ audio.addEventListener('pause', () => {
   if (!audio.ended) {
     playBtn.textContent = 'play_arrow';
   }
+  releaseWakeLock();
+  disableBackgroundMode();
   
   if ('mediaSession' in navigator) {
     navigator.mediaSession.playbackState = 'paused';
@@ -513,6 +579,8 @@ audio.addEventListener('pause', () => {
 
 audio.addEventListener('play', () => {
   playBtn.textContent = 'pause';
+  requestWakeLock();
+  enableBackgroundMode();
   
   if ('mediaSession' in navigator) {
     navigator.mediaSession.playbackState = 'playing';

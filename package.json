@@ -3,9 +3,15 @@
   "version": "1.0.0",
   "main": "service-worker.js",
   "scripts": {
-  "start": "live-server "
-},
-  "dependencies": {},
+    "start": "live-server "
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.2",
+    "@capacitor/cli": "^8.0.2",
+    "@capacitor/core": "^8.0.2",
+    "cordova-plugin-background-mode": "^0.7.3",
+    "cordova-plugin-device": "^3.0.0"
+  },
   "author": "",
   "license": "ISC",
   "keywords": [],
