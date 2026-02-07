@@ -1,5 +1,4 @@
 {
   "buildCommand": "npm run build || true",
-  "framework": "static",
   "outputDirectory": "."
 }
