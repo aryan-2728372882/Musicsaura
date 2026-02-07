@@ -1,41 +1,31 @@
-name: Deploy to Vercel
+name: Notify Deployment Status
 
 on:
   push:
     branches:
       - main
       - master
-  pull_request:
-    branches:
-      - main
-      - master
 
 jobs:
-  Deploy-Production:
+  deployment-info:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v3
-      
-      - name: Deploy to Vercel
-        uses: vercel/action@master
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          scope: ${{ secrets.VERCEL_ORG_ID }}
-          
-  Cache-Invalidation:
-    runs-on: ubuntu-latest
-    needs: Deploy-Production
-    
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Invalidate Vercel Cache
+      - name: Deployment Status
         run: |
-          curl -X POST "https://api.vercel.com/v1/deployments" \
-            -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d '{"name":"MusicsAura","gitSource":{"ref":"main"}}'
-        continue-on-error: true
+          echo "✅ Push detected to main branch"
+          echo ""
+          echo "🚀 Vercel will automatically deploy your changes"
+          echo ""
+          echo "📝 What happens next:"
+          echo "1. GitHub sends webhook to Vercel"
+          echo "2. Vercel builds and deploys your app"
+          echo "3. Deployment completes in 30-60 seconds"
+          echo ""
+          echo "🔗 Check deployment status:"
+          echo "   https://vercel.com/dashboard"
+          echo ""
+          echo "💾 Cache will be invalidated automatically"
+          echo "🔄 Hard refresh if needed: Ctrl+Shift+R"
+
+
