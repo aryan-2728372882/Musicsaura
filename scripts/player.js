@@ -2,6 +2,7 @@
 import { auth, db } from "./firebase-config.js";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
+import { playStateManager } from "./play-state-manager.js";
 
 const audio = document.getElementById('audio');
 const titleEl = document.getElementById('player-title');
@@ -385,6 +386,42 @@ export const player = {
         }
       }, 5000);
     });
+  },
+
+  getState() {
+    return {
+      currentSong,
+      isPlaying: !audio.paused,
+      currentTime: audio.currentTime,
+      playlist,
+      currentIndex
+    };
+  },
+
+  async restoreState(state) {
+    if (!state?.currentSong) return;
+    
+    playlist = state.playlist || [];
+    currentIndex = state.currentIndex || 0;
+    currentSong = state.currentSong;
+    
+    const fixedUrl = fixDropboxUrl(state.currentSong.link);
+    audio.src = fixedUrl;
+    audio.currentTime = state.currentTime || 0;
+    
+    // Update UI
+    titleEl.textContent = state.currentSong.title;
+    thumbEl.style.backgroundImage = state.currentSong.thumbnail ? `url(${state.currentSong.thumbnail})` : '';
+    updateMediaSession(state.currentSong);
+    showPlayer();
+    
+    if (state.isPlaying) {
+      resumeAudioContext().then(() => {
+        audio.play().catch(err => {
+          console.error('Restore playback failed:', err);
+        });
+      });
+    }
   }
 };
 
@@ -464,16 +501,15 @@ audio.ontimeupdate = () => {
   // Track listening progress
   if (!hasCountedSong && !audio.paused && songPlayStartTime) {
     const currentListenTime = totalListenedTime + (Date.now() - songPlayStartTime) / 1000;
-    if (currentListenTime >= 30) { // Count after 30 seconds
+    if (currentListenTime >= 60) { // Count after 30 seconds
       hasCountedSong = true;
     }
   }
 };
 
-// FIXED: Save song stats function
+// FIXED: Save song stats function with localStorage fallback for PWA offline
 async function saveSongStats() {
   if (!currentSong || !auth.currentUser) return;
-  if (navigator.onLine === false) return;
   
   // Calculate total time listened
   if (songPlayStartTime) {
@@ -486,6 +522,7 @@ async function saveSongStats() {
   try {
     const minutes = Math.max(0.5, Math.round((totalListenedTime / 60) * 2) / 2);
 
+    // Always try Firebase first for real-time updates
     const updatePromise = updateDoc(doc(db, "users", auth.currentUser.uid), {
       songsPlayed: increment(1),
       minutesListened: increment(minutes),
@@ -499,8 +536,13 @@ async function saveSongStats() {
       new Promise((resolve) => setTimeout(resolve, 2500))
     ]);
     
+    // Also update localStorage for PWA offline support
+    playStateManager.syncPlaybackStats(minutes, 1);
+    
   } catch (e) {
     console.error('Stats update error:', e);
+    // Fallback to localStorage if Firebase fails (offline)
+    playStateManager.syncPlaybackStats(minutes || 0.5, 1);
   }
 }
 
@@ -622,7 +664,14 @@ function playPreviousSong() {
 onAuthStateChanged(auth, user => {
   if (!user) return location.href = "auth.html";
   navAvatar.src = user.photoURL || `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='56'><circle cx='28' cy='28' r='28' fill='%234a90e2'/><text x='50%25' y='50%25' font-size='28' fill='white' text-anchor='middle' dy='.3em'>${(user.email?.[0] || 'U').toUpperCase()}</text></svg>`;
-  profileBtn.onclick = () => location.href = user.email === "prabhakararyan2007@gmail.com" ? "admin-dashboard.html" : "user-dashboard.html";
+  profileBtn.onclick = () => {
+    // Save playback state before navigating
+    const state = player.getState();
+    if (state.currentSong) {
+      playStateManager.saveState(state.currentSong, state.isPlaying, state.currentTime, state.playlist, state.currentIndex);
+    }
+    location.href = user.email === "prabhakararyan2007@gmail.com" ? "admin-dashboard.html" : "user-dashboard.html";
+  };
 });
 
 // Keep service worker alive
@@ -637,10 +686,15 @@ let heartbeatInterval = setInterval(() => {
   }
 }, 5000);
 
-// FIXED: Save stats when user leaves
+// FIXED: Save stats and playback state when user leaves (important for PWA)
 window.addEventListener('beforeunload', () => {
   clearInterval(heartbeatInterval);
   stopServiceWorkerKeepAlive();
+  
+  // Save current playback state to localStorage for PWA persistence
+  if (currentSong) {
+    playStateManager.saveState(currentSong, !audio.paused, audio.currentTime, playlist, currentIndex);
+  }
   
   // Try to save stats before leaving (may or may not complete)
   if (currentSong && totalListenedTime >= 30) {

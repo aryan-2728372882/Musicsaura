@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Profile – VibeTunes</title>
+  <title>My Profile – Musicaura</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
   
@@ -20,7 +20,7 @@
   
   <style>
     * {margin:0;padding:0;box-sizing:border-box;}
-    body {font-family:'Inter',sans-serif;background:#f4f6f9;color:#222;padding:2rem;}
+    body {font-family:'Inter',sans-serif;background:#f4f6f9;color:#222;padding:2rem;padding-bottom:100px;}
     .container {max-width:600px;margin:auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.1);}
     .header {background:#4a90e2;color:#fff;padding:2rem;text-align:center;position:relative;}
     .avatar {width:100px;height:100px;border-radius:50%;border:4px solid #fff;margin-top:-50px;box-shadow:0 4px 12px rgba(0,0,0,.2);object-fit:cover;}
@@ -44,6 +44,20 @@
     .btn:disabled {opacity:0.5;cursor:not-allowed;}
     .logout {position:absolute;top:1rem;right:1rem;background:#e74c3c;color:#fff;padding:.5rem 1rem;border-radius:8px;font-size:0.9rem;border:none;cursor:pointer;}
     .back-btn {position:absolute;top:1rem;left:1rem;background:rgba(255,255,255,0.2);color:#fff;padding:.5rem 1rem;border-radius:8px;font-size:0.9rem;border:none;cursor:pointer;text-decoration:none;display:inline-block;}
+    .back-btn:hover {background:rgba(255,255,255,0.3);}
+    
+    /* Player Styles */
+    .player {position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #ddd;padding:0.75rem;display:flex;align-items:center;gap:0.75rem;box-shadow:0 -4px 12px rgba(0,0,0,0.1);z-index:999;}
+    .player.hidden {display:none;}
+    .thumb-placeholder {width:50px;height:50px;background:#ddd;border-radius:8px;background-size:cover;background-position:center;}
+    .player .info {flex:1;min-width:0;}
+    .player .info h4 {font-size:0.9rem;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .player .controls {display:flex;gap:0.5rem;}
+    .icon-btn {background:none;border:none;cursor:pointer;padding:0.5rem;font-size:1.4rem;color:#4a90e2;}
+    .icon-btn:hover {color:#357abd;}
+    .seek-bar {width:100%;height:4px;-webkit-appearance:none;appearance:none;background:#ddd;border-radius:2px;outline:none;cursor:pointer;}
+    .seek-bar::-webkit-slider-thumb {-webkit-appearance:none;appearance:none;width:12px;height:12px;background:#4a90e2;border-radius:50%;cursor:pointer;}
+    .seek-bar::-moz-range-thumb {width:12px;height:12px;background:#4a90e2;border-radius:50%;cursor:pointer;border:none;}
   </style>
 </head>
 <body>
@@ -84,11 +98,146 @@
   </div>
 </div>
 
+<!-- PLAYER - Fixed Bottom Position -->
+<footer id="player" class="player hidden">
+  <div class="thumb-placeholder"></div>
+  <div class="info">
+    <h4 id="player-title">Select a song</h4>
+    <audio id="audio" preload="auto" crossorigin="anonymous"></audio>
+    <input type="range" id="seek" value="0" max="100" class="seek-bar" aria-label="Seek" />
+  </div>
+
+  <div class="controls">
+    <button id="prev" class="icon-btn" aria-label="Previous">
+      <span class="material-icons">skip_previous</span>
+    </button>
+    <button id="play-pause" class="icon-btn" aria-label="Play/Pause">
+      <span class="material-icons">play_arrow</span>
+    </button>
+    <button id="next" class="icon-btn" aria-label="Next">
+      <span class="material-icons">skip_next</span>
+    </button>
+    <button id="repeat" class="icon-btn" aria-label="Repeat">
+      <span class="material-icons">repeat</span>
+    </button>
+  </div>
+</footer>
+
 <!-- Firebase SDK -->
 <script type="module">
   import { auth, db, provider } from "./scripts/firebase-config.js";
   import { onAuthStateChanged, signOut, deleteUser, reauthenticateWithPopup } from "firebase/auth";
   import { doc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
+  import { playStateManager } from "./scripts/play-state-manager.js";
+
+  // Restore playback when page loads
+  const state = playStateManager.getState();
+  if (state && state.song) {
+    restorePlayback(state);
+  }
+
+  async function restorePlayback(state) {
+    try {
+      const audio = document.getElementById('audio');
+      const playerEl = document.getElementById('player');
+      const titleEl = document.getElementById('player-title');
+      const thumbEl = document.querySelector('.thumb-placeholder');
+      const playBtn = document.getElementById('play-pause').querySelector('span');
+
+      if (!audio || !state.song) return;
+
+      // Update UI
+      titleEl.textContent = state.song.title || 'Unknown Song';
+      thumbEl.style.backgroundImage = state.song.thumbnail ? `url(${state.song.thumbnail})` : '';
+      playerEl.classList.remove('hidden');
+
+      // Set up audio
+      audio.src = state.song.link;
+      audio.currentTime = state.currentTime || 0;
+
+      // Restore playback state
+      if (state.isPlaying) {
+        try {
+          audio.play().then(() => {
+            playBtn.textContent = 'pause';
+          }).catch(err => {
+            console.error('Auto-play failed:', err);
+            playBtn.textContent = 'play_arrow';
+          });
+        } catch (e) {
+          console.error('Playback restore error:', e);
+        }
+      } else {
+        playBtn.textContent = 'play_arrow';
+      }
+
+      // Setup basic controls
+      document.getElementById('play-pause').onclick = () => {
+        if (audio.paused) {
+          audio.play().then(() => playBtn.textContent = 'pause').catch(() => {});
+        } else {
+          audio.pause();
+          playBtn.textContent = 'play_arrow';
+        }
+      };
+
+      document.getElementById('seek').oninput = (e) => {
+        if (audio.duration) {
+          audio.currentTime = (e.target.value / 100) * audio.duration;
+        }
+      };
+
+      audio.ontimeupdate = () => {
+        const seek = document.getElementById('seek');
+        if (audio.duration) {
+          seek.value = (audio.currentTime / audio.duration) * 100;
+        }
+      };
+
+      // Save state before leaving and sync Firebase stats
+      document.querySelector('.back-btn').onclick = (e) => {
+        e.preventDefault();
+        
+        // Update state with current playback info for PWA persistence
+        playStateManager.saveState(
+          state.song,
+          !audio.paused,
+          audio.currentTime,
+          state.playlist,
+          state.currentIndex
+        );
+        
+        // Allow Firebase to finish syncing before navigating
+        setTimeout(() => {
+          location.href = 'index.html';
+        }, 100);
+      };
+
+    } catch (e) {
+      console.error('Error restoring playback:', e);
+    }
+  }
+
+  // Sync Firebase stats on dashboard (real-time PWA integration)
+  async function syncFirebaseStats() {
+    try {
+      if (!auth.currentUser) return;
+      
+      const userRef = doc(db, "users", auth.currentUser.uid);
+      const snap = await getDoc(userRef);
+      if (snap.exists()) {
+        const data = snap.data();
+        // Update dashboard with live Firebase data
+        minutesEl.textContent = Math.round(data.minutesListened || 0);
+        songsEl.textContent = data.songsPlayed || 0;
+      }
+    } catch (e) {
+      console.error("Error syncing Firebase stats:", e);
+    }
+  }
+  
+  // Sync stats periodically while on dashboard (real-time)
+  let statsSyncInterval = null;
 
   const avatarEl = document.getElementById('avatar');
   const nameEl = document.getElementById('display-name');
@@ -105,6 +254,9 @@
       location.href = "auth.html";
       return;
     }
+
+    // Clear previous sync interval
+    if (statsSyncInterval) clearInterval(statsSyncInterval);
 
     // Auto-fetch Google avatar
     avatarEl.src = user.photoURL || 'data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%27100%27 height=%27100%27><circle cx=%2750%27 cy=%2750%27 r=%2740%27 fill=%27%23ccc%27/><text x=%2750%25%27 y=%2755%25%27 font-size=%2730%27 fill=%27%23999%27 text-anchor=%27middle%27>?</text></svg>';
@@ -125,6 +277,14 @@
     } catch (e) {
       console.error("Error fetching user data:", e);
     }
+    
+    // Start real-time sync of stats every 3 seconds while on dashboard (PWA)
+    statsSyncInterval = setInterval(syncFirebaseStats, 3000);
+  });
+  
+  // Cleanup interval when leaving page
+  window.addEventListener('beforeunload', () => {
+    if (statsSyncInterval) clearInterval(statsSyncInterval);
   });
 
   // Save Name

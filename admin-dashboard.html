@@ -93,7 +93,7 @@
     const db = firebase.firestore();
 
     auth.onAuthStateChanged(async (user) => {
-      if (!user || user.email !== 'prabhakararyan2007@gmail.com') {
+      if (!user || user.email !== '') {
         window.location.href = 'auth.html';
         return;
       }
