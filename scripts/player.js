@@ -501,7 +501,7 @@ audio.ontimeupdate = () => {
   // Track listening progress
   if (!hasCountedSong && !audio.paused && songPlayStartTime) {
     const currentListenTime = totalListenedTime + (Date.now() - songPlayStartTime) / 1000;
-    if (currentListenTime >= 60) { // Count after 30 seconds
+    if (currentListenTime >= 60) { // Count after 60 seconds
       hasCountedSong = true;
     }
   }
