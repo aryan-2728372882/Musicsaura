@@ -670,7 +670,15 @@ onAuthStateChanged(auth, user => {
     if (state.currentSong) {
       playStateManager.saveState(state.currentSong, state.isPlaying, state.currentTime, state.playlist, state.currentIndex);
     }
-    location.href = user.email === "prabhakararyan2007@gmail.com" ? "admin-dashboard.html" : "user-dashboard.html";
+
+    // Open dashboard in a new tab to preserve playback in the current tab
+    const url = user.email === "prabhakararyan2007@gmail.com" ? "admin-dashboard.html" : "user-dashboard.html";
+    try {
+      window.open(url, '_blank', 'noopener');
+    } catch (e) {
+      // Fallback to same-tab navigation if popup blocked
+      location.href = url;
+    }
   };
 });
 
