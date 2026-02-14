@@ -101,10 +101,19 @@
 
 <!-- Firebase SDK -->
 <script type="module">
-  import { auth, db, provider } from "./scripts/firebase-config.js";
-  import { onAuthStateChanged, signOut, deleteUser, reauthenticateWithPopup } from "firebase/auth";
-  import { doc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
-  import { playStateManager } from "./scripts/play-state-manager.js";
+  import {
+    auth,
+    db,
+    provider,
+    onAuthStateChanged,
+    signOut,
+    deleteUser,
+    reauthenticateWithPopup,
+    doc,
+    getDoc,
+    updateDoc,
+    deleteDoc
+  } from "./scripts/firebase-config.js";
 
   // Sync Firebase stats on dashboard (real-time PWA integration)
   async function syncFirebaseStats() {

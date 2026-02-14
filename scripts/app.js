@@ -1,6 +1,5 @@
 // scripts/app.js — MusicsAura 2025 - OPTIMIZED
-import { auth } from "./firebase-config.js";
-import { onAuthStateChanged } from "firebase/auth";
+import { auth, onAuthStateChanged } from "./firebase-config.js";
 import { player } from "./player.js";
 
 /* DOM references - cached once */

@@ -3,6 +3,6 @@
   "appName": "MusicsAura",
   "webDir": "www",
   "server": {
-    "url": "https://musicsaura.vercel.app/index"
+    "url": "https://musicsaura.vercel.app/"
   }
 }

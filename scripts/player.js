@@ -1,8 +1,13 @@
 // scripts/player.js — Musicsaura 2025 - FIXED Volume & Stats
-import { auth, db } from "./firebase-config.js";
-import { onAuthStateChanged } from "firebase/auth";
-import { doc, updateDoc, increment, serverTimestamp } from "firebase/firestore";
-import { playStateManager } from "./play-state-manager.js";
+import {
+  auth,
+  db,
+  onAuthStateChanged,
+  doc,
+  updateDoc,
+  increment,
+  serverTimestamp
+} from "./firebase-config.js";
 
 const audio = document.getElementById('audio');
 const titleEl = document.getElementById('player-title');
@@ -23,6 +28,35 @@ let totalListenedTime = 0;
 let hasCountedSong = false;
 let playlist = [];
 let currentIndex = 0;
+
+const PLAYBACK_STATE_KEY = "musicsaura-playback-state";
+const LOCAL_STATS_KEY = "musicsaura-local-stats";
+
+function savePlaybackState(song, isPlaying, currentTime, songs, index) {
+  try {
+    const payload = {
+      song,
+      isPlaying,
+      currentTime: Number.isFinite(currentTime) ? currentTime : 0,
+      playlist: Array.isArray(songs) ? songs : [],
+      currentIndex: Number.isInteger(index) ? index : 0,
+      updatedAt: Date.now()
+    };
+    localStorage.setItem(PLAYBACK_STATE_KEY, JSON.stringify(payload));
+  } catch (e) {}
+}
+
+function syncPlaybackStats(minutes = 0, songsPlayed = 0) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LOCAL_STATS_KEY) || "{}");
+    const next = {
+      minutesListened: Math.max(0, Number(saved.minutesListened || 0) + Number(minutes || 0)),
+      songsPlayed: Math.max(0, Number(saved.songsPlayed || 0) + Number(songsPlayed || 0)),
+      updatedAt: Date.now()
+    };
+    localStorage.setItem(LOCAL_STATS_KEY, JSON.stringify(next));
+  } catch (e) {}
+}
 
 // DJ Fade settings - OPTIMIZED
 let fadeInDuration = 800;
@@ -537,12 +571,12 @@ async function saveSongStats() {
     ]);
     
     // Also update localStorage for PWA offline support
-    playStateManager.syncPlaybackStats(minutes, 1);
+    syncPlaybackStats(minutes, 1);
     
   } catch (e) {
     console.error('Stats update error:', e);
     // Fallback to localStorage if Firebase fails (offline)
-    playStateManager.syncPlaybackStats(minutes || 0.5, 1);
+    syncPlaybackStats(minutes || 0.5, 1);
   }
 }
 
@@ -668,7 +702,7 @@ onAuthStateChanged(auth, user => {
     // Save playback state before navigating
     const state = player.getState();
     if (state.currentSong) {
-      playStateManager.saveState(state.currentSong, state.isPlaying, state.currentTime, state.playlist, state.currentIndex);
+      savePlaybackState(state.currentSong, state.isPlaying, state.currentTime, state.playlist, state.currentIndex);
     }
     location.href = user.email === "prabhakararyan2007@gmail.com" ? "admin-dashboard.html" : "user-dashboard.html";
   };
@@ -693,7 +727,7 @@ window.addEventListener('beforeunload', () => {
   
   // Save current playback state to localStorage for PWA persistence
   if (currentSong) {
-    playStateManager.saveState(currentSong, !audio.paused, audio.currentTime, playlist, currentIndex);
+    savePlaybackState(currentSong, !audio.paused, audio.currentTime, playlist, currentIndex);
   }
   
   // Try to save stats before leaving (may or may not complete)
