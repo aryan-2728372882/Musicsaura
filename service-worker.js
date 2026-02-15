@@ -1,6 +1,6 @@
 // service-worker.js — MusicsAura 2025 - OPTIMIZED with Cache Busting
 // Version with automatic cache invalidation on deployment
-const CACHE_VERSION = '2026-02-14-v2'; // Update this on each deployment
+const CACHE_VERSION = '2026-02-15-v3'; // Update this on each deployment
 const CACHE_NAME = 'MusicsAura-' + CACHE_VERSION;
 const CORE_ASSETS = [
   '/',

@@ -28,6 +28,12 @@ let totalListenedTime = 0;
 let hasCountedSong = false;
 let playlist = [];
 let currentIndex = 0;
+let userInitiatedPause = false;
+let trackTransitioning = false;
+let backgroundModeConfigured = false;
+let autoAdvanceRetryTimer = null;
+let autoAdvanceRetryCount = 0;
+const MAX_AUTO_ADVANCE_RETRIES = 4;
 
 const PLAYBACK_STATE_KEY = "musicsaura-playback-state";
 const LOCAL_STATS_KEY = "musicsaura-local-stats";
@@ -56,6 +62,13 @@ function syncPlaybackStats(minutes = 0, songsPlayed = 0) {
     };
     localStorage.setItem(LOCAL_STATS_KEY, JSON.stringify(next));
   } catch (e) {}
+}
+
+function clearAutoAdvanceRetry() {
+  if (autoAdvanceRetryTimer) {
+    clearTimeout(autoAdvanceRetryTimer);
+    autoAdvanceRetryTimer = null;
+  }
 }
 
 // DJ Fade settings - OPTIMIZED
@@ -210,11 +223,44 @@ function stopServiceWorkerKeepAlive() {
 }
 
 // Cordova/Capacitor background mode (Android native wrapper)
+function configureBackgroundMode() {
+  const bg = window.cordova?.plugins?.backgroundMode;
+  if (!bg || backgroundModeConfigured) return;
+
+  try {
+    bg.setDefaults?.({
+      title: "MusicsAura",
+      text: "Playback running in background",
+      resume: true,
+      hidden: false,
+      silent: false
+    });
+
+    if (typeof bg.on === "function") {
+      bg.on("activate", () => {
+        try {
+          bg.disableWebViewOptimizations?.();
+        } catch (e) {}
+      });
+    }
+
+    backgroundModeConfigured = true;
+  } catch (e) {}
+}
+
 function enableBackgroundMode() {
   const bg = window.cordova?.plugins?.backgroundMode;
   if (!bg) return;
   try {
-    bg.setDefaults?.({ silent: true, hidden: true });
+    configureBackgroundMode();
+    bg.setDefaults?.({
+      title: "MusicsAura",
+      text: currentSong?.title ? `Playing: ${currentSong.title}` : "Playback running in background",
+      resume: true,
+      hidden: false,
+      silent: false
+    });
+    bg.disableWebViewOptimizations?.();
     if (!bg.isEnabled()) bg.enable();
   } catch (e) {}
 }
@@ -226,6 +272,10 @@ function disableBackgroundMode() {
     if (bg.isEnabled()) bg.disable();
   } catch (e) {}
 }
+
+document.addEventListener("deviceready", () => {
+  configureBackgroundMode();
+}, { once: true });
 
 // Wake Lock to reduce sleep interruptions during playback
 let wakeLock = null;
@@ -253,6 +303,9 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && !audio.paused) {
     requestWakeLock();
     enableBackgroundMode();
+  } else if (document.hidden && !audio.paused) {
+    enableBackgroundMode();
+    startServiceWorkerKeepAlive();
   }
 });
 
@@ -334,7 +387,11 @@ export const player = {
       console.error('No song link');
       return;
     }
-    
+
+    clearAutoAdvanceRetry();
+    userInitiatedPause = false;
+    trackTransitioning = true;
+
     // Update stats for previous song without blocking playback
     saveSongStats();
     
@@ -360,9 +417,34 @@ export const player = {
     thumbEl.style.backgroundImage = song.thumbnail ? `url(${song.thumbnail})` : '';
     updateMediaSession(song);
     showPlayer();
+    enableBackgroundMode();
     
     // Set initial volume (clamped)
     audio.volume = 0.3;
+
+    const markTrackStarted = () => {
+      trackTransitioning = false;
+      autoAdvanceRetryCount = 0;
+      clearAutoAdvanceRetry();
+    };
+
+    const scheduleRetryForCurrentTrack = () => {
+      trackTransitioning = false;
+
+      if (autoAdvanceRetryCount >= MAX_AUTO_ADVANCE_RETRIES) {
+        playBtn.textContent = 'play_arrow';
+        return;
+      }
+
+      autoAdvanceRetryCount += 1;
+      clearAutoAdvanceRetry();
+      autoAdvanceRetryTimer = setTimeout(() => {
+        autoAdvanceRetryTimer = null;
+        if (audio.paused && playlist[currentIndex]) {
+          player.playSong(playlist[currentIndex]);
+        }
+      }, 1500);
+    };
     
     // Check if preloaded
     const isPreloaded = preloadAudio && preloadAudio.src === fixedUrl && 
@@ -376,11 +458,14 @@ export const player = {
       audio.play().then(() => {
         playBtn.textContent = 'pause';
         startServiceWorkerKeepAlive();
+        requestWakeLock();
+        enableBackgroundMode();
         startFade("in");
+        markTrackStarted();
         setTimeout(() => preloadNextSong(), 1000);
       }).catch(err => {
         console.error('Preloaded play failed:', err);
-        playBtn.textContent = 'play_arrow';
+        scheduleRetryForCurrentTrack();
       });
       
       return;
@@ -397,6 +482,7 @@ export const player = {
     enableBackgroundMode();
     
     playPromise.then(() => {
+      markTrackStarted();
       startFade("in");
       setTimeout(() => preloadNextSong(), 1000);
     }).catch(err => {
@@ -404,10 +490,11 @@ export const player = {
         audio.play().then(() => {
           playBtn.textContent = 'pause';
           startFade("in");
+          markTrackStarted();
           setTimeout(() => preloadNextSong(), 1000);
         }).catch(e => {
           console.error('Delayed play failed:', e);
-          playBtn.textContent = 'play_arrow';
+          scheduleRetryForCurrentTrack();
         });
       };
       
@@ -416,7 +503,7 @@ export const player = {
       setTimeout(() => {
         audio.removeEventListener('canplay', canPlayHandler);
         if (audio.paused) {
-          playBtn.textContent = 'play_arrow';
+          scheduleRetryForCurrentTrack();
         }
       }, 5000);
     });
@@ -461,6 +548,9 @@ export const player = {
 
 // Controls
 function play() { 
+  userInitiatedPause = false;
+  trackTransitioning = false;
+  clearAutoAdvanceRetry();
   resumeAudioContext().then(() => {
     audio.play().then(() => { 
       playBtn.textContent = 'pause'; 
@@ -478,6 +568,9 @@ function play() {
 }
 
 function pause() { 
+  userInitiatedPause = true;
+  trackTransitioning = false;
+  clearAutoAdvanceRetry();
   audio.pause(); 
   playBtn.textContent = 'play_arrow'; 
   stopFade(); 
@@ -553,8 +646,9 @@ async function saveSongStats() {
   // Only save if listened for at least 30 seconds
   if (totalListenedTime < 30) return;
   
+  let minutes = 0.5;
   try {
-    const minutes = Math.max(0.5, Math.round((totalListenedTime / 60) * 2) / 2);
+    minutes = Math.max(0.5, Math.round((totalListenedTime / 60) * 2) / 2);
 
     // Always try Firebase first for real-time updates
     const updatePromise = updateDoc(doc(db, "users", auth.currentUser.uid), {
@@ -583,6 +677,10 @@ async function saveSongStats() {
 // Handle song end
 audio.onended = () => {
   stopFade();
+  userInitiatedPause = false;
+  trackTransitioning = true;
+  enableBackgroundMode();
+  startServiceWorkerKeepAlive();
   
   // Save stats without blocking next song
   saveSongStats();
@@ -594,9 +692,16 @@ audio.onended = () => {
     hasCountedSong = false;
     audio.volume = 0.3;
     
-    audio.play(); 
-    playBtn.textContent = 'pause'; 
-    startFade("in");
+    audio.play().then(() => {
+      playBtn.textContent = 'pause';
+      trackTransitioning = false;
+      autoAdvanceRetryCount = 0;
+      startFade("in");
+    }).catch(() => {
+      if (playlist[currentIndex]) {
+        player.playSong(playlist[currentIndex]);
+      }
+    });
   } else if (repeat === 'all' || repeat === 'off') {
     audio.volume = 0.3;
     playNextSong();
@@ -609,8 +714,14 @@ audio.onerror = (e) => {
   
   console.error('Audio error:', audio.error);
   playBtn.textContent = 'play_arrow';
-  releaseWakeLock();
-  disableBackgroundMode();
+  
+  if (userInitiatedPause && !trackTransitioning) {
+    releaseWakeLock();
+    disableBackgroundMode();
+  } else {
+    enableBackgroundMode();
+    startServiceWorkerKeepAlive();
+  }
   
   if (audio.error && audio.error.code === audio.error.MEDIA_ERR_NETWORK) {
     setTimeout(() => {
@@ -619,13 +730,17 @@ audio.onerror = (e) => {
         audio.src = retryUrl;
         audio.play().then(() => {
           playBtn.textContent = 'pause';
+          trackTransitioning = false;
+          autoAdvanceRetryCount = 0;
           startFade("in");
         }).catch(() => {
+          trackTransitioning = true;
           setTimeout(() => playNextSong(), 500);
         });
       }
     }, 500);
   } else if (audio.error?.code !== 4) {
+    trackTransitioning = true;
     setTimeout(() => playNextSong(), 1000);
   }
 };
@@ -642,18 +757,33 @@ document.addEventListener('visibilitychange', () => {
 
 // Handle audio interruptions
 audio.addEventListener('pause', () => {
-  if (!audio.ended) {
+  const naturalEnd = audio.ended;
+  const shouldKeepBackground = trackTransitioning || naturalEnd;
+
+  if (!naturalEnd) {
     playBtn.textContent = 'play_arrow';
   }
-  releaseWakeLock();
-  disableBackgroundMode();
-  
-  if ('mediaSession' in navigator) {
-    navigator.mediaSession.playbackState = 'paused';
+
+  if (userInitiatedPause && !shouldKeepBackground) {
+    releaseWakeLock();
+    disableBackgroundMode();
+    stopServiceWorkerKeepAlive();
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = 'paused';
+    }
+  } else {
+    enableBackgroundMode();
+    startServiceWorkerKeepAlive();
   }
+
+  userInitiatedPause = false;
 });
 
 audio.addEventListener('play', () => {
+  userInitiatedPause = false;
+  trackTransitioning = false;
+  clearAutoAdvanceRetry();
+  autoAdvanceRetryCount = 0;
   playBtn.textContent = 'pause';
   requestWakeLock();
   enableBackgroundMode();
@@ -677,7 +807,9 @@ function playNextSong() {
   if (!playlist.length) {
     return pause(); 
   }
-  
+
+  userInitiatedPause = false;
+  trackTransitioning = true;
   currentIndex = (currentIndex + 1) % playlist.length; 
   player.playSong(playlist[currentIndex]); 
 }
@@ -690,6 +822,8 @@ function playPreviousSong() {
     songPlayStartTime = Date.now(); 
   }
   else if (playlist.length) { 
+    userInitiatedPause = false;
+    trackTransitioning = true;
     currentIndex = (currentIndex - 1 + playlist.length) % playlist.length; 
     player.playSong(playlist[currentIndex]); 
   }
@@ -724,6 +858,7 @@ let heartbeatInterval = setInterval(() => {
 window.addEventListener('beforeunload', () => {
   clearInterval(heartbeatInterval);
   stopServiceWorkerKeepAlive();
+  clearAutoAdvanceRetry();
   
   // Save current playback state to localStorage for PWA persistence
   if (currentSong) {
