@@ -28,6 +28,7 @@ let totalListenedTime = 0;
 let hasCountedSong = false;
 let playlist = [];
 let currentIndex = 0;
+const isNativeShell = !!window.cordova;
 let userInitiatedPause = false;
 let trackTransitioning = false;
 let backgroundModeConfigured = false;
@@ -69,6 +70,11 @@ function clearAutoAdvanceRetry() {
     clearTimeout(autoAdvanceRetryTimer);
     autoAdvanceRetryTimer = null;
   }
+}
+
+function isNearTrackEnd() {
+  if (!Number.isFinite(audio.duration) || audio.duration <= 0) return false;
+  return audio.currentTime >= Math.max(0, audio.duration - 1);
 }
 
 // DJ Fade settings - OPTIMIZED
@@ -155,6 +161,7 @@ let gainNode = null;
 let audioContextInitialized = false;
 
 function initAudioContext() {
+  if (!isNativeShell) return null;
   if (audioContextInitialized) return audioContext;
   
   try {
@@ -184,6 +191,7 @@ function initAudioContext() {
 }
 
 function resumeAudioContext() {
+  if (!isNativeShell) return Promise.resolve();
   if (!audioContext) {
     initAudioContext();
     return Promise.resolve();
@@ -759,6 +767,21 @@ document.addEventListener('visibilitychange', () => {
 audio.addEventListener('pause', () => {
   const naturalEnd = audio.ended;
   const shouldKeepBackground = trackTransitioning || naturalEnd;
+  const fallbackAutoAdvance = !naturalEnd && !userInitiatedPause && !trackTransitioning && isNearTrackEnd();
+
+  if (fallbackAutoAdvance) {
+    trackTransitioning = true;
+    userInitiatedPause = false;
+    enableBackgroundMode();
+    startServiceWorkerKeepAlive();
+
+    if (repeat === 'one' && currentSong?.link) {
+      player.playSong(currentSong);
+    } else {
+      playNextSong();
+    }
+    return;
+  }
 
   if (!naturalEnd) {
     playBtn.textContent = 'play_arrow';
@@ -774,6 +797,24 @@ audio.addEventListener('pause', () => {
   } else {
     enableBackgroundMode();
     startServiceWorkerKeepAlive();
+
+    // Browser/PWA lock-screen can trigger a pause without firing ended.
+    // Recover automatically so user doesn't need to unlock and tap again.
+    if (!naturalEnd && !trackTransitioning) {
+      setTimeout(() => {
+        if (!userInitiatedPause && !trackTransitioning && audio.paused) {
+          if (isNearTrackEnd()) {
+            trackTransitioning = true;
+            playNextSong();
+            return;
+          }
+
+          audio.play().then(() => {
+            playBtn.textContent = 'pause';
+          }).catch(() => {});
+        }
+      }, 250);
+    }
   }
 
   userInitiatedPause = false;
@@ -874,7 +915,34 @@ window.addEventListener('beforeunload', () => {
 // Register service worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+    navigator.serviceWorker.register('/service-worker.js').then(reg => {
+      reg.update().catch(() => {});
+
+      const activateWaitingWorker = () => {
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+      };
+
+      activateWaitingWorker();
+
+      reg.addEventListener('updatefound', () => {
+        const worker = reg.installing;
+        if (!worker) return;
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+            activateWaitingWorker();
+          }
+        });
+      });
+    }).catch(() => {});
+
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
   });
 }
 
