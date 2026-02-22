@@ -1,29 +1,5 @@
 [
   {
-    "title": "Aaja Sanam Madhur Chandni",
-    "artist": "Lata Mangeshkar, Manna Dey",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Aaja%20Sanam%20Madhur%20Chandni.mp3",
-    "thumbnail": "https://a10.gaanacdn.com/gn_img/albums/Dk9KN2KBx1/k9KNzXqKBx/size_m.webp",
-    "keywords": ["Aaja", "Sanam", "Madhur", "Chandni", "Lata Mangeshkar", "Manna Dey"],
-    "genre": "50s"
-  },
-  {
-    "title": "Bheegi Bheegi Raaton Mein",
-    "artist": "Kishore Kumar, Lata Mangeshkar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Bheegi%20Bheegi%20Raaton%20Mein.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/VaJ7Qy0ADC8/maxresdefault.jpg",
-    "keywords": ["Bheegi", "Bheegi", "Raaton", "Mein", "Kishore Kumar", "Lata Mangeshkar"],
-    "genre": "50s"
-  },
-  {
-    "title": "Aane sei uske aaye bahar",
-    "artist": "Mohammed Rafi",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Aane%20Se%20Uske%20Aaye%20Bahar.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/GNTNnp5rk5E/maxresdefault.jpg",
-    "keywords": ["Aane","Sei","Uske","Aaye","Bahar","Mohammed Rafi"],
-    "genre": "50s"
-  },
-  {
     "title": "Apno Ki Mehfil Mein Begane Hum",
     "artist": "Kumar Sanu",
     "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Apno%20Ki%20Mehfil%20Mein%20Begane%20Hum.mp3",
@@ -48,55 +24,6 @@
     "genre": "50s"
   },
   {
-    "title": "Bheegi Bheegi Raaton Mein",
-    "artist": "Kishore Kumar, Lata Mangeshkar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Bheegi%20Bheegi%20Raaton%20Mein.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/VaJ7Qy0ADC8/maxresdefault.jpg",
-    "keywords": ["Bheegi", "Bheegi", "Raaton", "Mein", "Kishore Kumar", "Lata Mangeshkar"],
-    "genre": "50s"
-  },
-  {
-    "title": "Chala Jata Hoon",
-    "artist": "Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Chala%20Jata%20Hoon.mp3",
-    "thumbnail": "https://c.saavncdn.com/710/Chala-Jata-Hoon-Remembering-Kishore-Kumar-Hindi-2016-500x500.jpg",
-    "keywords": ["Chala", "Jata", "Hoon", "Kishore Kumar"],
-    "genre": "50s"
-  },
-  {
-    "title": "Chand Si Mehbooba Ho Meri",
-    "artist": "Mukesh",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Chand%20Si%20Mehbooba%20Ho%20Meri.mp3",
-    "thumbnail": "https://i.scdn.co/image/ab67616d00001e02e0e571a2479687842853c6e6",
-    "keywords": ["Chand", "Si", "Mehbooba", "Ho", "Meri", "Mukesh"],
-    "genre": "50s"
-  },
-  {
-    "title": "Chehra Hai Ya Chand Khila Hai",
-    "artist": "Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Chehra%20Hai%20Ya%20Chand%20Khila%20Hai.mp3",
-    "thumbnail": "https://c.saavncdn.com/107/Chehra-Hai-Ya-Chand-Khila-Hai-Hindi-2023-20230523003010-500x500.jpg",
-    "keywords": ["Chehra", "Hai", "Ya", "Chand", "Khila", "Hai", "Kishore Kumar"],
-    "genre": "50s"
-  },
-  {
-    "title": "Chura Liya Hai Tumne Jo Dil Ko",
-    "artist": "Asha Bhosle, Mohammad Rafi",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Chura%20Liya%20Hai%20Tumne%20Jo%20Dil%20Ko.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/XuCp0r3vhPQ/maxresdefault.jpg",
-    "keywords": ["Chura", "Liya", "Hai", "Tumne", "Jo", "Dil", "Ko", "Asha Bhosle", "Mohammad Rafi"],
-    "genre": "50s"
-  },
-  {
-    "title": "Dekha Ek Khwab",
-    "artist": "Lata Mangeshkar, Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Dekha%20Ek%20Khwab%20Song.mp3",
-    "thumbnail": "https://c.saavncdn.com/471/Dekha-Ek-Khwab-Hindi-2015-500x500.jpg",
-    "keywords": ["Dekha", "Ek", "Khwab", "Song", "Lata Mangeshkar", "Kishore Kumar"],
-    "genre": "50s"
-  },
-
-  {
     "title": "Dheere Dheere Se Meri Zindagi Mein Aana",
     "artist": "Anuradha Paudwal, Kumar Sanu",
     "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Dheere%20Dheere%20Se%20Meri%20Zindagi%20Mein%20Aana.mp3",
@@ -113,43 +40,11 @@
     "genre": "50s"
   },
   {
-    "title": "Dil Kya Kare Jab Kisi Ko",
-    "artist": "Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Dil%20Kya%20Kare%20Jab%20Kisi%20Ko.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/iaaBqrQrtUM/maxresdefault.jpg",
-    "keywords": ["Dil", "Kya", "Kare", "Jab", "Kisi", "Ko", "Kishore Kumar"],
-    "genre": "50s"
-  },
-  {
-    "title": "Dilbar Mere",
-    "artist": "R. D. Burman, Kishore Kumar, Anette",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Dilbar%20Mere.mp3",
-    "thumbnail": "https://c.saavncdn.com/427/Satte-Pe-Satta-Hindi-2008-20240829135601-500x500.jpg",
-    "keywords": ["Dilbar", "Mere", "R. D. Burman", "Kishore Kumar", "Anette"],
-    "genre": "50s"
-  },
-  {
     "title": "Ek Mulaqat Zaroori Hai Sanam",
     "artist": "Ameen Sabri, Farid Sabri Jaipuri, Sameer Anjaan, Bhushan Dua, Jaspinder Narula",
     "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Ek%20Mulaqat%20Zaroori%20Hai%20Sanam.mp3",
     "thumbnail": "https://i.ytimg.com/vi/qKpnmFiCTSY/maxresdefault.jpg",
     "keywords": ["Ek","Mulaqat","Zaroori","Hai","Sanam","Ameen Sabri","Farid Sabri Jaipuri","Sameer Anjaan",""],
-    "genre": "50s"
-  },
-  {
-    "title": "Gulabi Aankhen Jo Tere Dekhi",
-    "artist": "Mohammed Rafi",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Gulabi%20Aankhen%20Jo%20Teri%20Dekhi.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/Xsn0QjMN3fM/maxresdefault.jpg",
-    "keywords": ["Gulabi", "Aankhen", "Jo", "Teri", "Dekhi", "Mohammed Rafi"],
-    "genre": "50s"
-  },
-  {
-    "title": "Haal Kya Hai Dilon Ka",
-    "artist": "Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Haal%20Kya%20Hai%20Dilon%20Ka.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/xpoccSwPNMQ/maxresdefault.jpg",
-    "keywords": ["Haal","Kya","Hai","Dilon","Ka","Kishore Kumar"],
     "genre": "50s"
   },
   {
@@ -166,22 +61,6 @@
     "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Iss%20Tarah%20Aashiqi%20Ka%20Asar%20Chod%20Jaunga.mp3",
     "thumbnail": "https://i.ytimg.com/vi/Y-o8NQ8Y36A/maxresdefault.jpg",
     "keywords": ["Iss","Tarah","Aashiqi","Ka","Asar","Chod","Jaunga","Amit Kumar"],
-    "genre": "50s"
-  },
-  {
-    "title": "Itna Tu Mujhse Tu Pyaar Badha",
-    "artist": "Talat Mahmood, Lata Mangeshkar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Itna%20Na%20Mujhse%20Tu%20Pyaar%20Badha.mp3",
-    "thumbnail": "https://i.scdn.co/image/ab67616d0000b2730fcd8746bd3fcb9cd4e7d88b",
-    "keywords": ["Itna","Tu","Mujhse","Pyar","Badha","Talat Mahmood","Lata Mangeshkar"],
-    "genre": "50s"
-  },
-  {
-    "title": "Kehdoon Tumhen Ya Chup Rahun",
-    "artist": "DJ Aqeel, Kishore Kumar, Asha Bhosle",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Kehdoon%20Tumhen%20Ya%20Chup%20Rahun.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/0QlQo5erDJE/maxresdefault.jpg",
-    "keywords": ["Kehdoon","Tumhen","Ya","Chup","Rahun","DJ Aqeel","Kishore Kumar","Asha Bhosle"],
     "genre": "50s"
   },
   {
@@ -209,22 +88,6 @@
     "genre": "50s"
   },
   {
-    "title": "Kya Khoob Lagti Ho",
-    "artist": "Kanchan, Mukesh",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Kya%20Khoob%20Lagti%20Ho.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/g7XhrF-jM74/maxresdefault.jpg",
-    "keywords": ["Kya","Khoob","Lagti","Ho","Kanchan","Mukesh"],
-    "genre": "50s"
-  },
-  {
-    "title": "Likhe Jo Khat Tujhe",
-    "artist": "Mohammed Rafi",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Likhe%20Jo%20Khat%20Tujhe.mp3",
-    "thumbnail": "https://s.saregama.tech/image/c/fw_485/5/c4/04/likhejokhattujhe_1440x1440_1720685804.jpg",
-    "keywords": ["Likhe","Jo","Khat","Tujhe","Mohammed Rafi"],
-    "genre": "50s"
-  },
-  {
     "title": "Mera Sanam Sabse Pyara Hai",
     "artist": "Kumar Sanu, Asha Bhosle",
     "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Mera%20Sanam%20Sabse%20Pyara%20Hai.mp3",
@@ -232,31 +95,6 @@
     "keywords": ["Mera","Sanam","Sabse","Pyara","Hai","Kumar Sanu","Asha Bhosle"],
     "genre": "50s"
   },
-  {
-    "title": "Mere Mehboob Qayamat Hogi",
-    "artist": "Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Mere%20Mehboob%20Qayamat%20Hogi.mp3",
-    "thumbnail": "https://i.scdn.co/image/ab67616d0000b2738d4444a4f80509cfb083d71d",
-    "keywords": ["Mere","Mehboob","Qayamat","Hogi","Kishore Kumar"],
-    "genre": "50s"
-  },
-  {
-    "title": "Mere Samne Wali Khidki Mein",
-    "artist": "Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Mere%20Samne%20Wali%20Khidki%20Mein.mp3",
-    "thumbnail": "https://c.saavncdn.com/629/Mere-Samne-Wali-Khidki-Hindi-2023-20230427103434-500x500.jpg",
-    "keywords": ["Mere","Samne","Wali","Khidki","Mein","Kishore Kumar"],
-    "genre": "50s"
-  },
-  {
-    "title": "Meri Bheegi Bheegi Si",
-    "artist": "Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Meri%20Bheegi%20Bheegi%20Si.mp3",
-    "thumbnail": "https://c.saavncdn.com/791/Meri-Bheegi-Bheegi-Si-Sanjeev-Kumar-Hindi-2020-20200715162808-500x500.jpg",
-    "keywords": ["Meri","Bheegi","Bheegi","Si","Kishore Kumar"],
-    "genre": "50s"
-  },
-
   {
     "title": "Mohabbat Dil Ka Sakoon Hai Aitbaar",
     "artist": "Alka Yagnik, Kumar Sanu, Udit Narayan",
@@ -266,43 +104,11 @@
     "genre": "50s"
   },
   {
-    "title": "Neele Neele Ambar Par",
-    "artist": "Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Neele%20Neele%20Ambar%20Par.mp3",
-    "thumbnail": "https://c.saavncdn.com/413/Neele-Neele-Ambar-Par-Sped-Up-Hindi-2024-20240311121227-500x500.jpg",
-    "keywords": ["Neele","Neele","Ambar","Par","Kishore Kumar"],
-    "genre": "50s"
-  },
-  {
-    "title": "O Mere Dil Ke Chain",
-    "artist": "Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/O%20Mere%20Dil%20Ke%20Chain.mp3",
-    "thumbnail": "https://s.saregama.tech/image/c/fw_485/b/fe/7f/omeredilkechain-reprise_1440x1440_1683179625.jpg",
-    "keywords": ["O","Mere","Dil","Ke","Chain","Kishore Kumar"],
-    "genre": "50s"
-  },
-  {
     "title": "Paas Woh Aane Lage",
     "artist": "Alka Yagnik, Kumar Sanu",
     "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Paas%20Woh%20Aane%20Lage.mp3",
     "thumbnail": "https://c.saavncdn.com/474/Main-Khiladi-Tu-Anari-Original-Motion-Picture-Soundtrack-Hindi-1994-20250912131553-500x500.jpg",
     "keywords": ["Paas","Woh","Aane","Lage","Alka Yagnik","Kumar Sanu"],
-    "genre": "50s"
-  },
-  {
-    "title": "Pal Bhar Ke Liye Koi Humein",
-    "artist": "Kishore Kumar, Usha Khanna",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Pal%20Bhar%20Ke%20Liye%20Koi%20Humein.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/t2fl4GALQ8E/maxresdefault.jpg",
-    "keywords": ["Pal","Bhar","Ke","Liye","Koi","Humein","Kishore Kumar","Usha Khanna"],
-    "genre": "50s"
-  },
-  {
-    "title": "Pyaar Deewana Hota Hai",
-    "artist": "Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Pyar%20Deewana%20Hota%20Hai.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/wtfRQ76-I7k/maxresdefault.jpg",
-    "keywords": ["Pyaar","Deewana","Hota","Hai","Kishore Kumar"],
     "genre": "50s"
   },
   {
@@ -347,27 +153,11 @@
     "genre": "50s"
   },
   {
-    "title": "Tu Tu Hai Wahi",
-    "artist": "Asha Bhosle, Kishor Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Tu%20Tu%20Hai%20Wahi.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/E_qgsgrC9YY/sddefault.jpg",
-    "keywords": ["Tuu","Hai","Wahi","Asha Bhosle","Kishor Kumar"],
-    "genre": "50s"
-  },
-  {
     "title": "Tujhe Na Dekhu Toh Chain Mujhe Aata Nahi Hai",
     "artist": "Alka Yagnik, Kumar Sanu",
     "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Tujhe%20Na%20Dekhu%20Toh%20Chain%20Mujhe%20Aata%20Nahi%20Hai.mp3",
     "thumbnail": "https://i.ytimg.com/vi/gzQXoEPKCwQ/sddefault.jpg?v=633ffe59",
     "keywords": ["Tujhe","Na","Dekhu","Toh","Chain","Mujhe","Aata","Nahi","Alka Yagnik","Kumar Sanu"],
-    "genre": "50s"
-  },
-  {
-    "title": "Tum Agar Saath Dene Ka Vaada Karo",
-    "artist": "Mahendra Kapoor",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Tum%20Agar%20Saath%20Dene%20Ka%20Vada%20Karo.mp3",
-    "thumbnail": "https://i.scdn.co/image/ab67616d0000b273936073c7ed03d64333e924ba",
-    "keywords": ["Tum","Agar","Saath","Dene","Ka","Vada","Karo","Mahendra Kapoor"],
     "genre": "50s"
   },
   {
@@ -384,38 +174,6 @@
     "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Tumhein%20Dekhen%20Meri%20Aankhen.mp3",
     "thumbnail": "https://c.saavncdn.com/639/Tumhein-Dekhen-Meri-Aankhen-Lofi-Mix-Hindi-2023-20250217163311-500x500.jpg",
     "keywords": ["Tumhe","Dekhen","Meri","Aankhen","Sunanda","Alka Yagnik","Kumar Sanu"],
-    "genre": "50s"
-  },
-  {
-    "title": "Tumhin Meri Mandir",
-    "artist": "Lata Mangeshkar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Tumhin%20Meri%20Mandir.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/URrRzFikcD0/hq720.jpg?sqp=-oaymwEhCK4FEIIDSFryq4qpAxMIARUAAAAAGAElAADIQj0AgKJD&rs=AOn4CLD4oOp-XoJ7ZMdaWLKCmG1vRyHWFQ",
-    "keywords": ["Tumhin","Meri","Mandir","Lata Mangeshkar"],
-    "genre": "50s"
-  },
-  {
-    "title": "Yeh Mana Meri Jaan Mohabbat Sazaa Hai",
-    "artist": "Balbir, Mohammed Rafi",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Yeh%20Mana%20Meri%20Jaan%20Mohabbat%20Sazaa%20Hai.mp3",
-    "thumbnail": "https://a10.gaanacdn.com/gn_img/albums/d41WjnWPLq/41WjgP6bPL/size_m.webp",
-    "keywords": ["Yeh","Mana","Meri","Jaan","Mohabbat","Sazaa","Hai","Balbir","Mohammed Rafi"],
-    "genre": "50s"
-  },
-  {
-    "title": "Yeh Vaada Raha",
-    "artist": "Kishore Kumar, Asha Bhosle",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Yeh%20Vaada%20Raha.mp3",
-    "thumbnail": "https://i.scdn.co/image/ab67616d0000b273daf22399a86239fdb2fe002d",
-    "keywords": ["Yeh","Vaada","Raha","Kishore Kumar","Asha Bhosle"],
-    "genre": "50s"
-  },
-  {
-    "title": "Zindagi Ek Safar Hai Suhana",
-    "artist": "Kishore Kumar",
-    "link": "https://file.garden/aRgAQiYidD0tulQV/Old/Zindagi%20Ek%20Safar%20Hai%20Suhana.mp3",
-    "thumbnail": "https://i.ytimg.com/vi/GjPGVVebVUc/hq720.jpg?sqp=-oaymwEhCK4FEIIDSFryq4qpAxMIARUAAAAAGAElAADIQj0AgKJD&rs=AOn4CLDkhrbo9i4VVPIsvisWIxUxrX13Qw",
-    "keywords": ["Zindagi","Ek","Safar","Hai","Suhana","Kishore Kumar"],
     "genre": "50s"
   },
   {
@@ -696,14 +454,6 @@
     "link": "https://www.dropbox.com/scl/fi/tsf4bjy1nku4ntcy71lxr/Zindagi-Ban-Gaye-Ho-Tum.mp3?rlkey=6jixbeqhu4lulzu61vo8vj4f4&st=8t1ikbif&raw=1",
     "thumbnail": "https://i.scdn.co/image/ab67616d0000b273d04d8363b159084e4dbc5487",
     "keywords": ["Zindagi", "Ban", "Gaye", "Ho", "Tum", "Alka Yagnik", "Udit Narayan"],
-    "genre": "50s"
-  },
-  {
-    "title": "O Sanam",
-    "artist": "Lucky Ali",
-    "link": "https://www.dropbox.com/scl/fi/qvszvzpaz6l7l925h6jb4/O-Sanam.mp3?rlkey=g4oxywf0iw8a52qm3rscwko8a&st=a2xv73np&raw=1",
-    "thumbnail": "https://c.saavncdn.com/501/O-Sanam-Greatest-Hits-Lucky-Ali--Hindi-2020-20201119180920-500x500.jpg",
-    "keywords": ["O","Sanam","Lucky Ali"],
     "genre": "50s"
   },
   {
