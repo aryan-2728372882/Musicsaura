@@ -1,13 +1,9 @@
 // service-worker.js - MusicsAura runtime cache
-const CACHE_NAME = "musicsaura-runtime-v6";
+const CACHE_NAME = "musicsaura-runtime-v7";
 const CORE_ASSETS = [
   "/",
   "/index.html",
   "/manifest.json",
-  "/styles/styles.css",
-  "/scripts/player.js",
-  "/scripts/app.js",
-  "/scripts/firebase-config.js",
   "/assets/logo.png"
 ];
 
@@ -100,7 +96,14 @@ self.addEventListener("fetch", (event) => {
     request.destination === "worker";
 
   if (isNavigation || isAppShellAsset) {
-    event.respondWith(networkFirst(request, { cache: "no-store" }));
+    event.respondWith(
+      fetch(request, { cache: "no-store" }).catch(async () => {
+        if (isNavigation) {
+          return caches.match("/index.html");
+        }
+        return (await caches.match(request)) || Response.error();
+      })
+    );
     return;
   }
 
