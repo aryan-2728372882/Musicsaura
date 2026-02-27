@@ -1,239 +1,119 @@
-// service-worker.js — MusicsAura 2025 - OPTIMIZED with Cache Busting
-// Version with automatic cache invalidation on deployment
-const CACHE_VERSION = '2026-02-15-v5'; // Update this on each deployment
-const CACHE_NAME = 'MusicsAura-' + CACHE_VERSION;
+// service-worker.js - MusicsAura runtime cache
+const CACHE_NAME = "musicsaura-runtime-v6";
 const CORE_ASSETS = [
-  '/',
-  '/index.html',
-  '/auth.html',
-  '/user-dashboard.html',
-  '/admin-dashboard.html',
-  '/manifest.json',
-  '/styles/styles.css',
-  '/scripts/player.js',
-  '/scripts/app.js',
-  '/scripts/firebase-config.js',
-  '/assets/logo.png'
+  "/",
+  "/index.html",
+  "/manifest.json",
+  "/styles/styles.css",
+  "/scripts/player.js",
+  "/scripts/app.js",
+  "/scripts/firebase-config.js",
+  "/assets/logo.png"
 ];
 
-// Optimized Dropbox URL fix
-function fixDropboxUrl(url) {
-  if (!url.includes('dropbox.com')) return url;
-  if (url.includes('dl.dropboxusercontent.com') && url.includes('raw=1')) return url;
-  
-  try {
-    const u = new URL(url);
-    if (u.hostname === 'www.dropbox.com') {
-      u.hostname = 'dl.dropboxusercontent.com';
-      u.searchParams.set('raw', '1');
-      return u.toString();
-    }
-  } catch (e) {
-    return url.replace('www.dropbox.com', 'dl.dropboxusercontent.com') + 
-           (url.includes('?') ? '&raw=1' : '?raw=1');
-  }
-  
-  return url;
+function isAppDataRequest(url) {
+  return (
+    url.pathname.startsWith("/jsons/") ||
+    url.hostname.includes("firebase") ||
+    url.hostname.includes("googleapis.com") ||
+    url.hostname.includes("gstatic.com")
+  );
 }
 
-// Install - fast and minimal
-self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(c => c.addAll(CORE_ASSETS))
+async function networkFirst(request, options = {}) {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const response = await fetch(request, options);
+    if (response && response.ok && request.method === "GET") {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    throw error;
+  }
+}
+
+async function staleWhileRevalidate(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
+  const networkPromise = fetch(request)
+    .then((response) => {
+      if (response && response.ok) {
+        cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => null);
+
+  if (cached) return cached;
+  const network = await networkPromise;
+  return network || Response.error();
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(CORE_ASSETS))
       .then(() => self.skipWaiting())
   );
 });
 
-// Activate - clean old caches
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys()
-      .then(names => Promise.all(
-        names.filter(n => n !== CACHE_NAME).map(n => caches.delete(n))
-      ))
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((names) =>
+        Promise.all(
+          names.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name))
+        )
+      )
       .then(() => self.clients.claim())
   );
 });
 
-// OPTIMIZED fetch handler
-self.addEventListener('fetch', event => {
-  const url = event.request.url;
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+  if (request.method !== "GET") return;
 
-  // AUDIO: Fast streaming with Range support
-  if (/\.(mp3|m4a|aac|wav|ogg|flac)($|\?)/i.test(url)) {
-    event.respondWith(
-      (async () => {
-        try {
-          // Check if it's a Dropbox URL that needs fixing
-          const isDropbox = url.includes('dropbox.com');
-          const needsFix = isDropbox && !url.includes('dl.dropboxusercontent.com');
-          
-          if (needsFix) {
-            // Fix URL immediately for Dropbox
-            const fixedUrl = fixDropboxUrl(url);
-            const response = await fetch(fixedUrl, {
-              credentials: 'omit',
-              mode: 'cors',
-              cache: 'default', // Allow browser caching
-              keepalive: true,
-              priority: 'high'
-            });
-            
-            if (response.ok) return response;
-          }
-          
-          // Direct fetch for non-Dropbox or already-fixed URLs
-          return await fetch(event.request, {
-            credentials: 'omit',
-            mode: 'cors',
-            cache: 'default',
-            keepalive: true,
-            priority: 'high'
-          });
-          
-        } catch (error) {
-          // Fallback: try fixing the URL if not already done
-          const fixedUrl = fixDropboxUrl(url);
-          if (fixedUrl !== url) {
-            return fetch(fixedUrl, {
-              credentials: 'omit',
-              mode: 'cors',
-              cache: 'default',
-              keepalive: true
-            });
-          }
-          
-          // Last resort
-          return fetch(event.request);
-        }
-      })()
-    );
+  const url = new URL(request.url);
+
+  // Do not proxy audio requests through SW to preserve native streaming/range behavior.
+  if (request.destination === "audio" || /\.(mp3|m4a|aac|wav|ogg|flac)($|\?)/i.test(url.pathname)) {
     return;
   }
 
-  // Firebase & APIs - network only, no caching
-  if (url.includes('firebase') || 
-      url.includes('googleapis') || 
-      url.includes('gstatic') || 
-      url.includes('/jsons/') ||
-      url.includes('firestore')) {
-    event.respondWith(fetch(event.request));
+  // Always fetch latest dynamic app data.
+  if (isAppDataRequest(url)) {
+    event.respondWith(fetch(request, { cache: "no-store" }));
     return;
   }
 
-  // HTML pages - Network First (always get latest updates)
-  if (/\.(html)($|\?)/i.test(url) || url.endsWith('/')) {
-    event.respondWith(
-      fetch(event.request)
-        .then(response => {
-          // Cache successful responses
-          if (response.status === 200) {
-            const responseClone = response.clone();
-            caches.open(CACHE_NAME).then(cache => {
-              cache.put(event.request, responseClone);
-            });
-          }
-          return response;
-        })
-        .catch(() => {
-          // Fall back to cache if offline
-          return caches.match(event.request)
-            .then(cached => cached || new Response('Offline - cached version not available', { 
-              status: 503, 
-              statusText: 'Service Unavailable' 
-            }));
-        })
-    );
+  // Always check network first for app shell files so deployments show immediately.
+  const isNavigation = request.mode === "navigate";
+  const isAppShellAsset =
+    request.destination === "document" ||
+    request.destination === "script" ||
+    request.destination === "style" ||
+    request.destination === "worker";
+
+  if (isNavigation || isAppShellAsset) {
+    event.respondWith(networkFirst(request, { cache: "no-store" }));
     return;
   }
 
-  // App shell - cache first with background update
-  event.respondWith(
-    caches.match(event.request)
-      .then(cached => {
-        if (cached) {
-          // Background update - don't await
-          fetch(event.request)
-            .then(response => {
-              if (response.status === 200 && response.type === 'basic') {
-                caches.open(CACHE_NAME).then(cache => {
-                  cache.put(event.request, response);
-                });
-              }
-            })
-            .catch(() => {});
-          
-          return cached;
-        }
-        
-        // Not cached - fetch and cache
-        return fetch(event.request).then(response => {
-          if (response.status === 200 && response.type === 'basic') {
-            const responseClone = response.clone();
-            caches.open(CACHE_NAME).then(cache => {
-              cache.put(event.request, responseClone);
-            });
-          }
-          return response;
-        });
-      })
-  );
+  if (request.destination === "image" || request.destination === "font") {
+    event.respondWith(staleWhileRevalidate(request));
+    return;
+  }
+
+  event.respondWith(networkFirst(request));
 });
 
-// Keep-alive state
-let keepAliveTimer = null;
-let lastActivity = Date.now();
-
-// Message handling - minimal
-self.addEventListener('message', event => {
-  const { type, url } = event.data || {};
-  
-  if (type === 'KEEP_ALIVE' || type === 'HEARTBEAT' || type === 'BACKGROUND_PING') {
-    lastActivity = Date.now();
-    clearTimeout(keepAliveTimer);
-    keepAliveTimer = setTimeout(() => {}, 2147483647);
-    
-    if (event.ports?.[0]) {
-      event.ports[0].postMessage({ 
-        alive: true, 
-        timestamp: lastActivity 
-      });
-    }
-  }
-  
-  if (type === 'SKIP_WAITING') {
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
   }
-  
-  if (type === 'PRELOAD_AUDIO' && url) {
-    // Preload in background
-    fetch(url, { 
-      mode: 'cors',
-      priority: 'low',
-      credentials: 'omit',
-      cache: 'default'
-    }).catch(() => {});
-  }
 });
-
-// Periodic heartbeat to keep SW alive during playback
-setInterval(() => {
-  if (Date.now() - lastActivity < 30000) {
-    self.clients.matchAll({ type: 'window' })
-      .then(clients => {
-        if (clients.length > 0) {
-          clients[0].postMessage({ 
-            type: 'SW_HEARTBEAT',
-            timestamp: Date.now()
-          });
-        }
-      })
-      .catch(() => {});
-  }
-}, 20000);
-
-// Keep SW alive indefinitely
-(function keepAlive() {
-  setTimeout(keepAlive, 20000);
-})();

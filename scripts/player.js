@@ -34,7 +34,14 @@ let trackTransitioning = false;
 let backgroundModeConfigured = false;
 let autoAdvanceRetryTimer = null;
 let autoAdvanceRetryCount = 0;
-const MAX_AUTO_ADVANCE_RETRIES = 4;
+const MAX_AUTO_ADVANCE_RETRIES = 8;
+const TARGET_PLAYBACK_VOLUME = 1;
+const MIN_PLAYBACK_VOLUME = 0;
+let interruptedBySystem = false;
+let callInterruptionActive = false;
+let shouldResumeAfterInterruption = false;
+let lastKnownTime = 0;
+let lastProgressAt = Date.now();
 
 const PLAYBACK_STATE_KEY = "musicsaura-playback-state";
 const LOCAL_STATS_KEY = "musicsaura-local-stats";
@@ -77,9 +84,9 @@ function isNearTrackEnd() {
   return audio.currentTime >= Math.max(0, audio.duration - 1);
 }
 
-// DJ Fade settings - OPTIMIZED
-let fadeInDuration = 800;
-let fadeOutDuration = 3000;
+// DJ Fade settings
+let fadeInDuration = 10000;
+let fadeOutDuration = 10000;
 let fadeInterval = null;
 let isFading = false;
 
@@ -91,48 +98,61 @@ audio.preload = "metadata";
 audio.crossOrigin = "anonymous";
 audio.setAttribute("playsinline", "");
 audio.setAttribute("webkit-playsinline", "");
+audio.volume = TARGET_PLAYBACK_VOLUME;
 
-// FIXED: Volume fade with proper bounds checking
-function startFade(direction) {
-  if (isFading) return;
-  isFading = true;
-  
-  const startVol = direction === "in" ? 0.3 : 1.0;
-  const endVol = direction === "in" ? 1.0 : 0.01;
-  const duration = direction === "in" ? fadeInDuration : fadeOutDuration;
+function fadeTo(targetVolume, durationMs) {
+  clearInterval(fadeInterval);
+  const from = Number.isFinite(audio.volume) ? audio.volume : TARGET_PLAYBACK_VOLUME;
+  const to = Math.max(MIN_PLAYBACK_VOLUME, Math.min(TARGET_PLAYBACK_VOLUME, targetVolume));
   const startTime = Date.now();
 
-  clearInterval(fadeInterval);
+  isFading = true;
   fadeInterval = setInterval(() => {
     const elapsed = Date.now() - startTime;
-    let progress = Math.min(elapsed / duration, 1);
-    
-    // Easing functions
-    const eased = direction === "in" 
-      ? progress * progress // Quadratic
-      : 1 - Math.pow(-2 * progress + 2, 3) / 2; // Cubic
-    
-    // CRITICAL FIX: Clamp volume between 0 and 1
-    const newVolume = startVol + (endVol - startVol) * eased;
-    audio.volume = Math.max(0, Math.min(1, newVolume));
+    const progress = Math.min(elapsed / durationMs, 1);
+    const eased = progress;
+
+    audio.volume = Math.max(
+      MIN_PLAYBACK_VOLUME,
+      Math.min(TARGET_PLAYBACK_VOLUME, from + (to - from) * eased)
+    );
 
     if (progress >= 1) {
       clearInterval(fadeInterval);
+      fadeInterval = null;
       isFading = false;
-      
-      if (direction === "out" && repeat === 'one') {
-        audio.currentTime = 0;
-        audio.play();
-        playBtn.textContent = 'pause';
-        startFade("in");
-      }
     }
   }, 16);
 }
 
+function startFade(direction) {
+  const duration = direction === "in" ? fadeInDuration : fadeOutDuration;
+  const endVolume = direction === "in" ? TARGET_PLAYBACK_VOLUME : MIN_PLAYBACK_VOLUME;
+  fadeTo(endVolume, duration);
+}
+
 function stopFade() { 
   clearInterval(fadeInterval); 
+  fadeInterval = null;
   isFading = false; 
+}
+
+function captureListenProgressOnPause() {
+  if (songPlayStartTime) {
+    totalListenedTime += (Date.now() - songPlayStartTime) / 1000;
+  }
+  songPlayStartTime = 0;
+}
+
+function pauseForInterruption() {
+  if (audio.paused) return;
+  interruptedBySystem = true;
+  userInitiatedPause = false;
+  trackTransitioning = false;
+  clearAutoAdvanceRetry();
+  stopFade();
+  captureListenProgressOnPause();
+  audio.pause();
 }
 
 // Dropbox URL fix
@@ -210,17 +230,7 @@ function resumeAudioContext() {
 let swKeepAliveInterval = null;
 
 function startServiceWorkerKeepAlive() {
-  if (swKeepAliveInterval) return;
-  
-  swKeepAliveInterval = setInterval(() => {
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({ 
-        type: 'KEEP_ALIVE',
-        playing: !audio.paused,
-        song: currentSong?.title
-      });
-    }
-  }, 3000);
+  // Intentionally no-op: modern browsers manage SW lifecycle.
 }
 
 function stopServiceWorkerKeepAlive() {
@@ -317,6 +327,50 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+function resumeAfterInterruptionIfNeeded() {
+  if (!shouldResumeAfterInterruption) return;
+  if (userInitiatedPause || !audio.paused || !currentSong || trackTransitioning) return;
+
+  shouldResumeAfterInterruption = false;
+  callInterruptionActive = false;
+  interruptedBySystem = false;
+  play();
+}
+
+if ("audioSession" in navigator) {
+  try {
+    navigator.audioSession.type = "playback";
+    navigator.audioSession.addEventListener("statechange", () => {
+      const state = navigator.audioSession.state;
+      const interruptionState = state === "interrupted" || state === "inactive";
+      if (interruptionState) {
+        const wasPlayingBeforeInterruption = !audio.paused && !userInitiatedPause && !trackTransitioning;
+        if (wasPlayingBeforeInterruption) {
+          shouldResumeAfterInterruption = true;
+        }
+        callInterruptionActive = true;
+        if (!audio.paused) {
+          pauseForInterruption();
+        }
+        return;
+      }
+
+      if (state === "active") {
+        if (shouldResumeAfterInterruption) {
+          resumeAfterInterruptionIfNeeded();
+        } else {
+          callInterruptionActive = false;
+          interruptedBySystem = false;
+        }
+      }
+    });
+  } catch (e) {}
+}
+
+window.addEventListener("focus", () => {
+  resumeAfterInterruptionIfNeeded();
+});
+
 // Media Session
 if ('mediaSession' in navigator) {
   navigator.mediaSession.setActionHandler('play', () => play());
@@ -397,6 +451,9 @@ export const player = {
     }
 
     clearAutoAdvanceRetry();
+    shouldResumeAfterInterruption = false;
+    callInterruptionActive = false;
+    interruptedBySystem = false;
     userInitiatedPause = false;
     trackTransitioning = true;
 
@@ -427,8 +484,8 @@ export const player = {
     showPlayer();
     enableBackgroundMode();
     
-    // Set initial volume (clamped)
-    audio.volume = 0.3;
+    // Start from low volume and fade in to avoid sudden spikes on speakers.
+    audio.volume = MIN_PLAYBACK_VOLUME;
 
     const markTrackStarted = () => {
       trackTransitioning = false;
@@ -440,7 +497,12 @@ export const player = {
       trackTransitioning = false;
 
       if (autoAdvanceRetryCount >= MAX_AUTO_ADVANCE_RETRIES) {
-        playBtn.textContent = 'play_arrow';
+        if (playlist.length > 1) {
+          trackTransitioning = true;
+          playNextSong();
+        } else {
+          playBtn.textContent = 'play_arrow';
+        }
         return;
       }
 
@@ -556,6 +618,9 @@ export const player = {
 
 // Controls
 function play() { 
+  shouldResumeAfterInterruption = false;
+  callInterruptionActive = false;
+  interruptedBySystem = false;
   userInitiatedPause = false;
   trackTransitioning = false;
   clearAutoAdvanceRetry();
@@ -576,6 +641,9 @@ function play() {
 }
 
 function pause() { 
+  shouldResumeAfterInterruption = false;
+  callInterruptionActive = false;
+  interruptedBySystem = false;
   userInitiatedPause = true;
   trackTransitioning = false;
   clearAutoAdvanceRetry();
@@ -585,11 +653,7 @@ function pause() {
   releaseWakeLock();
   disableBackgroundMode();
   
-  // Track listen time
-  if (songPlayStartTime) {
-    totalListenedTime += (Date.now() - songPlayStartTime) / 1000;
-  }
-  songPlayStartTime = 0;
+  captureListenProgressOnPause();
   
   stopServiceWorkerKeepAlive();
   if ('mediaSession' in navigator) {
@@ -615,6 +679,11 @@ repeatBtn.parentElement.onclick = () => {
 // Update position
 audio.ontimeupdate = () => {
   if (!audio.duration || isNaN(audio.duration)) return;
+
+  if (Math.abs(audio.currentTime - lastKnownTime) > 0.2) {
+    lastKnownTime = audio.currentTime;
+    lastProgressAt = Date.now();
+  }
   
   seekBar.value = (audio.currentTime / audio.duration) * 100;
   
@@ -698,7 +767,7 @@ audio.onended = () => {
     songPlayStartTime = Date.now(); 
     totalListenedTime = 0; 
     hasCountedSong = false;
-    audio.volume = 0.3;
+    audio.volume = MIN_PLAYBACK_VOLUME;
     
     audio.play().then(() => {
       playBtn.textContent = 'pause';
@@ -711,7 +780,7 @@ audio.onended = () => {
       }
     });
   } else if (repeat === 'all' || repeat === 'off') {
-    audio.volume = 0.3;
+    audio.volume = MIN_PLAYBACK_VOLUME;
     playNextSong();
   }
 };
@@ -759,19 +828,24 @@ document.addEventListener('visibilitychange', () => {
     if (audioContext?.state === 'suspended') {
       audioContext.resume();
     }
-    audio.play().catch(() => {});
+  }
+  if (!document.hidden) {
+    resumeAfterInterruptionIfNeeded();
   }
 });
 
 // Handle audio interruptions
 audio.addEventListener('pause', () => {
   const naturalEnd = audio.ended;
-  const shouldKeepBackground = trackTransitioning || naturalEnd;
   const fallbackAutoAdvance = !naturalEnd && !userInitiatedPause && !trackTransitioning && isNearTrackEnd();
+  const likelyExternalInterruption =
+    !naturalEnd &&
+    !userInitiatedPause &&
+    !trackTransitioning &&
+    (callInterruptionActive || document.hidden || !document.hasFocus());
 
   if (fallbackAutoAdvance) {
     trackTransitioning = true;
-    userInitiatedPause = false;
     enableBackgroundMode();
     startServiceWorkerKeepAlive();
 
@@ -787,40 +861,45 @@ audio.addEventListener('pause', () => {
     playBtn.textContent = 'play_arrow';
   }
 
-  if (userInitiatedPause && !shouldKeepBackground) {
+  if (userInitiatedPause || interruptedBySystem) {
     releaseWakeLock();
     disableBackgroundMode();
     stopServiceWorkerKeepAlive();
     if ('mediaSession' in navigator) {
       navigator.mediaSession.playbackState = 'paused';
     }
-  } else {
-    enableBackgroundMode();
-    startServiceWorkerKeepAlive();
-
-    // Browser/PWA lock-screen can trigger a pause without firing ended.
-    // Recover automatically so user doesn't need to unlock and tap again.
-    if (!naturalEnd && !trackTransitioning) {
-      setTimeout(() => {
-        if (!userInitiatedPause && !trackTransitioning && audio.paused) {
-          if (isNearTrackEnd()) {
-            trackTransitioning = true;
-            playNextSong();
-            return;
-          }
-
-          audio.play().then(() => {
-            playBtn.textContent = 'pause';
-          }).catch(() => {});
-        }
-      }, 250);
-    }
+    return;
   }
 
-  userInitiatedPause = false;
+  if (likelyExternalInterruption) {
+    interruptedBySystem = true;
+    shouldResumeAfterInterruption = true;
+    callInterruptionActive = true;
+  }
+
+  if (trackTransitioning || naturalEnd) {
+    enableBackgroundMode();
+    startServiceWorkerKeepAlive();
+    return;
+  }
+
+  // Unexpected pause (call/interrupt/background restriction): stay paused.
+  releaseWakeLock();
+  disableBackgroundMode();
+  stopServiceWorkerKeepAlive();
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.playbackState = 'paused';
+  }
+});
+
+document.addEventListener("resume", () => {
+  resumeAfterInterruptionIfNeeded();
 });
 
 audio.addEventListener('play', () => {
+  shouldResumeAfterInterruption = false;
+  callInterruptionActive = false;
+  interruptedBySystem = false;
   userInitiatedPause = false;
   trackTransitioning = false;
   clearAutoAdvanceRetry();
@@ -883,21 +962,33 @@ onAuthStateChanged(auth, user => {
   };
 });
 
-// Keep service worker alive
-let heartbeatInterval = setInterval(() => {
+// Playback watchdog for long background sessions and lock-screen transitions.
+let playbackWatchdogInterval = setInterval(() => {
+  if (!currentSong) return;
+
   if (!audio.paused) {
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({
-        type: 'HEARTBEAT',
-        time: Date.now()
-      });
+    const stalled = Date.now() - lastProgressAt > 15000 && !trackTransitioning;
+    if (!stalled) return;
+
+    if (isNearTrackEnd()) {
+      trackTransitioning = true;
+      playNextSong();
+      return;
     }
+
+    audio.play().catch(() => {});
+    return;
   }
-}, 5000);
+
+  if (!userInitiatedPause && !trackTransitioning && isNearTrackEnd()) {
+    trackTransitioning = true;
+    playNextSong();
+  }
+}, 4000);
 
 // FIXED: Save stats and playback state when user leaves (important for PWA)
 window.addEventListener('beforeunload', () => {
-  clearInterval(heartbeatInterval);
+  clearInterval(playbackWatchdogInterval);
   stopServiceWorkerKeepAlive();
   clearAutoAdvanceRetry();
   
@@ -915,7 +1006,7 @@ window.addEventListener('beforeunload', () => {
 // Register service worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js').then(reg => {
+    navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' }).then(reg => {
       reg.update().catch(() => {});
 
       const activateWaitingWorker = () => {
@@ -935,6 +1026,10 @@ if ('serviceWorker' in navigator) {
           }
         });
       });
+
+      setInterval(() => {
+        reg.update().catch(() => {});
+      }, 60000);
     }).catch(() => {});
 
     let refreshing = false;

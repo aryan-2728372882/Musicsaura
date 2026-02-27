@@ -71,7 +71,7 @@ genreItems.forEach(item => {
 /* Optimized JSON loader */
 async function load(file) {
   try {
-    const res = await fetch(file, { cache: 'force-cache' }); // Use browser cache
+    const res = await fetch(file, { cache: "no-store" });
     if (!res.ok) return [];
     
     const data = await res.json();
