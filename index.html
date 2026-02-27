@@ -88,6 +88,10 @@
     <div class="info">
       <h4 id="player-title">Select a song</h4>
       <audio id="audio" preload="auto" crossorigin="anonymous"></audio>
+      <div class="time-row" aria-live="off">
+        <span id="current-time">0:00</span>
+        <span id="duration-time">0:00</span>
+      </div>
       <input type="range" id="seek" value="0" max="100" class="seek-bar" aria-label="Seek" />
     </div>
 

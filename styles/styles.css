@@ -410,9 +410,24 @@ input, textarea {
   pointer-events: none;
 }
 
+.time-row {
+  margin-top: 0.35rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  color: rgba(34, 34, 34, 0.72);
+  letter-spacing: 0.2px;
+  pointer-events: none;
+}
+
+.dark-theme .time-row {
+  color: rgba(238, 238, 238, 0.72);
+}
+
 .seek-bar {
   width: 100%;
-  margin-top: 0.5rem;
+  margin-top: 0.35rem;
   touch-action: manipulation;
   pointer-events: auto;
   -webkit-appearance: none;

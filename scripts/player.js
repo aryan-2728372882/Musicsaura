@@ -17,6 +17,8 @@ const prevBtn = document.getElementById('prev');
 const nextBtn = document.getElementById('next');
 const repeatBtn = document.getElementById('repeat').querySelector('span');
 const seekBar = document.getElementById('seek');
+const currentTimeEl = document.getElementById('current-time');
+const durationTimeEl = document.getElementById('duration-time');
 const playerEl = document.getElementById('player');
 const navAvatar = document.getElementById('nav-avatar');
 const profileBtn = document.getElementById('profile-btn');
@@ -28,7 +30,6 @@ let totalListenedTime = 0;
 let hasCountedSong = false;
 let playlist = [];
 let currentIndex = 0;
-const isNativeShell = !!window.cordova;
 let userInitiatedPause = false;
 let trackTransitioning = false;
 let backgroundModeConfigured = false;
@@ -84,6 +85,49 @@ function isNearTrackEnd() {
   return audio.currentTime >= Math.max(0, audio.duration - 1);
 }
 
+function getFadeOutTriggerWindowSeconds() {
+  return fadeOutDuration / 1000 + 2;
+}
+
+function formatClockTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const total = Math.floor(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  return `${minutes}:${String(secs).padStart(2, "0")}`;
+}
+
+function updateTimeDisplay() {
+  if (currentTimeEl) currentTimeEl.textContent = formatClockTime(audio.currentTime || 0);
+  if (durationTimeEl) durationTimeEl.textContent = formatClockTime(audio.duration || 0);
+}
+
+function recoverFromNearEndFadeIfNeeded(previousTime, nextTime) {
+  if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+
+  const triggerWindow = getFadeOutTriggerWindowSeconds();
+  const wasNearEnd = audio.duration - previousTime <= triggerWindow;
+  const isNowNearEnd = audio.duration - nextTime <= triggerWindow;
+  const jumpedBackward = nextTime < previousTime - 0.25;
+
+  if (wasNearEnd && jumpedBackward && !isNowNearEnd) {
+    stopFade();
+    setPlaybackVolume(TARGET_PLAYBACK_VOLUME);
+  }
+}
+
+function seekToTime(targetTime) {
+  if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+
+  const previousTime = audio.currentTime;
+  const nextTime = Math.max(0, Math.min(audio.duration, Number(targetTime) || 0));
+  audio.currentTime = nextTime;
+  recoverFromNearEndFadeIfNeeded(previousTime, nextTime);
+  updateTimeDisplay();
+}
+
 // DJ Fade settings
 let fadeInDuration = 10000;
 let fadeOutDuration = 10000;
@@ -100,10 +144,27 @@ audio.setAttribute("playsinline", "");
 audio.setAttribute("webkit-playsinline", "");
 audio.volume = TARGET_PLAYBACK_VOLUME;
 
+function clampPlaybackVolume(value) {
+  return Math.max(MIN_PLAYBACK_VOLUME, Math.min(TARGET_PLAYBACK_VOLUME, Number(value)));
+}
+
+function getCurrentPlaybackVolume() {
+  if (gainNode) return clampPlaybackVolume(gainNode.gain.value);
+  return clampPlaybackVolume(audio.volume);
+}
+
+function setPlaybackVolume(value) {
+  const next = clampPlaybackVolume(value);
+  if (gainNode) {
+    gainNode.gain.value = next;
+  }
+  audio.volume = next;
+}
+
 function fadeTo(targetVolume, durationMs) {
   clearInterval(fadeInterval);
-  const from = Number.isFinite(audio.volume) ? audio.volume : TARGET_PLAYBACK_VOLUME;
-  const to = Math.max(MIN_PLAYBACK_VOLUME, Math.min(TARGET_PLAYBACK_VOLUME, targetVolume));
+  const from = getCurrentPlaybackVolume();
+  const to = clampPlaybackVolume(targetVolume);
   const startTime = Date.now();
 
   isFading = true;
@@ -111,11 +172,7 @@ function fadeTo(targetVolume, durationMs) {
     const elapsed = Date.now() - startTime;
     const progress = Math.min(elapsed / durationMs, 1);
     const eased = progress;
-
-    audio.volume = Math.max(
-      MIN_PLAYBACK_VOLUME,
-      Math.min(TARGET_PLAYBACK_VOLUME, from + (to - from) * eased)
-    );
+    setPlaybackVolume(from + (to - from) * eased);
 
     if (progress >= 1) {
       clearInterval(fadeInterval);
@@ -128,6 +185,9 @@ function fadeTo(targetVolume, durationMs) {
 function startFade(direction) {
   const duration = direction === "in" ? fadeInDuration : fadeOutDuration;
   const endVolume = direction === "in" ? TARGET_PLAYBACK_VOLUME : MIN_PLAYBACK_VOLUME;
+  if (direction === "in") {
+    setPlaybackVolume(MIN_PLAYBACK_VOLUME);
+  }
   fadeTo(endVolume, duration);
 }
 
@@ -181,11 +241,11 @@ let gainNode = null;
 let audioContextInitialized = false;
 
 function initAudioContext() {
-  if (!isNativeShell) return null;
   if (audioContextInitialized) return audioContext;
   
   try {
     const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
     audioContext = new AC({ 
       latencyHint: 'interactive',
       sampleRate: 44100
@@ -193,10 +253,12 @@ function initAudioContext() {
     
     sourceNode = audioContext.createMediaElementSource(audio);
     gainNode = audioContext.createGain();
-    gainNode.gain.value = 1;
+    gainNode.gain.value = getCurrentPlaybackVolume();
     
     sourceNode.connect(gainNode);
     gainNode.connect(audioContext.destination);
+    // Keep element volume aligned with current playback value.
+    audio.volume = gainNode.gain.value;
     
     audioContextInitialized = true;
     window.audioContext = audioContext;
@@ -206,12 +268,15 @@ function initAudioContext() {
     return audioContext;
   } catch (e) {
     console.error('AudioContext init error:', e);
+    audioContext = null;
+    sourceNode = null;
+    gainNode = null;
+    audioContextInitialized = false;
     return null;
   }
 }
 
 function resumeAudioContext() {
-  if (!isNativeShell) return Promise.resolve();
   if (!audioContext) {
     initAudioContext();
     return Promise.resolve();
@@ -380,10 +445,10 @@ if ('mediaSession' in navigator) {
   
   try {
     navigator.mediaSession.setActionHandler('seekbackward', () => {
-      audio.currentTime = Math.max(0, audio.currentTime - 10);
+      seekToTime(audio.currentTime - 10);
     });
     navigator.mediaSession.setActionHandler('seekforward', () => {
-      audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 10);
+      seekToTime(audio.currentTime + 10);
     });
   } catch (e) {}
 }
@@ -409,6 +474,7 @@ function updateMediaSession(song) {
 function showPlayer() { 
   playerEl.hidden = false; 
   playerEl.classList.add('visible'); 
+  updateTimeDisplay();
 }
 
 // Aggressive preloading
@@ -485,7 +551,9 @@ export const player = {
     enableBackgroundMode();
     
     // Start from low volume and fade in to avoid sudden spikes on speakers.
-    audio.volume = MIN_PLAYBACK_VOLUME;
+    setPlaybackVolume(MIN_PLAYBACK_VOLUME);
+    seekBar.value = 0;
+    updateTimeDisplay();
 
     const markTrackStarted = () => {
       trackTransitioning = false;
@@ -613,6 +681,7 @@ export const player = {
         });
       });
     }
+    updateTimeDisplay();
   }
 };
 
@@ -686,6 +755,7 @@ audio.ontimeupdate = () => {
   }
   
   seekBar.value = (audio.currentTime / audio.duration) * 100;
+  updateTimeDisplay();
   
   if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
     try {
@@ -698,7 +768,7 @@ audio.ontimeupdate = () => {
   }
   
   const remaining = audio.duration - audio.currentTime;
-  if (remaining <= fadeOutDuration/1000 + 2 && !isFading) {
+  if (remaining <= getFadeOutTriggerWindowSeconds() && !isFading) {
     startFade("out");
   }
 
@@ -710,6 +780,9 @@ audio.ontimeupdate = () => {
     }
   }
 };
+
+audio.addEventListener("loadedmetadata", updateTimeDisplay);
+audio.addEventListener("durationchange", updateTimeDisplay);
 
 // FIXED: Save song stats function with localStorage fallback for PWA offline
 async function saveSongStats() {
@@ -767,7 +840,7 @@ audio.onended = () => {
     songPlayStartTime = Date.now(); 
     totalListenedTime = 0; 
     hasCountedSong = false;
-    audio.volume = MIN_PLAYBACK_VOLUME;
+    setPlaybackVolume(MIN_PLAYBACK_VOLUME);
     
     audio.play().then(() => {
       playBtn.textContent = 'pause';
@@ -780,9 +853,10 @@ audio.onended = () => {
       }
     });
   } else if (repeat === 'all' || repeat === 'off') {
-    audio.volume = MIN_PLAYBACK_VOLUME;
+    setPlaybackVolume(MIN_PLAYBACK_VOLUME);
     playNextSong();
   }
+  updateTimeDisplay();
 };
 
 // Error handling
@@ -919,7 +993,7 @@ audio.addEventListener('play', () => {
 
 seekBar.oninput = () => {
   if (audio.duration) {
-    audio.currentTime = (seekBar.value / 100) * audio.duration;
+    seekToTime((seekBar.value / 100) * audio.duration);
   }
 };
 
