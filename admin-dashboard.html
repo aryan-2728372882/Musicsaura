@@ -156,6 +156,7 @@
         let totalUsers = 0;
         let totalSongs = 0;
         let totalMinutes = 0;
+        const rowsFragment = document.createDocumentFragment();
 
         snapshot.forEach(docSnapshot => {
           const data = docSnapshot.data();
@@ -186,8 +187,10 @@
             <td>${lastPlayed}</td>
             <td>${createdAt}</td>
           `;
-          tbody.appendChild(row);
+          rowsFragment.appendChild(row);
         });
+
+        tbody.replaceChildren(rowsFragment);
 
         // Update summary stats
         document.getElementById('total-users').textContent = totalUsers;

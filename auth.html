@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>MusicsAura — Login & Signup</title>
+  <title>MusicsAura â€” Login & Signup</title>
 
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
@@ -149,6 +149,10 @@
     .toast-close:hover{transform:translateY(-2px);box-shadow:0 12px 32px rgba(139,61,255,0.5)}
     @keyframes toastPop{from{opacity:0;transform:translate(-50%,-50%) scale(0.7)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
     @keyframes iconBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+    @media (prefers-reduced-motion: reduce){
+      .bg,.orb,.star,.note,.logo-icon,h1,.welcome,.bars .bar,.loader-text,.form-section,.toast,.msg{animation:none !important}
+      .btn,.google-btn,.toast-close,input{transition:none !important}
+    }
   </style>
 </head>
 <body>
@@ -164,7 +168,7 @@
     <div class="auth-side">
       <div class="card">
         <div class="logo">
-          <div class="logo-icon">🎵</div>
+          <div class="logo-icon">ðŸŽµ</div>
           <h1>MusicsAura</h1>
           <p class="subtitle">Your music, your vibe</p>
         </div>
@@ -287,31 +291,39 @@
     const auth = getAuth(app);
     const db = getFirestore(app);
     const provider = new GoogleAuthProvider();
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const isLowerEndDevice = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) || window.innerWidth <= 768;
+    const starCount = prefersReducedMotion ? 20 : isLowerEndDevice ? 50 : 100;
+    const noteCount = prefersReducedMotion ? 6 : isLowerEndDevice ? 16 : 30;
 
-    // Generate 100 stars
+    // Generate stars
     const starsEl = document.getElementById('stars');
-    for(let i=0; i<100; i++){
+    const starFragment = document.createDocumentFragment();
+    for(let i=0; i<starCount; i++){
       const star = document.createElement('div');
       star.className = 'star';
       star.style.left = Math.random() * 100 + '%';
       star.style.top = Math.random() * 100 + '%';
       star.style.animationDelay = Math.random() * 3 + 's';
       star.style.animationDuration = (Math.random() * 2 + 2) + 's';
-      starsEl.appendChild(star);
+      starFragment.appendChild(star);
     }
+    starsEl.appendChild(starFragment);
 
     // Generate floating notes
     const notesEl = document.getElementById('notes');
     const noteSymbols = ['♫', '♪', '♬', '♩', '♭', '♮', '𝄞'];
-    for(let i=0; i<30; i++){
+    const noteFragment = document.createDocumentFragment();
+    for(let i=0; i<noteCount; i++){
       const note = document.createElement('div');
       note.className = 'note';
       note.textContent = noteSymbols[Math.floor(Math.random() * noteSymbols.length)];
       note.style.left = Math.random() * 100 + '%';
       note.style.animationDelay = Math.random() * 15 + 's';
       note.style.animationDuration = (Math.random() * 10 + 10) + 's';
-      notesEl.appendChild(note);
+      noteFragment.appendChild(note);
     }
+    notesEl.appendChild(noteFragment);
 
     // Tab switching
     document.querySelectorAll('.tab').forEach(tab => {
@@ -334,7 +346,7 @@
     
     function showToast(message, type){
       toast.className = `toast show ${type}`;
-      toastIcon.textContent = type === 'error' ? '❌' : '✅';
+      toastIcon.textContent = type === 'error' ? 'âŒ' : 'âœ…';
       toastMessage.textContent = message;
       setTimeout(() => toast.classList.remove('show'), 8000);
     }
@@ -530,3 +542,4 @@
   </script>
 </body>
 </html>
+

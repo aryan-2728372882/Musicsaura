@@ -1,8 +1,8 @@
-// scripts/app.js — MusicsAura 2025 - OPTIMIZED
+﻿// scripts/app.js - MusicsAura app shell
 import { auth, onAuthStateChanged } from "./firebase-config.js";
 import { player } from "./player.js";
 
-/* DOM references - cached once */
+/* DOM references */
 const grid = document.getElementById("grid");
 const searchGrid = document.getElementById("search-grid");
 const searchInp = document.getElementById("search");
@@ -15,9 +15,20 @@ const genreLabel = document.getElementById("genre-label");
 const genreItems = document.querySelectorAll(".genre-item");
 
 /* State */
-let all = [];
-let genres = {};
-let activeGenre = "hindi";
+const DEFAULT_GENRE = "hindi";
+const GENRE_FILES = {
+  hindi: "/jsons/hindi.json",
+  punjabi: "/jsons/punjabi.json",
+  haryanvi: "/jsons/haryanvi.json",
+  bhojpuri: "/jsons/bhojpuri.json",
+  "50s": "/jsons/50s.json",
+  remix: "/jsons/remix.json"
+};
+
+let allSongs = [];
+const songsByGenre = {};
+const genreLoadPromises = new Map();
+let activeGenre = DEFAULT_GENRE;
 let searchDebounceTimer = null;
 
 /* Initial UI */
@@ -47,7 +58,6 @@ function toggleDropdown() {
   genreMenu.setAttribute("aria-hidden", String(!isOpen));
 }
 
-/* Click outside to close */
 document.addEventListener("click", (e) => {
   if (!genreBtn.contains(e.target) && !genreMenu.contains(e.target)) {
     closeDropdown();
@@ -56,201 +66,229 @@ document.addEventListener("click", (e) => {
 
 genreBtn.onclick = toggleDropdown;
 
-/* Genre selection */
-genreItems.forEach(item => {
-  item.onclick = () => {
-    const genre = item.dataset.genre;
-    genreItems.forEach(i => i.classList.remove("active"));
-    item.classList.add("active");
-    genreLabel.textContent = item.textContent;
-    closeDropdown();
-    render(genre);
+/* Utilities */
+function escapeHtml(str) {
+  const map = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+    "`": "&#96;"
   };
-});
-
-/* Optimized JSON loader */
-async function load(file) {
-  try {
-    const res = await fetch(file, { cache: "no-store" });
-    if (!res.ok) return [];
-    
-    const data = await res.json();
-    const genre = file.split("/").pop().replace(".json", "").toLowerCase();
-    
-    // Process songs efficiently
-    const normalized = data.map(song => {
-      // Normalize keywords
-      let keywords = song.keywords || [];
-      
-      if (typeof keywords === "string") {
-        keywords = keywords.split(/[,;]/).map(x => x.trim());
-      } else if (Array.isArray(keywords)) {
-        keywords = keywords.flatMap(k => 
-          typeof k === "string" ? k.split(/[,;]/).map(x => x.trim()) : []
-        );
-      } else {
-        keywords = [];
-      }
-
-      // Add title and artist words for better search
-      const titleWords = song.title ? song.title.split(/\s+/) : [];
-      const artistWords = song.artist ? song.artist.split(/[,&\/]+|\s+/) : [];
-      
-      // Deduplicate and normalize
-      const allKeywords = new Set([
-        ...keywords,
-        ...titleWords,
-        ...artistWords
-      ].map(w => w.toLowerCase().trim()).filter(Boolean));
-
-      return {
-        ...song,
-        keywords: Array.from(allKeywords),
-        playCount: song.playCount || 0,
-        genre
-      };
-    });
-
-    genres[genre] = normalized;
-    all.push(...normalized);
-    
-    return normalized;
-  } catch (err) {
-    console.error(`Failed to load ${file}:`, err);
-    return [];
-  }
+  return (str || "").toString().replace(/[&<>"'`]/g, (c) => map[c]);
 }
 
-/* Efficient card creation with event delegation */
-function createCard(song) {
+function normalizeKeywords(song) {
+  let keywords = song.keywords || [];
+
+  if (typeof keywords === "string") {
+    keywords = keywords.split(/[,;]/).map((x) => x.trim());
+  } else if (Array.isArray(keywords)) {
+    keywords = keywords.flatMap((k) =>
+      typeof k === "string" ? k.split(/[,;]/).map((x) => x.trim()) : []
+    );
+  } else {
+    keywords = [];
+  }
+
+  const titleWords = song.title ? song.title.split(/\s+/) : [];
+  const artistWords = song.artist ? song.artist.split(/[,&/]+|\s+/) : [];
+
+  return Array.from(
+    new Set(
+      [...keywords, ...titleWords, ...artistWords]
+        .map((w) => w.toLowerCase().trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function normalizeSong(song, genre) {
+  const keywords = normalizeKeywords(song);
+  const title = song.title || "";
+  const artist = song.artist || "";
+  const searchText = `${title} ${artist} ${keywords.join(" ")}`.toLowerCase();
+
+  return {
+    ...song,
+    keywords,
+    playCount: song.playCount || 0,
+    genre,
+    _searchText: searchText
+  };
+}
+
+async function loadGenre(genre) {
+  if (songsByGenre[genre]) return songsByGenre[genre];
+
+  if (genreLoadPromises.has(genre)) {
+    return genreLoadPromises.get(genre);
+  }
+
+  const file = GENRE_FILES[genre];
+  if (!file) return [];
+
+  const loadPromise = (async () => {
+    try {
+      const res = await fetch(file, { cache: "no-store" });
+      if (!res.ok) return [];
+
+      const data = await res.json();
+      const normalized = data.map((song) => normalizeSong(song, genre));
+      songsByGenre[genre] = normalized;
+      allSongs.push(...normalized);
+      return normalized;
+    } catch (err) {
+      console.error(`Failed to load ${file}:`, err);
+      songsByGenre[genre] = [];
+      return [];
+    } finally {
+      genreLoadPromises.delete(genre);
+    }
+  })();
+
+  genreLoadPromises.set(genre, loadPromise);
+  return loadPromise;
+}
+
+function createCard(song, index) {
   const el = document.createElement("div");
   el.className = "song-card";
-  el.dataset.songId = `${song.genre}-${song.title}`;
-  
+  el.dataset.index = String(index);
   el.innerHTML = `
-    <img src="${song.thumbnail || ''}" loading="lazy" alt="${escapeHtml(song.title || '')}" onerror="this.style.opacity=.4">
-    <p>${escapeHtml(song.title || '')}</p>
-    <p>${escapeHtml(song.artist || '')}</p>
+    <img src="${song.thumbnail || ""}" loading="lazy" alt="${escapeHtml(song.title || "")}" onerror="this.style.opacity=.4">
+    <p>${escapeHtml(song.title || "")}</p>
+    <p>${escapeHtml(song.artist || "")}</p>
   `;
-  
   return el;
 }
 
-/* Render genre grid with fragment for better performance */
-function render(genre) {
-  activeGenre = genre;
-  grid.hidden = false;
-  searchGrid.hidden = true;
-  genreWrapper.style.display = '';
-  
-  const songList = genres[genre] || [];
-  
-  // Use DocumentFragment for batch DOM insertion
-  const fragment = document.createDocumentFragment();
-  songList.forEach(song => fragment.appendChild(createCard(song)));
-  
-  grid.innerHTML = "";
-  grid.appendChild(fragment);
-  
-  // Set up click delegation
-  setupClickHandler(grid, songList);
+function bindContainerSongs(container, songs) {
+  container._songs = songs;
 }
 
-/* Event delegation for better performance */
-function setupClickHandler(container, songList) {
-  const existingHandler = container._clickHandler;
-  if (existingHandler) {
-    container.removeEventListener('click', existingHandler);
-  }
-  
+function setupClickHandler(container) {
+  if (container._clickHandler) return;
+
   const handler = (e) => {
-    const card = e.target.closest('.song-card');
+    const card = e.target.closest(".song-card");
     if (!card) return;
-    
-    const index = Array.from(container.children).indexOf(card);
-    if (index !== -1 && songList[index]) {
-      player.setPlaylist(songList, index);
-      player.playSong(songList[index]);
-    }
+
+    const songs = container._songs || [];
+    const index = Number.parseInt(card.dataset.index || "-1", 10);
+    if (!Number.isInteger(index) || index < 0 || !songs[index]) return;
+
+    player.setPlaylist(songs, index);
+    player.playSong(songs[index]);
   };
-  
-  container.addEventListener('click', handler);
+
+  container.addEventListener("click", handler);
   container._clickHandler = handler;
 }
 
-/* Optimized search with debouncing */
-function doSearch(query) {
+function renderSongList(container, songs, emptyMessage = null) {
+  const fragment = document.createDocumentFragment();
+
+  if (!songs.length && emptyMessage) {
+    const empty = document.createElement("p");
+    empty.style.cssText = "text-align:center;padding:3rem;color:#999;";
+    empty.textContent = emptyMessage;
+    fragment.appendChild(empty);
+  } else {
+    for (let i = 0; i < songs.length; i += 1) {
+      fragment.appendChild(createCard(songs[i], i));
+    }
+  }
+
+  container.replaceChildren(fragment);
+  bindContainerSongs(container, songs);
+}
+
+function renderGenre(genre) {
+  activeGenre = genre;
+  grid.hidden = false;
+  searchGrid.hidden = true;
+  genreWrapper.style.display = "";
+
+  const songs = songsByGenre[genre] || [];
+  renderSongList(grid, songs);
+}
+
+function searchSongs(query) {
   const q = (query || "").trim().toLowerCase();
-  
+
   if (!q) {
     searchGrid.hidden = true;
     grid.hidden = false;
     searchInp.value = "";
-    genreWrapper.style.display = '';
+    genreWrapper.style.display = "";
     return;
   }
 
-  // Filter with early exit optimization
-  const matches = all.filter(song => {
-    const title = (song.title || "").toLowerCase();
-    const artist = (song.artist || "").toLowerCase();
-    
-    // Check title/artist first (most common matches)
-    if (title.includes(q) || artist.includes(q)) return true;
-    
-    // Then check keywords
-    return (song.keywords || []).some(kw => kw.includes(q));
-  });
+  const matches = allSongs.filter((song) => song._searchText.includes(q));
+  renderSongList(searchGrid, matches, "No songs found");
 
-  // Render results
-  const fragment = document.createDocumentFragment();
-  
-  if (matches.length === 0) {
-    const noResults = document.createElement('p');
-    noResults.style.cssText = 'text-align:center;padding:3rem;color:#999;';
-    noResults.textContent = 'No songs found';
-    fragment.appendChild(noResults);
-  } else {
-    matches.forEach(song => fragment.appendChild(createCard(song)));
-  }
-  
-  searchGrid.innerHTML = "";
-  searchGrid.appendChild(fragment);
-  
-  // Set up click delegation for search results
-  if (matches.length > 0) {
-    setupClickHandler(searchGrid, matches);
-  }
-  
   grid.hidden = true;
   searchGrid.hidden = false;
-  genreWrapper.style.display = 'none';
+  genreWrapper.style.display = "none";
 }
 
-/* Debounced search input */
+async function selectGenre(item) {
+  const genre = item.dataset.genre;
+  if (!genre) return;
+
+  genreItems.forEach((i) => i.classList.remove("active"));
+  item.classList.add("active");
+  genreLabel.textContent = item.textContent;
+  closeDropdown();
+
+  if (!songsByGenre[genre]) {
+    grid.hidden = false;
+    searchGrid.hidden = true;
+    genreWrapper.style.display = "";
+    grid.innerHTML = '<p style="text-align:center;padding:3rem;color:#999;">Loading songs...</p>';
+    await loadGenre(genre);
+  }
+
+  renderGenre(genre);
+}
+
+genreItems.forEach((item) => {
+  item.onclick = () => {
+    selectGenre(item).catch((err) => {
+      console.error("Genre select failed:", err);
+    });
+  };
+});
+
+/* Search */
 searchInp.addEventListener("input", (e) => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
-    doSearch(e.target.value);
-  }, 200); // 200ms debounce
+    searchSongs(e.target.value);
+  }, 180);
 });
 
-searchInp.addEventListener("keydown", (e) => { 
+searchInp.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     clearTimeout(searchDebounceTimer);
-    doSearch(searchInp.value);
+    searchSongs(searchInp.value);
   }
   if (e.key === "Escape") {
     clearTimeout(searchDebounceTimer);
     searchInp.value = "";
-    doSearch("");
+    searchSongs("");
   }
 });
 
-/* Auth with optimized avatar */
-onAuthStateChanged(auth, user => {
-  if (!user) return (location.href = "auth.html");
-  
+/* Auth */
+onAuthStateChanged(auth, (user) => {
+  if (!user) {
+    location.href = "auth.html";
+    return;
+  }
+
   if (user.photoURL) {
     navAvatar.src = user.photoURL;
   } else {
@@ -259,46 +297,28 @@ onAuthStateChanged(auth, user => {
   }
 });
 
-/* HTML escape utility */
-function escapeHtml(str) { 
-  const map = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-    '`': '&#96;'
-  };
-  return (str || '').toString().replace(/[&<>"'`]/g, c => map[c]); 
-}
-
-/* Initialize - Parallel loading with visual feedback */
+/* Init */
 (async () => {
   try {
-    // Show loading state
+    setupClickHandler(grid);
+    setupClickHandler(searchGrid);
+
     grid.innerHTML = '<p style="text-align:center;padding:3rem;color:#999;">Loading songs...</p>';
-    
-    // Load all genres in parallel
-    await Promise.all([
-      load("/jsons/hindi.json"),
-      load("/jsons/punjabi.json"),
-      load("/jsons/haryanvi.json"),
-      load("/jsons/bhojpuri.json"),
-      load("/jsons/50s.json"),
-      load("/jsons/remix.json")
-    ]);
-    
-    // Render default genre
-    render("hindi");
-    
-    // Preload first song's thumbnail for instant playback
-    if (genres.hindi?.[0]?.thumbnail) {
+
+    await loadGenre(DEFAULT_GENRE);
+    renderGenre(DEFAULT_GENRE);
+
+    // Load remaining genres in background for smoother first interaction.
+    const remainingGenres = Object.keys(GENRE_FILES).filter((genre) => genre !== DEFAULT_GENRE);
+    Promise.allSettled(remainingGenres.map((genre) => loadGenre(genre))).catch(() => {});
+
+    if (songsByGenre[DEFAULT_GENRE]?.[0]?.thumbnail) {
       const img = new Image();
-      img.src = genres.hindi[0].thumbnail;
+      img.decoding = "async";
+      img.src = songsByGenre[DEFAULT_GENRE][0].thumbnail;
     }
-    
   } catch (err) {
-    console.error('Failed to initialize:', err);
+    console.error("Failed to initialize:", err);
     grid.innerHTML = '<p style="text-align:center;padding:3rem;color:#f44;">Failed to load songs. Please refresh.</p>';
   }
 })();

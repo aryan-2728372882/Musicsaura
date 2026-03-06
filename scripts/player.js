@@ -43,6 +43,16 @@ let callInterruptionActive = false;
 let shouldResumeAfterInterruption = false;
 let lastKnownTime = 0;
 let lastProgressAt = Date.now();
+let stallRecoveryTimer = null;
+let recoveringStall = false;
+let stallRecoveryAttempts = 0;
+const MAX_STALL_RECOVERY_ATTEMPTS = 4;
+const STALL_PROGRESS_TIMEOUT_MS = 12000;
+const STALL_RECOVERY_DELAY_MS = 1500;
+const ENABLE_SCREEN_WAKE_LOCK = false;
+const warmedOrigins = new Set();
+let currentPlaybackUrls = [];
+let currentPlaybackUrlIndex = 0;
 
 const PLAYBACK_STATE_KEY = "musicsaura-playback-state";
 const LOCAL_STATS_KEY = "musicsaura-local-stats";
@@ -138,7 +148,7 @@ let isFading = false;
 window.audioElement = audio;
 
 // CRITICAL: Set audio element for instant streaming
-audio.preload = "metadata";
+audio.preload = "auto";
 audio.crossOrigin = "anonymous";
 audio.setAttribute("playsinline", "");
 audio.setAttribute("webkit-playsinline", "");
@@ -204,8 +214,114 @@ function captureListenProgressOnPause() {
   songPlayStartTime = 0;
 }
 
+function clearStallRecoveryTimer() {
+  if (!stallRecoveryTimer) return;
+  clearTimeout(stallRecoveryTimer);
+  stallRecoveryTimer = null;
+}
+
+function resetStallRecoveryState() {
+  clearStallRecoveryTimer();
+  recoveringStall = false;
+  stallRecoveryAttempts = 0;
+}
+
+function scheduleStallRecovery(reason, delayMs = STALL_RECOVERY_DELAY_MS) {
+  if (!currentSong?.link || userInitiatedPause || trackTransitioning || recoveringStall) return;
+  clearStallRecoveryTimer();
+  stallRecoveryTimer = setTimeout(() => {
+    stallRecoveryTimer = null;
+    recoverStalledPlayback(reason);
+  }, Math.max(0, delayMs));
+}
+
+function recoverStalledPlayback(reason = "stall") {
+  if (!currentSong?.link || userInitiatedPause || trackTransitioning || recoveringStall) return;
+
+  const stalledLongEnough = Date.now() - lastProgressAt > STALL_PROGRESS_TIMEOUT_MS;
+  if (!audio.paused && !stalledLongEnough) return;
+
+  if (stallRecoveryAttempts >= MAX_STALL_RECOVERY_ATTEMPTS) {
+    recoveringStall = false;
+    if (playlist.length > 1) {
+      trackTransitioning = true;
+      playNextSong();
+    } else {
+      playBtn.textContent = "play_arrow";
+    }
+    return;
+  }
+
+  recoveringStall = true;
+  stallRecoveryAttempts += 1;
+  clearStallRecoveryTimer();
+
+  const resumeAt = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+  const retryUrl = getRecoveryPlaybackUrl(reason) || normalizeAudioUrl(currentSong.link);
+  if (!retryUrl) {
+    recoveringStall = false;
+    if (playlist.length > 1) {
+      trackTransitioning = true;
+      playNextSong();
+    }
+    return;
+  }
+
+  const attemptResume = () => {
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      seekToTime(resumeAt);
+    } else {
+      try {
+        audio.currentTime = Math.max(0, resumeAt);
+      } catch (e) {}
+      updateTimeDisplay();
+    }
+    resumeAudioContext()
+      .then(() => audio.play())
+      .then(() => {
+        recoveringStall = false;
+        lastProgressAt = Date.now();
+      })
+      .catch(() => {
+        recoveringStall = false;
+        scheduleStallRecovery(`${reason}-retry`, STALL_RECOVERY_DELAY_MS + 500);
+      });
+  };
+
+  try {
+    stopFade();
+    audio.pause();
+    audio.src = retryUrl;
+    audio.load();
+
+    if (audio.readyState >= 2) {
+      attemptResume();
+      return;
+    }
+
+    const canPlayHandler = () => {
+      audio.removeEventListener("canplay", canPlayHandler);
+      attemptResume();
+    };
+
+    audio.addEventListener("canplay", canPlayHandler, { once: true });
+    setTimeout(() => {
+      audio.removeEventListener("canplay", canPlayHandler);
+      if (recoveringStall) {
+        recoveringStall = false;
+        scheduleStallRecovery(`${reason}-timeout`, STALL_RECOVERY_DELAY_MS + 500);
+      }
+    }, 5000);
+  } catch (e) {
+    recoveringStall = false;
+    scheduleStallRecovery(`${reason}-exception`, STALL_RECOVERY_DELAY_MS + 500);
+  }
+}
+
 function pauseForInterruption() {
   if (audio.paused) return;
+  clearStallRecoveryTimer();
+  recoveringStall = false;
   interruptedBySystem = true;
   userInitiatedPause = false;
   trackTransitioning = false;
@@ -215,23 +331,144 @@ function pauseForInterruption() {
   audio.pause();
 }
 
-// Dropbox URL fix
-function fixDropboxUrl(url) {
-  if (!url.includes('dropbox.com')) return url;
-  if (url.includes('dl.dropboxusercontent.com') && url.includes('raw=1')) {
-    return url;
-  }
-  
+function toHttpsUrl(rawUrl) {
   try {
-    const u = new URL(url);
-    if (u.hostname === 'www.dropbox.com') {
-      u.hostname = 'dl.dropboxusercontent.com';
-      u.searchParams.set('raw', '1');
-      return u.toString();
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== "https:") parsed.protocol = "https:";
+    return parsed.toString();
+  } catch (e) {
+    return rawUrl || "";
+  }
+}
+
+function normalizeAudioUrl(rawUrl) {
+  const safeUrl = toHttpsUrl(rawUrl);
+  try {
+    const url = new URL(safeUrl);
+    const host = url.hostname.toLowerCase();
+
+    if (host.includes("dropbox.com")) {
+      if (host === "www.dropbox.com") {
+        url.hostname = "dl.dropboxusercontent.com";
+      }
+      url.searchParams.set("raw", "1");
+      url.searchParams.delete("dl");
+      return url.toString();
+    }
+
+    if (host.includes("supabase.co")) {
+      // Keep storage URLs stream-friendly.
+      url.searchParams.delete("download");
+      url.searchParams.delete("dl");
+      return url.toString();
+    }
+
+    if (host.includes("filegarden")) {
+      url.searchParams.delete("download");
+      url.searchParams.delete("dl");
+      return url.toString();
+    }
+
+    return url.toString();
+  } catch (e) {
+    return safeUrl;
+  }
+}
+
+function buildAudioUrlCandidates(rawUrl) {
+  const unique = new Set();
+  const candidates = [];
+  const push = (value) => {
+    const cleaned = normalizeAudioUrl(value);
+    if (!cleaned || unique.has(cleaned)) return;
+    unique.add(cleaned);
+    candidates.push(cleaned);
+  };
+
+  push(rawUrl);
+
+  try {
+    const original = new URL(toHttpsUrl(rawUrl));
+    const host = original.hostname.toLowerCase();
+
+    if (host.includes("dropbox.com")) {
+      const direct = new URL(original.toString());
+      direct.hostname = "dl.dropboxusercontent.com";
+      direct.searchParams.set("raw", "1");
+      direct.searchParams.delete("dl");
+      push(direct.toString());
+
+      const dlVersion = new URL(original.toString());
+      dlVersion.hostname = "www.dropbox.com";
+      dlVersion.searchParams.set("dl", "1");
+      dlVersion.searchParams.delete("raw");
+      push(dlVersion.toString());
+    }
+
+    if (host.includes("supabase.co")) {
+      const streamVersion = new URL(original.toString());
+      streamVersion.searchParams.delete("download");
+      streamVersion.searchParams.delete("dl");
+      push(streamVersion.toString());
+    }
+
+    if (host.includes("filegarden")) {
+      const streamVersion = new URL(original.toString());
+      streamVersion.searchParams.delete("download");
+      streamVersion.searchParams.delete("dl");
+      push(streamVersion.toString());
     }
   } catch (e) {}
-  return url.replace('www.dropbox.com', 'dl.dropboxusercontent.com') + 
-         (url.includes('?') ? '&raw=1' : '?raw=1');
+
+  return candidates.length ? candidates : [rawUrl];
+}
+
+function warmOriginForAudio(rawUrl) {
+  try {
+    const normalized = normalizeAudioUrl(rawUrl);
+    const url = new URL(normalized);
+    if (warmedOrigins.has(url.origin)) return;
+    warmedOrigins.add(url.origin);
+
+    const preconnect = document.createElement("link");
+    preconnect.rel = "preconnect";
+    preconnect.href = url.origin;
+    preconnect.crossOrigin = "anonymous";
+    document.head.appendChild(preconnect);
+
+    const dnsPrefetch = document.createElement("link");
+    dnsPrefetch.rel = "dns-prefetch";
+    dnsPrefetch.href = url.origin;
+    document.head.appendChild(dnsPrefetch);
+  } catch (e) {}
+}
+
+function setCurrentPlaybackCandidates(rawUrl) {
+  currentPlaybackUrls = buildAudioUrlCandidates(rawUrl);
+  currentPlaybackUrlIndex = 0;
+  const primary = currentPlaybackUrls[0] || normalizeAudioUrl(rawUrl);
+  warmOriginForAudio(primary);
+  return primary;
+}
+
+function getRecoveryPlaybackUrl(reason = "") {
+  if (!currentPlaybackUrls.length && currentSong?.link) {
+    setCurrentPlaybackCandidates(currentSong.link);
+  }
+
+  const wantsProviderFallback =
+    reason.includes("network") || reason.includes("stalled") || reason.includes("waiting");
+
+  if (
+    (stallRecoveryAttempts > 1 || wantsProviderFallback) &&
+    currentPlaybackUrlIndex < currentPlaybackUrls.length - 1
+  ) {
+    currentPlaybackUrlIndex += 1;
+  }
+
+  const chosen = currentPlaybackUrls[currentPlaybackUrlIndex] || currentPlaybackUrls[0] || "";
+  if (chosen) warmOriginForAudio(chosen);
+  return chosen;
 }
 
 // Audio Context - Lazy init
@@ -364,7 +601,7 @@ document.addEventListener("deviceready", () => {
 let wakeLock = null;
 
 async function requestWakeLock() {
-  if (!("wakeLock" in navigator)) return;
+  if (!ENABLE_SCREEN_WAKE_LOCK || document.hidden || !("wakeLock" in navigator)) return;
   try {
     wakeLock = await navigator.wakeLock.request("screen");
     wakeLock.addEventListener("release", () => {
@@ -450,6 +687,16 @@ if ('mediaSession' in navigator) {
     navigator.mediaSession.setActionHandler('seekforward', () => {
       seekToTime(audio.currentTime + 10);
     });
+    navigator.mediaSession.setActionHandler("seekto", (details) => {
+      const target = Number(details?.seekTime);
+      if (!Number.isFinite(target)) return;
+      if (details?.fastSeek && typeof audio.fastSeek === "function") {
+        audio.fastSeek(target);
+        updateTimeDisplay();
+        return;
+      }
+      seekToTime(target);
+    });
   } catch (e) {}
 }
 
@@ -496,7 +743,9 @@ function preloadNextSong() {
     window.preloadAudio = preloadAudio;
   }
   
-  const fixedUrl = fixDropboxUrl(nextSong.link);
+  const fixedUrl = buildAudioUrlCandidates(nextSong.link)[0];
+  if (!fixedUrl) return;
+  warmOriginForAudio(fixedUrl);
   if (preloadAudio.src !== fixedUrl) {
     preloadAudio.src = fixedUrl;
     preloadAudio.load();
@@ -517,6 +766,7 @@ export const player = {
     }
 
     clearAutoAdvanceRetry();
+    resetStallRecoveryState();
     shouldResumeAfterInterruption = false;
     callInterruptionActive = false;
     interruptedBySystem = false;
@@ -536,7 +786,7 @@ export const player = {
     totalListenedTime = 0;
     hasCountedSong = false;
 
-    const fixedUrl = fixDropboxUrl(song.link);
+    const fixedUrl = setCurrentPlaybackCandidates(song.link);
     
     if (!fixedUrl || fixedUrl === 'undefined') {
       console.error('Invalid URL:', fixedUrl);
@@ -559,6 +809,8 @@ export const player = {
       trackTransitioning = false;
       autoAdvanceRetryCount = 0;
       clearAutoAdvanceRetry();
+      resetStallRecoveryState();
+      lastProgressAt = Date.now();
     };
 
     const scheduleRetryForCurrentTrack = () => {
@@ -664,7 +916,7 @@ export const player = {
     currentIndex = state.currentIndex || 0;
     currentSong = state.currentSong;
     
-    const fixedUrl = fixDropboxUrl(state.currentSong.link);
+    const fixedUrl = setCurrentPlaybackCandidates(state.currentSong.link);
     audio.src = fixedUrl;
     audio.currentTime = state.currentTime || 0;
     
@@ -687,6 +939,7 @@ export const player = {
 
 // Controls
 function play() { 
+  resetStallRecoveryState();
   shouldResumeAfterInterruption = false;
   callInterruptionActive = false;
   interruptedBySystem = false;
@@ -710,6 +963,8 @@ function play() {
 }
 
 function pause() { 
+  clearStallRecoveryTimer();
+  recoveringStall = false;
   shouldResumeAfterInterruption = false;
   callInterruptionActive = false;
   interruptedBySystem = false;
@@ -752,6 +1007,11 @@ audio.ontimeupdate = () => {
   if (Math.abs(audio.currentTime - lastKnownTime) > 0.2) {
     lastKnownTime = audio.currentTime;
     lastProgressAt = Date.now();
+    if (stallRecoveryAttempts > 0 || recoveringStall) {
+      clearStallRecoveryTimer();
+      recoveringStall = false;
+      stallRecoveryAttempts = 0;
+    }
   }
   
   seekBar.value = (audio.currentTime / audio.duration) * 100;
@@ -783,6 +1043,27 @@ audio.ontimeupdate = () => {
 
 audio.addEventListener("loadedmetadata", updateTimeDisplay);
 audio.addEventListener("durationchange", updateTimeDisplay);
+audio.addEventListener("playing", () => {
+  clearStallRecoveryTimer();
+  recoveringStall = false;
+  stallRecoveryAttempts = 0;
+  lastProgressAt = Date.now();
+});
+audio.addEventListener("waiting", () => {
+  if (!audio.paused && !trackTransitioning) {
+    scheduleStallRecovery("waiting", 2000);
+  }
+});
+audio.addEventListener("stalled", () => {
+  if (!audio.paused && !trackTransitioning) {
+    scheduleStallRecovery("stalled", 1200);
+  }
+});
+audio.addEventListener("suspend", () => {
+  if (!audio.paused && !trackTransitioning && Date.now() - lastProgressAt > 3000) {
+    scheduleStallRecovery("suspend", 1500);
+  }
+});
 
 // FIXED: Save song stats function with localStorage fallback for PWA offline
 async function saveSongStats() {
@@ -875,21 +1156,7 @@ audio.onerror = (e) => {
   }
   
   if (audio.error && audio.error.code === audio.error.MEDIA_ERR_NETWORK) {
-    setTimeout(() => {
-      if (currentSong) {
-        const retryUrl = fixDropboxUrl(currentSong.link);
-        audio.src = retryUrl;
-        audio.play().then(() => {
-          playBtn.textContent = 'pause';
-          trackTransitioning = false;
-          autoAdvanceRetryCount = 0;
-          startFade("in");
-        }).catch(() => {
-          trackTransitioning = true;
-          setTimeout(() => playNextSong(), 500);
-        });
-      }
-    }, 500);
+    scheduleStallRecovery("media-network-error", 300);
   } else if (audio.error?.code !== 4) {
     trackTransitioning = true;
     setTimeout(() => playNextSong(), 1000);
@@ -971,6 +1238,7 @@ document.addEventListener("resume", () => {
 });
 
 audio.addEventListener('play', () => {
+  resetStallRecoveryState();
   shouldResumeAfterInterruption = false;
   callInterruptionActive = false;
   interruptedBySystem = false;
@@ -989,6 +1257,7 @@ audio.addEventListener('play', () => {
   if (audioContext?.state === 'suspended') {
     audioContext.resume();
   }
+  lastProgressAt = Date.now();
 });
 
 seekBar.oninput = () => {
@@ -1040,17 +1309,18 @@ onAuthStateChanged(auth, user => {
 let playbackWatchdogInterval = setInterval(() => {
   if (!currentSong) return;
 
-  if (!audio.paused) {
-    const stalled = Date.now() - lastProgressAt > 15000 && !trackTransitioning;
+  if (!audio.paused && !trackTransitioning) {
+    const stalled = Date.now() - lastProgressAt > STALL_PROGRESS_TIMEOUT_MS;
     if (!stalled) return;
 
-    if (isNearTrackEnd()) {
+    const remaining = Number.isFinite(audio.duration) ? audio.duration - audio.currentTime : Infinity;
+    if (remaining <= 1.5 || isNearTrackEnd()) {
       trackTransitioning = true;
       playNextSong();
       return;
     }
 
-    audio.play().catch(() => {});
+    recoverStalledPlayback("watchdog");
     return;
   }
 
@@ -1063,6 +1333,7 @@ let playbackWatchdogInterval = setInterval(() => {
 // FIXED: Save stats and playback state when user leaves (important for PWA)
 window.addEventListener('beforeunload', () => {
   clearInterval(playbackWatchdogInterval);
+  clearStallRecoveryTimer();
   stopServiceWorkerKeepAlive();
   clearAutoAdvanceRetry();
   

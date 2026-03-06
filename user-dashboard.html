@@ -111,30 +111,12 @@
     reauthenticateWithPopup,
     doc,
     getDoc,
+    onSnapshot,
     updateDoc,
     deleteDoc
   } from "./scripts/firebase-config.js";
-
-  // Sync Firebase stats on dashboard (real-time PWA integration)
-  async function syncFirebaseStats() {
-    try {
-      if (!auth.currentUser) return;
-      
-      const userRef = doc(db, "users", auth.currentUser.uid);
-      const snap = await getDoc(userRef);
-      if (snap.exists()) {
-        const data = snap.data();
-        // Update dashboard with live Firebase data
-        minutesEl.textContent = Math.round(data.minutesListened || 0);
-        songsEl.textContent = data.songsPlayed || 0;
-      }
-    } catch (e) {
-      console.error("Error syncing Firebase stats:", e);
-    }
-  }
   
-  // Sync stats periodically while on dashboard (real-time)
-  let statsSyncInterval = null;
+  let statsUnsubscribe = null;
 
   const avatarEl = document.getElementById('avatar');
   const nameEl = document.getElementById('display-name');
@@ -146,14 +128,37 @@
   const deleteBtn = document.getElementById('delete-account');
   const logoutBtn = document.getElementById('logout');
 
+  function stopStatsSync() {
+    if (typeof statsUnsubscribe === "function") {
+      statsUnsubscribe();
+      statsUnsubscribe = null;
+    }
+  }
+
+  function startStatsSync(userId) {
+    stopStatsSync();
+    const userRef = doc(db, "users", userId);
+    statsUnsubscribe = onSnapshot(
+      userRef,
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        minutesEl.textContent = Math.round(data.minutesListened || 0);
+        songsEl.textContent = data.songsPlayed || 0;
+      },
+      (e) => {
+        console.error("Error syncing Firebase stats:", e);
+      }
+    );
+  }
+
   onAuthStateChanged(auth, async (user) => {
     if (!user) {
       location.href = "auth.html";
       return;
     }
 
-    // Clear previous sync interval
-    if (statsSyncInterval) clearInterval(statsSyncInterval);
+    stopStatsSync();
 
     // Auto-fetch Google avatar
     avatarEl.src = user.photoURL || 'data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 width=%27100%27 height=%27100%27><circle cx=%2750%27 cy=%2750%27 r=%2740%27 fill=%27%23ccc%27/><text x=%2750%25%27 y=%2755%25%27 font-size=%2730%27 fill=%27%23999%27 text-anchor=%27middle%27>?</text></svg>';
@@ -162,7 +167,7 @@
     emailEl.textContent = user.email;
     newNameInput.value = user.displayName || "";
 
-    // Fetch Firestore stats
+    // Initial fetch + realtime updates
     try {
       const userRef = doc(db, "users", user.uid);
       const snap = await getDoc(userRef);
@@ -174,14 +179,23 @@
     } catch (e) {
       console.error("Error fetching user data:", e);
     }
-    
-    // Start real-time sync of stats every 3 seconds while on dashboard (PWA)
-    statsSyncInterval = setInterval(syncFirebaseStats, 3000);
+
+    startStatsSync(user.uid);
   });
   
-  // Cleanup interval when leaving page
+  document.addEventListener("visibilitychange", () => {
+    const userId = auth.currentUser?.uid;
+    if (!userId) return;
+    if (document.hidden) {
+      stopStatsSync();
+      return;
+    }
+    startStatsSync(userId);
+  });
+
+  // Cleanup listener when leaving page
   window.addEventListener('beforeunload', () => {
-    if (statsSyncInterval) clearInterval(statsSyncInterval);
+    stopStatsSync();
   });
 
   // Save Name

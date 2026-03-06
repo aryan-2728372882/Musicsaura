@@ -241,7 +241,6 @@ input, textarea {
   /* Force hardware acceleration */
   transform: translateZ(0);
   -webkit-transform: translateZ(0);
-  will-change: scroll-position;
 }
 
 /* Smooth scrollbar styling */
@@ -293,6 +292,9 @@ input, textarea {
   -webkit-transform: translateZ(0);
   /* FIXED: Card itself must be clickable */
   pointer-events: auto;
+  contain: content;
+  content-visibility: auto;
+  contain-intrinsic-size: 240px;
 }
 
 .song-card:active { 
@@ -552,5 +554,14 @@ input, textarea {
 @supports (-webkit-touch-callout: none) {
   .content {
     overscroll-behavior-y: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

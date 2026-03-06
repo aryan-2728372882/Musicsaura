@@ -21,6 +21,14 @@
   <link rel="stylesheet" href="styles/styles.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+  <link rel="preconnect" href="https://dl.dropboxusercontent.com" crossorigin>
+  <link rel="dns-prefetch" href="//dl.dropboxusercontent.com">
+  <link rel="preconnect" href="https://www.dropbox.com" crossorigin>
+  <link rel="dns-prefetch" href="//www.dropbox.com">
+  <link rel="preconnect" href="https://supabase.co" crossorigin>
+  <link rel="dns-prefetch" href="//supabase.co">
+  <link rel="preconnect" href="https://filegarden.com" crossorigin>
+  <link rel="dns-prefetch" href="//filegarden.com">
   
   <!-- PWA Icons -->
   <link rel="icon" type="image/png" sizes="192x192" href="assets/logo.png">
@@ -111,79 +119,32 @@
     </div>
   </footer>
 
-  <!-- ANDROID SCROLL FIX -->
   <script>
-    // Prevent double-tap zoom globally
-    let lastTouchEnd = 0;
-    document.addEventListener('touchend', (e) => {
-      const now = Date.now();
-      if (now - lastTouchEnd <= 300) {
-        e.preventDefault();
+    // Keep mobile interactions smooth without heavy scroll/mutation observers.
+    (() => {
+      let lastTouchEnd = 0;
+      document.addEventListener("touchend", (e) => {
+        const now = Date.now();
+        const isDoubleTap = now - lastTouchEnd <= 280;
+        const interactiveTarget = e.target?.closest("input, textarea, select, button, a, label");
+        if (isDoubleTap && !interactiveTarget) {
+          e.preventDefault();
+        }
+        lastTouchEnd = now;
+      }, { passive: false });
+
+      if ("scrollRestoration" in history) {
+        history.scrollRestoration = "manual";
       }
-      lastTouchEnd = now;
-    }, { passive: false });
 
-    // Fix scroll momentum on Android
-    document.addEventListener('DOMContentLoaded', () => {
-      const content = document.getElementById('main-content');
-      
-      // Ensure scroll container is properly initialized
-      content.scrollTop = 0;
-      
-      // Handle scroll restoration
-      let scrollTimeout;
-      content.addEventListener('scroll', () => {
-        clearTimeout(scrollTimeout);
-        scrollTimeout = setTimeout(() => {
-          // Ensure scroll position is maintained
-          const currentScroll = content.scrollTop;
-          requestAnimationFrame(() => {
-            content.scrollTop = currentScroll;
-          });
-        }, 50);
-      }, { passive: true });
-      
-      // Prevent scroll issues on page show
-      window.addEventListener('pageshow', () => {
-        content.scrollTop = 0;
-      });
-      
-      // Fix for Android Chrome scroll lag
-      let isScrolling = false;
-      content.addEventListener('touchstart', () => {
-        isScrolling = true;
-      }, { passive: true });
-      
-      content.addEventListener('touchend', () => {
-        setTimeout(() => {
-          isScrolling = false;
-        }, 100);
-      }, { passive: true });
-    });
-
-    // Fix click handling for song cards
-    document.addEventListener('DOMContentLoaded', () => {
-      // Wait for app.js to load and attach handlers
-      setTimeout(() => {
-        // Re-enable clicks after preventing zoom
-        const observer = new MutationObserver(() => {
-          document.querySelectorAll('.song-card').forEach(card => {
-            // Ensure card itself is clickable
-            card.style.pointerEvents = 'auto';
-          });
+      window.addEventListener("pageshow", () => {
+        const content = document.getElementById("main-content");
+        if (!content) return;
+        requestAnimationFrame(() => {
+          if (content.scrollTop < 0) content.scrollTop = 0;
         });
-        
-        observer.observe(document.getElementById('grid'), {
-          childList: true,
-          subtree: true
-        });
-        
-        observer.observe(document.getElementById('search-grid'), {
-          childList: true,
-          subtree: true
-        });
-      }, 100);
-    });
+      }, { passive: true });
+    })();
   </script>
 
   <!-- Load scripts -->
