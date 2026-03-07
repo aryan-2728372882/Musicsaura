@@ -38,6 +38,7 @@ let autoAdvanceRetryCount = 0;
 const MAX_AUTO_ADVANCE_RETRIES = 8;
 const TARGET_PLAYBACK_VOLUME = 1;
 const MIN_PLAYBACK_VOLUME = 0;
+const ENABLE_WEB_AUDIO_PIPELINE = false;
 let interruptedBySystem = false;
 let callInterruptionActive = false;
 let shouldResumeAfterInterruption = false;
@@ -50,9 +51,12 @@ const MAX_STALL_RECOVERY_ATTEMPTS = 4;
 const STALL_PROGRESS_TIMEOUT_MS = 12000;
 const STALL_RECOVERY_DELAY_MS = 1500;
 const ENABLE_SCREEN_WAKE_LOCK = false;
+const MAX_BACKGROUND_RESUME_ATTEMPTS = 12;
 const warmedOrigins = new Set();
 let currentPlaybackUrls = [];
 let currentPlaybackUrlIndex = 0;
+let backgroundResumeTimer = null;
+let backgroundResumeAttempts = 0;
 
 const PLAYBACK_STATE_KEY = "musicsaura-playback-state";
 const LOCAL_STATS_KEY = "musicsaura-local-stats";
@@ -175,6 +179,11 @@ function fadeTo(targetVolume, durationMs) {
   clearInterval(fadeInterval);
   const from = getCurrentPlaybackVolume();
   const to = clampPlaybackVolume(targetVolume);
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    setPlaybackVolume(to);
+    isFading = false;
+    return;
+  }
   const startTime = Date.now();
 
   isFading = true;
@@ -195,6 +204,12 @@ function fadeTo(targetVolume, durationMs) {
 function startFade(direction) {
   const duration = direction === "in" ? fadeInDuration : fadeOutDuration;
   const endVolume = direction === "in" ? TARGET_PLAYBACK_VOLUME : MIN_PLAYBACK_VOLUME;
+  // Timed JS fades are heavily throttled while screen is off; keep playback audible instead.
+  if (document.hidden) {
+    stopFade();
+    setPlaybackVolume(endVolume);
+    return;
+  }
   if (direction === "in") {
     setPlaybackVolume(MIN_PLAYBACK_VOLUME);
   }
@@ -224,6 +239,54 @@ function resetStallRecoveryState() {
   clearStallRecoveryTimer();
   recoveringStall = false;
   stallRecoveryAttempts = 0;
+}
+
+function clearBackgroundResumeTimer() {
+  if (!backgroundResumeTimer) return;
+  clearTimeout(backgroundResumeTimer);
+  backgroundResumeTimer = null;
+}
+
+function resetBackgroundResumeState() {
+  clearBackgroundResumeTimer();
+  backgroundResumeAttempts = 0;
+}
+
+function scheduleBackgroundResume(reason = "pause", delayMs = 800) {
+  if (userInitiatedPause || trackTransitioning || !currentSong?.link || callInterruptionActive) return;
+  if (backgroundResumeAttempts >= MAX_BACKGROUND_RESUME_ATTEMPTS) return;
+  clearBackgroundResumeTimer();
+  backgroundResumeTimer = setTimeout(() => {
+    backgroundResumeTimer = null;
+    attemptBackgroundResume(reason);
+  }, Math.max(0, delayMs));
+}
+
+function attemptBackgroundResume(reason = "pause") {
+  if (userInitiatedPause || trackTransitioning || !currentSong?.link || callInterruptionActive) return;
+  if (!audio.paused) {
+    resetBackgroundResumeState();
+    return;
+  }
+  if (backgroundResumeAttempts >= MAX_BACKGROUND_RESUME_ATTEMPTS) return;
+
+  backgroundResumeAttempts += 1;
+  resumeAudioContext()
+    .then(() => audio.play())
+    .then(() => {
+      resetBackgroundResumeState();
+      playBtn.textContent = "pause";
+      lastProgressAt = Date.now();
+      enableBackgroundMode();
+      startServiceWorkerKeepAlive();
+      if (document.hidden) {
+        setPlaybackVolume(TARGET_PLAYBACK_VOLUME);
+      }
+    })
+    .catch(() => {
+      const backoffMs = Math.min(5000, 900 + backgroundResumeAttempts * 500);
+      scheduleBackgroundResume(`${reason}-retry`, backoffMs);
+    });
 }
 
 function scheduleStallRecovery(reason, delayMs = STALL_RECOVERY_DELAY_MS) {
@@ -478,6 +541,7 @@ let gainNode = null;
 let audioContextInitialized = false;
 
 function initAudioContext() {
+  if (!ENABLE_WEB_AUDIO_PIPELINE) return null;
   if (audioContextInitialized) return audioContext;
   
   try {
@@ -624,6 +688,8 @@ document.addEventListener("visibilitychange", () => {
     requestWakeLock();
     enableBackgroundMode();
   } else if (document.hidden && !audio.paused) {
+    stopFade();
+    setPlaybackVolume(TARGET_PLAYBACK_VOLUME);
     enableBackgroundMode();
     startServiceWorkerKeepAlive();
   }
@@ -766,6 +832,7 @@ export const player = {
     }
 
     clearAutoAdvanceRetry();
+    resetBackgroundResumeState();
     resetStallRecoveryState();
     shouldResumeAfterInterruption = false;
     callInterruptionActive = false;
@@ -809,6 +876,7 @@ export const player = {
       trackTransitioning = false;
       autoAdvanceRetryCount = 0;
       clearAutoAdvanceRetry();
+      resetBackgroundResumeState();
       resetStallRecoveryState();
       lastProgressAt = Date.now();
     };
@@ -940,6 +1008,7 @@ export const player = {
 // Controls
 function play() { 
   resetStallRecoveryState();
+  resetBackgroundResumeState();
   shouldResumeAfterInterruption = false;
   callInterruptionActive = false;
   interruptedBySystem = false;
@@ -964,6 +1033,7 @@ function play() {
 
 function pause() { 
   clearStallRecoveryTimer();
+  resetBackgroundResumeState();
   recoveringStall = false;
   shouldResumeAfterInterruption = false;
   callInterruptionActive = false;
@@ -1028,7 +1098,7 @@ audio.ontimeupdate = () => {
   }
   
   const remaining = audio.duration - audio.currentTime;
-  if (remaining <= getFadeOutTriggerWindowSeconds() && !isFading) {
+  if (!document.hidden && !trackTransitioning && remaining <= getFadeOutTriggerWindowSeconds() && !isFading) {
     startFade("out");
   }
 
@@ -1108,6 +1178,7 @@ async function saveSongStats() {
 // Handle song end
 audio.onended = () => {
   stopFade();
+  resetBackgroundResumeState();
   userInitiatedPause = false;
   trackTransitioning = true;
   enableBackgroundMode();
@@ -1172,6 +1243,8 @@ document.addEventListener('visibilitychange', () => {
   }
   if (!document.hidden) {
     resumeAfterInterruptionIfNeeded();
+  } else if (document.hidden && audio.paused && shouldResumeAfterInterruption && !userInitiatedPause) {
+    scheduleBackgroundResume("visibility-hidden", 600);
   }
 });
 
@@ -1179,11 +1252,12 @@ document.addEventListener('visibilitychange', () => {
 audio.addEventListener('pause', () => {
   const naturalEnd = audio.ended;
   const fallbackAutoAdvance = !naturalEnd && !userInitiatedPause && !trackTransitioning && isNearTrackEnd();
-  const likelyExternalInterruption =
-    !naturalEnd &&
-    !userInitiatedPause &&
-    !trackTransitioning &&
-    (callInterruptionActive || document.hidden || !document.hasFocus());
+  const pausedDuringCallInterruption =
+    !naturalEnd && !userInitiatedPause && !trackTransitioning && callInterruptionActive;
+  const pausedWhileHidden =
+    !naturalEnd && !userInitiatedPause && !trackTransitioning && document.hidden;
+  const pausedFromFocusLoss =
+    !naturalEnd && !userInitiatedPause && !trackTransitioning && !document.hidden && !document.hasFocus();
 
   if (fallbackAutoAdvance) {
     trackTransitioning = true;
@@ -1212,25 +1286,33 @@ audio.addEventListener('pause', () => {
     return;
   }
 
-  if (likelyExternalInterruption) {
-    interruptedBySystem = true;
-    shouldResumeAfterInterruption = true;
-    callInterruptionActive = true;
-  }
-
   if (trackTransitioning || naturalEnd) {
     enableBackgroundMode();
     startServiceWorkerKeepAlive();
     return;
   }
 
-  // Unexpected pause (call/interrupt/background restriction): stay paused.
-  releaseWakeLock();
-  disableBackgroundMode();
-  stopServiceWorkerKeepAlive();
-  if ('mediaSession' in navigator) {
-    navigator.mediaSession.playbackState = 'paused';
+  if (pausedDuringCallInterruption) {
+    interruptedBySystem = true;
+    shouldResumeAfterInterruption = true;
+    enableBackgroundMode();
+    startServiceWorkerKeepAlive();
+    return;
   }
+
+  if (pausedWhileHidden || pausedFromFocusLoss) {
+    shouldResumeAfterInterruption = true;
+    enableBackgroundMode();
+    startServiceWorkerKeepAlive();
+    scheduleBackgroundResume(pausedWhileHidden ? "hidden-pause" : "focus-pause", 700);
+    return;
+  }
+
+  // Unexpected pause while a track should continue: retry automatically.
+  shouldResumeAfterInterruption = true;
+  enableBackgroundMode();
+  startServiceWorkerKeepAlive();
+  scheduleBackgroundResume("unexpected-pause", 900);
 });
 
 document.addEventListener("resume", () => {
@@ -1239,6 +1321,7 @@ document.addEventListener("resume", () => {
 
 audio.addEventListener('play', () => {
   resetStallRecoveryState();
+  resetBackgroundResumeState();
   shouldResumeAfterInterruption = false;
   callInterruptionActive = false;
   interruptedBySystem = false;
@@ -1334,6 +1417,7 @@ let playbackWatchdogInterval = setInterval(() => {
 window.addEventListener('beforeunload', () => {
   clearInterval(playbackWatchdogInterval);
   clearStallRecoveryTimer();
+  clearBackgroundResumeTimer();
   stopServiceWorkerKeepAlive();
   clearAutoAdvanceRetry();
   
