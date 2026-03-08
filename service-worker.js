@@ -1,5 +1,5 @@
 // service-worker.js - MusicsAura runtime cache
-const CACHE_NAME = "musicsaura-runtime-v7";
+const CACHE_NAME = "musicsaura-runtime-v8";
 const CORE_ASSETS = [
   "/",
   "/index.html",
@@ -8,12 +8,7 @@ const CORE_ASSETS = [
 ];
 
 function isAppDataRequest(url) {
-  return (
-    url.pathname.startsWith("/jsons/") ||
-    url.hostname.includes("firebase") ||
-    url.hostname.includes("googleapis.com") ||
-    url.hostname.includes("gstatic.com")
-  );
+  return url.pathname.startsWith("/jsons/");
 }
 
 async function networkFirst(request, options = {}) {
@@ -27,7 +22,7 @@ async function networkFirst(request, options = {}) {
   } catch (error) {
     const cached = await cache.match(request);
     if (cached) return cached;
-    throw error;
+    return new Response("", { status: 504, statusText: "Gateway Timeout" });
   }
 }
 
@@ -45,7 +40,8 @@ async function staleWhileRevalidate(request) {
 
   if (cached) return cached;
   const network = await networkPromise;
-  return network || Response.error();
+  if (network) return network;
+  return new Response("", { status: 504, statusText: "Gateway Timeout" });
 }
 
 self.addEventListener("install", (event) => {
@@ -75,6 +71,11 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
+  const isSameOrigin = url.origin === self.location.origin;
+
+  // Let browser handle third-party requests directly (fonts/Firebase/etc.)
+  // to avoid SW-level uncaught fetch failures from ad blockers/privacy filters.
+  if (!isSameOrigin) return;
 
   // Do not proxy audio requests through SW to preserve native streaming/range behavior.
   if (request.destination === "audio" || /\.(mp3|m4a|aac|wav|ogg|flac)($|\?)/i.test(url.pathname)) {
@@ -83,7 +84,19 @@ self.addEventListener("fetch", (event) => {
 
   // Always fetch latest dynamic app data.
   if (isAppDataRequest(url)) {
-    event.respondWith(fetch(request, { cache: "no-store" }));
+    event.respondWith(
+      fetch(request, { cache: "no-store" }).catch(async () => {
+        const cached = await caches.match(request);
+        if (cached) return cached;
+        return new Response("[]", {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "cache-control": "no-store"
+          }
+        });
+      })
+    );
     return;
   }
 
@@ -98,10 +111,21 @@ self.addEventListener("fetch", (event) => {
   if (isNavigation || isAppShellAsset) {
     event.respondWith(
       fetch(request, { cache: "no-store" }).catch(async () => {
+        const cached = await caches.match(request);
+        if (cached) return cached;
+
         if (isNavigation) {
-          return caches.match("/index.html");
+          return (await caches.match("/index.html")) || new Response("", { status: 503 });
         }
-        return (await caches.match(request)) || Response.error();
+
+        if (request.destination === "style") {
+          return new Response("/* offline fallback */", {
+            status: 200,
+            headers: { "content-type": "text/css" }
+          });
+        }
+
+        return new Response("", { status: 503 });
       })
     );
     return;

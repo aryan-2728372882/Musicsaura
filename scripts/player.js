@@ -175,6 +175,11 @@ function setPlaybackVolume(value) {
   audio.volume = next;
 }
 
+function isBackgroundPowerAbort(error) {
+  const text = `${error?.name || ""} ${error?.message || ""}`.toLowerCase();
+  return text.includes("video-only background media was paused to save power");
+}
+
 function fadeTo(targetVolume, durationMs) {
   clearInterval(fadeInterval);
   const from = getCurrentPlaybackVolume();
@@ -868,7 +873,7 @@ export const player = {
     enableBackgroundMode();
     
     // Start from low volume and fade in to avoid sudden spikes on speakers.
-    setPlaybackVolume(MIN_PLAYBACK_VOLUME);
+    setPlaybackVolume(document.hidden ? TARGET_PLAYBACK_VOLUME : MIN_PLAYBACK_VOLUME);
     seekBar.value = 0;
     updateTimeDisplay();
 
@@ -922,7 +927,11 @@ export const player = {
         markTrackStarted();
         setTimeout(() => preloadNextSong(), 1000);
       }).catch(err => {
-        console.error('Preloaded play failed:', err);
+        if (isBackgroundPowerAbort(err)) {
+          setPlaybackVolume(TARGET_PLAYBACK_VOLUME);
+        } else {
+          console.error('Preloaded play failed:', err);
+        }
         scheduleRetryForCurrentTrack();
       });
       
@@ -944,6 +953,9 @@ export const player = {
       startFade("in");
       setTimeout(() => preloadNextSong(), 1000);
     }).catch(err => {
+      if (isBackgroundPowerAbort(err)) {
+        setPlaybackVolume(TARGET_PLAYBACK_VOLUME);
+      }
       const canPlayHandler = () => {
         audio.play().then(() => {
           playBtn.textContent = 'pause';
@@ -1192,7 +1204,7 @@ audio.onended = () => {
     songPlayStartTime = Date.now(); 
     totalListenedTime = 0; 
     hasCountedSong = false;
-    setPlaybackVolume(MIN_PLAYBACK_VOLUME);
+    setPlaybackVolume(document.hidden ? TARGET_PLAYBACK_VOLUME : MIN_PLAYBACK_VOLUME);
     
     audio.play().then(() => {
       playBtn.textContent = 'pause';
@@ -1205,7 +1217,7 @@ audio.onended = () => {
       }
     });
   } else if (repeat === 'all' || repeat === 'off') {
-    setPlaybackVolume(MIN_PLAYBACK_VOLUME);
+    setPlaybackVolume(document.hidden ? TARGET_PLAYBACK_VOLUME : MIN_PLAYBACK_VOLUME);
     playNextSong();
   }
   updateTimeDisplay();
