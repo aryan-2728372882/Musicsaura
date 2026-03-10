@@ -1444,44 +1444,6 @@ window.addEventListener('beforeunload', () => {
   }
 });
 
-// Register service worker
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js', { updateViaCache: 'none' }).then(reg => {
-      reg.update().catch(() => {});
-
-      const activateWaitingWorker = () => {
-        if (reg.waiting) {
-          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-        }
-      };
-
-      activateWaitingWorker();
-
-      reg.addEventListener('updatefound', () => {
-        const worker = reg.installing;
-        if (!worker) return;
-        worker.addEventListener('statechange', () => {
-          if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-            activateWaitingWorker();
-          }
-        });
-      });
-
-      setInterval(() => {
-        reg.update().catch(() => {});
-      }, 60000);
-    }).catch(() => {});
-
-    let refreshing = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (refreshing) return;
-      refreshing = true;
-      window.location.reload();
-    });
-  });
-}
-
 // Preload first song on page load
 window.addEventListener('load', () => {
   if (playlist.length > 0) {

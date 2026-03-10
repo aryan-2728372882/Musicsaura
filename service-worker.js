@@ -1,11 +1,5 @@
 // service-worker.js - MusicsAura runtime cache
-const CACHE_NAME = "musicsaura-runtime-v8";
-const CORE_ASSETS = [
-  "/",
-  "/index.html",
-  "/manifest.json",
-  "/assets/logo.png"
-];
+const CACHE_NAME = "musicsaura-runtime-v9";
 
 function isAppDataRequest(url) {
   return url.pathname.startsWith("/jsons/");
@@ -45,12 +39,7 @@ async function staleWhileRevalidate(request) {
 }
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      .then((cache) => cache.addAll(CORE_ASSETS))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener("activate", (event) => {
@@ -76,6 +65,9 @@ self.addEventListener("fetch", (event) => {
   // Let browser handle third-party requests directly (fonts/Firebase/etc.)
   // to avoid SW-level uncaught fetch failures from ad blockers/privacy filters.
   if (!isSameOrigin) return;
+
+  // Never proxy the service worker script itself.
+  if (url.pathname === "/service-worker.js") return;
 
   // Do not proxy audio requests through SW to preserve native streaming/range behavior.
   if (request.destination === "audio" || /\.(mp3|m4a|aac|wav|ogg|flac)($|\?)/i.test(url.pathname)) {
@@ -140,7 +132,24 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("message", (event) => {
-  if (event.data?.type === "SKIP_WAITING") {
+  const type = event.data?.type;
+
+  if (type === "SKIP_WAITING") {
     self.skipWaiting();
+    return;
+  }
+
+  if (type === "CLEAR_RUNTIME_CACHE") {
+    const clearPromise = caches.keys().then((names) =>
+      Promise.all(names.map((name) => caches.delete(name)))
+    );
+    event.waitUntil(clearPromise);
+
+    const messagePort = event.ports && event.ports[0];
+    if (messagePort) {
+      clearPromise.finally(() => {
+        messagePort.postMessage({ ok: true });
+      });
+    }
   }
 });
