@@ -14,8 +14,16 @@
 
   const SW_URL = "/service-worker.js";
   const SW_SIGNATURE_KEY = "musicsaura:sw-signature";
+  const DEPLOY_SIGNATURE_KEY = "musicsaura:deploy-signature";
   const RELOAD_GUARD_KEY = "musicsaura:sw-reload-guard";
   const UPDATE_INTERVAL_MS = 60 * 1000;
+  const DEPLOY_SIGNATURE_URLS = [
+    "/index.html",
+    "/scripts/app.js",
+    "/scripts/player.js",
+    "/styles/styles.css",
+    "/manifest.json"
+  ];
 
   function storageGet(storage, key) {
     try {
@@ -43,6 +51,7 @@
   }
 
   function reloadOnce(reason) {
+    if (reloadOnce.reloading) return;
     const currentGuard = storageGet(sessionStorage, RELOAD_GUARD_KEY);
     if (currentGuard) {
       const [guardReason, guardAt] = currentGuard.split("@");
@@ -50,6 +59,7 @@
       if (guardReason === reason && elapsedMs < 15000) return;
     }
 
+    reloadOnce.reloading = true;
     storageSet(sessionStorage, RELOAD_GUARD_KEY, `${reason}@${Date.now()}`);
 
     const nextUrl = new URL(window.location.href);
@@ -109,6 +119,35 @@
     return `${lastModified}:${source.length}:${fnv1aHash(source)}`;
   }
 
+  async function getUrlSignature(url) {
+    const res = await fetch(`${url}?_=${Date.now()}`, {
+      cache: "no-store",
+      headers: {
+        "cache-control": "no-cache",
+        pragma: "no-cache"
+      }
+    });
+
+    if (!res.ok) return `${url}:status:${res.status}`;
+
+    const etag = res.headers.get("etag");
+    if (etag) return `${url}:etag:${etag}`;
+
+    const lastModified = res.headers.get("last-modified") || "no-last-modified";
+    const contentLength = res.headers.get("content-length");
+    if (contentLength) {
+      return `${url}:lm:${lastModified}:len:${contentLength}`;
+    }
+
+    const source = await res.text();
+    return `${url}:lm:${lastModified}:len:${source.length}:hash:${fnv1aHash(source)}`;
+  }
+
+  async function getDeployContentSignature() {
+    const parts = await Promise.all(DEPLOY_SIGNATURE_URLS.map((url) => getUrlSignature(url)));
+    return fnv1aHash(parts.join("|"));
+  }
+
   async function activateWaitingWorker(registration) {
     if (!registration?.waiting) return false;
     try {
@@ -142,6 +181,29 @@
     }
   }
 
+  async function syncDeployContentSignature(registration) {
+    try {
+      const latestSignature = await getDeployContentSignature();
+      if (!latestSignature) return;
+
+      const savedSignature = storageGet(localStorage, DEPLOY_SIGNATURE_KEY);
+      if (!savedSignature) {
+        storageSet(localStorage, DEPLOY_SIGNATURE_KEY, latestSignature);
+        return;
+      }
+
+      if (savedSignature === latestSignature) return;
+
+      storageSet(localStorage, DEPLOY_SIGNATURE_KEY, latestSignature);
+      await Promise.allSettled([clearWindowCaches(), clearWorkerCaches()]);
+      await activateWaitingWorker(registration);
+      await registration.update().catch(() => {});
+      reloadOnce(`deploy-content-changed:${latestSignature}`);
+    } catch {
+      // Ignore update signature errors to keep app usable.
+    }
+  }
+
   function wireRegistration(registration) {
     registration.addEventListener("updatefound", () => {
       const worker = registration.installing;
@@ -157,6 +219,7 @@
     const runUpdateCheck = () => {
       registration.update().catch(() => {});
       syncDeploySignature(registration).catch(() => {});
+      syncDeployContentSignature(registration).catch(() => {});
     };
 
     runUpdateCheck();

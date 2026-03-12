@@ -49,7 +49,9 @@ let recoveringStall = false;
 let stallRecoveryAttempts = 0;
 const MAX_STALL_RECOVERY_ATTEMPTS = 4;
 const STALL_PROGRESS_TIMEOUT_MS = 12000;
+const HIDDEN_STALL_PROGRESS_TIMEOUT_MS = 45000;
 const STALL_RECOVERY_DELAY_MS = 1500;
+const BACKGROUND_AUTO_ADVANCE_LEAD_SECONDS = 1.1;
 const ENABLE_SCREEN_WAKE_LOCK = false;
 const MAX_BACKGROUND_RESUME_ATTEMPTS = 12;
 const warmedOrigins = new Set();
@@ -92,6 +94,10 @@ function clearAutoAdvanceRetry() {
     clearTimeout(autoAdvanceRetryTimer);
     autoAdvanceRetryTimer = null;
   }
+}
+
+function getStallProgressTimeoutMs() {
+  return document.hidden ? HIDDEN_STALL_PROGRESS_TIMEOUT_MS : STALL_PROGRESS_TIMEOUT_MS;
 }
 
 function isNearTrackEnd() {
@@ -306,7 +312,7 @@ function scheduleStallRecovery(reason, delayMs = STALL_RECOVERY_DELAY_MS) {
 function recoverStalledPlayback(reason = "stall") {
   if (!currentSong?.link || userInitiatedPause || trackTransitioning || recoveringStall) return;
 
-  const stalledLongEnough = Date.now() - lastProgressAt > STALL_PROGRESS_TIMEOUT_MS;
+  const stalledLongEnough = Date.now() - lastProgressAt > getStallProgressTimeoutMs();
   if (!audio.paused && !stalledLongEnough) return;
 
   if (stallRecoveryAttempts >= MAX_STALL_RECOVERY_ATTEMPTS) {
@@ -1110,6 +1116,23 @@ audio.ontimeupdate = () => {
   }
   
   const remaining = audio.duration - audio.currentTime;
+  // On some Android PWAs, ended-triggered transitions are deferred while locked.
+  // Trigger the next track slightly before natural end to keep playback continuous.
+  if (
+    document.hidden &&
+    !trackTransitioning &&
+    repeat !== "one" &&
+    playlist.length > 1 &&
+    remaining > 0 &&
+    remaining <= BACKGROUND_AUTO_ADVANCE_LEAD_SECONDS
+  ) {
+    trackTransitioning = true;
+    stopFade();
+    setPlaybackVolume(TARGET_PLAYBACK_VOLUME);
+    playNextSong();
+    return;
+  }
+
   if (!document.hidden && !trackTransitioning && remaining <= getFadeOutTriggerWindowSeconds() && !isFading) {
     startFade("out");
   }
@@ -1133,17 +1156,18 @@ audio.addEventListener("playing", () => {
 });
 audio.addEventListener("waiting", () => {
   if (!audio.paused && !trackTransitioning) {
-    scheduleStallRecovery("waiting", 2000);
+    scheduleStallRecovery("waiting", document.hidden ? 6500 : 2000);
   }
 });
 audio.addEventListener("stalled", () => {
   if (!audio.paused && !trackTransitioning) {
-    scheduleStallRecovery("stalled", 1200);
+    scheduleStallRecovery("stalled", document.hidden ? 5500 : 1200);
   }
 });
 audio.addEventListener("suspend", () => {
-  if (!audio.paused && !trackTransitioning && Date.now() - lastProgressAt > 3000) {
-    scheduleStallRecovery("suspend", 1500);
+  const suspendThreshold = document.hidden ? 10000 : 3000;
+  if (!audio.paused && !trackTransitioning && Date.now() - lastProgressAt > suspendThreshold) {
+    scheduleStallRecovery("suspend", document.hidden ? 7000 : 1500);
   }
 });
 
@@ -1405,13 +1429,28 @@ let playbackWatchdogInterval = setInterval(() => {
   if (!currentSong) return;
 
   if (!audio.paused && !trackTransitioning) {
-    const stalled = Date.now() - lastProgressAt > STALL_PROGRESS_TIMEOUT_MS;
+    // Hidden PWAs can throttle timeupdate events; read currentTime directly here.
+    if (Math.abs(audio.currentTime - lastKnownTime) > 0.2) {
+      lastKnownTime = audio.currentTime;
+      lastProgressAt = Date.now();
+      if (stallRecoveryAttempts > 0 || recoveringStall) {
+        clearStallRecoveryTimer();
+        recoveringStall = false;
+        stallRecoveryAttempts = 0;
+      }
+    }
+
+    const stalled = Date.now() - lastProgressAt > getStallProgressTimeoutMs();
     if (!stalled) return;
 
     const remaining = Number.isFinite(audio.duration) ? audio.duration - audio.currentTime : Infinity;
     if (remaining <= 1.5 || isNearTrackEnd()) {
       trackTransitioning = true;
       playNextSong();
+      return;
+    }
+
+    if (document.hidden && audio.readyState >= 2 && !audio.seeking) {
       return;
     }
 
