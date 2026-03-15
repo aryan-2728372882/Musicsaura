@@ -51,7 +51,9 @@ const MAX_STALL_RECOVERY_ATTEMPTS = 4;
 const STALL_PROGRESS_TIMEOUT_MS = 12000;
 const HIDDEN_STALL_PROGRESS_TIMEOUT_MS = 45000;
 const STALL_RECOVERY_DELAY_MS = 1500;
-const BACKGROUND_AUTO_ADVANCE_LEAD_SECONDS = 1.1;
+// When the app is hidden/locked, some browsers delay/disable the "ended" event.
+// Advance to the next track a few seconds early to reduce gaps on lock-screen.
+const BACKGROUND_AUTO_ADVANCE_LEAD_SECONDS = 5;
 const ENABLE_SCREEN_WAKE_LOCK = false;
 const MAX_BACKGROUND_RESUME_ATTEMPTS = 12;
 const warmedOrigins = new Set();
@@ -1164,6 +1166,14 @@ audio.addEventListener("stalled", () => {
     scheduleStallRecovery("stalled", document.hidden ? 5500 : 1200);
   }
 });
+
+audio.addEventListener("ended", () => {
+  if (!trackTransitioning && playlist.length > 1) {
+    trackTransitioning = true;
+    playNextSong();
+  }
+});
+
 audio.addEventListener("suspend", () => {
   const suspendThreshold = document.hidden ? 10000 : 3000;
   if (!audio.paused && !trackTransitioning && Date.now() - lastProgressAt > suspendThreshold) {
@@ -1427,6 +1437,13 @@ onAuthStateChanged(auth, user => {
 // Playback watchdog for long background sessions and lock-screen transitions.
 let playbackWatchdogInterval = setInterval(() => {
   if (!currentSong) return;
+
+  // Fallback: sometimes the "ended" event doesn't fire reliably when the tab is hidden.
+  if (!audio.paused && !trackTransitioning && audio.ended && playlist.length > 1) {
+    trackTransitioning = true;
+    playNextSong();
+    return;
+  }
 
   if (!audio.paused && !trackTransitioning) {
     // Hidden PWAs can throttle timeupdate events; read currentTime directly here.
