@@ -1,0 +1,23 @@
+{
+  "name": "MusicsAura",
+  "short_name": "MusicsAura",
+  "description": "Stream Hindi, Punjabi, Haryanvi & Bhojpuri music",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "theme_color": "#080810",
+  "background_color": "#080810",
+  "categories": ["music", "entertainment"],
+  "lang": "en-IN",
+  "icons": [
+    { "src": "/assets/logo.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/logo.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Hindi Songs",   "url": "/?genre=hindi",   "icons": [{ "src": "/assets/logo.png", "sizes": "192x192" }] },
+    { "name": "Punjabi Songs", "url": "/?genre=punjabi", "icons": [{ "src": "/assets/logo.png", "sizes": "192x192" }] }
+  ],
+  "prefer_related_applications": false
+}

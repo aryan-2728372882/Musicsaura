@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#080810">
+  <title>My Profile — MusicsAura</title>
+  <link rel="icon" href="/assets/favicon.ico">
+  <link rel="stylesheet" href="styles/styles.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <script type="importmap">
+  {
+    "imports": {
+      "firebase/app":       "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js",
+      "firebase/auth":      "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js",
+      "firebase/firestore": "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js"
+    }
+  }
+  </script>
+  
+</head>
+<body class="page-scroll">
+<div class="dashboard-page">
+
+  <div class="dash-header">
+    <div class="dash-nav">
+      <a href="index.html" class="back-link">
+        <span class="material-icons">arrow_back_ios</span>
+        Back
+      </a>
+      <button class="btn-logout" id="logout">
+        <span class="material-icons" style="font-size:1rem">logout</span>
+        Logout
+      </button>
+    </div>
+    <div class="profile-hero">
+      <img id="avatar" class="profile-avatar" src="" alt="Profile">
+      <div>
+        <div class="profile-name" id="display-name">Loading…</div>
+        <div class="profile-email" id="email"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dash-body">
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-num" id="minutes">0</div>
+        <div class="stat-label">Minutes Listened</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" id="songs">0</div>
+        <div class="stat-label">Songs Played</div>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <h3>Edit Profile</h3>
+      <div class="edit-group">
+        <label for="new-name">Display Name</label>
+        <input type="text" class="edit-input" id="new-name" placeholder="Your name">
+      </div>
+      <button class="btn-save" id="save-name">Save</button>
+    </div>
+
+    <div class="section-card">
+      <h3>Account</h3>
+      <div style="display:flex;gap:0.7rem;flex-wrap:wrap">
+        <button class="btn-danger" id="delete-account">Delete Account</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="scripts/sw-manager.js" defer></script>
+<script type="module">
+  import {
+    auth, db, provider,
+    onAuthStateChanged, signOut, deleteUser, reauthenticateWithPopup,
+    doc, getDoc, onSnapshot, updateDoc, deleteDoc
+  } from "./scripts/firebase-config.js";
+
+  let unsub = null;
+  const avatarEl  = document.getElementById("avatar");
+  const nameEl    = document.getElementById("display-name");
+  const emailEl   = document.getElementById("email");
+  const minsEl    = document.getElementById("minutes");
+  const songsEl   = document.getElementById("songs");
+  const newNameEl = document.getElementById("new-name");
+  const saveBtnEl = document.getElementById("save-name");
+
+  function stopSync() { if (typeof unsub === "function") { unsub(); unsub = null; } }
+
+  function startSync(uid) {
+    stopSync();
+    unsub = onSnapshot(doc(db, "users", uid), snap => {
+      if (!snap.exists()) return;
+      const d = snap.data();
+      minsEl.textContent  = Math.round(d.minutesListened || 0).toLocaleString();
+      songsEl.textContent = (d.songsPlayed || 0).toLocaleString();
+    }, e => console.error("Snapshot error:", e));
+  }
+
+  onAuthStateChanged(auth, async user => {
+    if (!user) { location.href = "auth.html"; return; }
+    stopSync();
+
+    avatarEl.src = user.photoURL || `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%238a5cf6'/%3E%3Ctext x='50%25' y='50%25' font-size='36' fill='white' text-anchor='middle' dy='.35em'%3E${(user.displayName?.[0] || user.email?.[0] || "U").toUpperCase()}%3C/text%3E%3C/svg%3E`;
+    nameEl.textContent  = user.displayName || "User";
+    emailEl.textContent = user.email || "";
+    newNameEl.value     = user.displayName || "";
+
+    try {
+      const snap = await getDoc(doc(db, "users", user.uid));
+      if (snap.exists()) {
+        const d = snap.data();
+        minsEl.textContent  = Math.round(d.minutesListened || 0).toLocaleString();
+        songsEl.textContent = (d.songsPlayed || 0).toLocaleString();
+      }
+    } catch {}
+
+    startSync(user.uid);
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    if (document.hidden) stopSync(); else startSync(uid);
+  });
+
+  window.addEventListener("beforeunload", stopSync);
+
+  // Save name
+  saveBtnEl.onclick = async () => {
+    const user = auth.currentUser;
+    if (!user) return;
+    const name = newNameEl.value.trim();
+    if (!name) { alert("Name cannot be empty"); return; }
+    try {
+      await updateDoc(doc(db, "users", user.uid), { displayName: name });
+      nameEl.textContent = name;
+      saveBtnEl.textContent = "Saved!";
+      setTimeout(() => saveBtnEl.textContent = "Save", 2000);
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  // Delete account
+  document.getElementById("delete-account").onclick = async () => {
+    if (!confirm("Delete your account? This cannot be undone.")) return;
+    const user = auth.currentUser;
+    try {
+      await reauthenticateWithPopup(user, provider);
+      await deleteDoc(doc(db, "users", user.uid));
+      await deleteUser(user);
+      location.href = "auth.html";
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  // Logout
+  document.getElementById("logout").onclick = () => signOut(auth).then(() => location.href = "auth.html");
+</script>
+</body>
+</html>

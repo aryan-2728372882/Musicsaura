@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#080810">
+  <title>Admin — MusicsAura</title>
+  <link rel="icon" href="/assets/favicon.ico">
+  <link rel="stylesheet" href="styles/styles.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <script type="importmap">
+  {
+    "imports": {
+      "firebase/app":       "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js",
+      "firebase/auth":      "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js",
+      "firebase/firestore": "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js"
+    }
+  }
+  </script>
+  <style>
+    html, body { overflow: auto; height: auto; }
+    /* Responsive table */
+    @media (max-width: 600px) {
+      .hide-mobile { display: none; }
+      td, th { padding: 0.7rem 0.6rem; }
+    }
+  </style>
+</head>
+<body class="page-scroll">
+<div class="admin-page">
+
+  <header class="admin-header">
+    <a href="index.html" class="back-link">
+      <span class="material-icons">arrow_back_ios</span>
+    </a>
+    <h1>Admin Dashboard</h1>
+    <div style="display:flex;gap:0.5rem">
+      <a href="user-dashboard.html" class="back-link" style="color:var(--violet)">
+        <span class="material-icons" style="font-size:1.1rem">person</span>
+      </a>
+      <button class="btn-logout" id="logout" style="padding:0.4rem 0.8rem">
+        <span class="material-icons" style="font-size:1rem">logout</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="admin-body">
+    <div class="admin-stats">
+      <div class="admin-stat">
+        <div class="admin-stat-num" id="total-users">—</div>
+        <div class="admin-stat-label">Total Users</div>
+      </div>
+      <div class="admin-stat">
+        <div class="admin-stat-num" id="total-songs">—</div>
+        <div class="admin-stat-label">Songs Played</div>
+      </div>
+      <div class="admin-stat">
+        <div class="admin-stat-num" id="total-minutes">—</div>
+        <div class="admin-stat-label">Minutes Listened</div>
+      </div>
+    </div>
+
+    <div class="admin-table-wrap">
+      <div class="admin-table-title">Users</div>
+      <div id="admin-loading" class="admin-loading">Loading users…</div>
+      <table id="users-table" style="display:none">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Minutes</th>
+            <th>Songs</th>
+            <th class="hide-mobile">Last Played</th>
+            <th class="hide-mobile">Joined</th>
+          </tr>
+        </thead>
+        <tbody id="users-tbody"></tbody>
+      </table>
+      <div id="no-data" class="admin-loading" style="display:none">No users yet.</div>
+    </div>
+  </div>
+</div>
+
+<script src="scripts/sw-manager.js" defer></script>
+<script type="module">
+  import {
+    auth, db, isAdmin,
+    onAuthStateChanged,
+    collection, query, orderBy, getDocs,
+    signOut
+  } from "./scripts/firebase-config.js";
+
+  onAuthStateChanged(auth, async user => {
+    if (!user) { location.href = "auth.html"; return; }
+    if (!isAdmin(user.email)) { location.href = "user-dashboard.html"; return; }
+
+    const loadingEl = document.getElementById("admin-loading");
+    const tableEl   = document.getElementById("users-table");
+    const tbodyEl   = document.getElementById("users-tbody");
+    const noDataEl  = document.getElementById("no-data");
+
+    try {
+      const q = query(collection(db, "users"), orderBy("songsPlayed", "desc"));
+      const snap = await getDocs(q);
+
+      if (snap.empty) {
+        loadingEl.style.display = "none";
+        noDataEl.style.display  = "block";
+        return;
+      }
+
+      let totalUsers = 0, totalSongs = 0, totalMins = 0;
+      const frag = document.createDocumentFragment();
+
+      snap.forEach(docSnap => {
+        const d = docSnap.data();
+        totalUsers++;
+        totalSongs += d.songsPlayed     || 0;
+        totalMins  += d.minutesListened || 0;
+
+        const lastPlayed = d.lastPlayed ? d.lastPlayed.toDate().toLocaleString() : "Never";
+        const createdAt  = d.createdAt  ? d.createdAt.toDate().toLocaleDateString() : "—";
+        const avatarUrl  = d.photoURL   || `https://ui-avatars.com/api/?name=${encodeURIComponent(d.displayName || "U")}&background=8a5cf6&color=fff&size=80`;
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>
+            <div class="user-row">
+              <img class="user-avatar" src="${avatarUrl}" alt="" onerror="this.src='https://ui-avatars.com/api/?name=U&background=444&color=fff&size=80'">
+              <div>
+                <div class="user-name-cell">${d.displayName || "User"}</div>
+                <div class="user-email-cell">${d.email || ""}</div>
+              </div>
+            </div>
+          </td>
+          <td>${Math.round(d.minutesListened || 0).toLocaleString()}</td>
+          <td>${(d.songsPlayed || 0).toLocaleString()}</td>
+          <td class="hide-mobile">${lastPlayed}</td>
+          <td class="hide-mobile">${createdAt}</td>`;
+        frag.appendChild(tr);
+      });
+
+      tbodyEl.replaceChildren(frag);
+      document.getElementById("total-users").textContent   = totalUsers.toLocaleString();
+      document.getElementById("total-songs").textContent   = totalSongs.toLocaleString();
+      document.getElementById("total-minutes").textContent = Math.round(totalMins).toLocaleString();
+
+      loadingEl.style.display = "none";
+      tableEl.style.display   = "table";
+
+    } catch (err) {
+      loadingEl.textContent = "Error loading data: " + err.message;
+    }
+  });
+
+  document.getElementById("logout").onclick = () => signOut(auth).then(() => location.href = "auth.html");
+</script>
+</body>
+</html>
