@@ -1,18 +1,1 @@
-{
-  "name": "musicsaura",
-  "version": "2.0.0",
-  "description": "MusicsAura — Indian Music PWA",
-  "scripts": {
-    "start": "live-server",
-    "build": "echo 'MusicsAura PWA ready'",
-    "deploy": "git add . && git commit -m 'Deploy MusicsAura v2' && git push origin main"
-  },
-  "dependencies": {
-    "@capacitor/android": "^8.0.2",
-    "@capacitor/cli": "^8.0.2",
-    "@capacitor/core": "^8.0.2",
-    "@codetrix-studio/capacitor-google-auth": "^3.1.1",
-    "cordova-plugin-background-mode": "^0.7.3"
-  },
-  "license": "ISC"
-}
+﻿{"name":"musicsaura","version":"2.0.0","description":"MusicsAura PWA","scripts":{"build":"echo Static PWA"},"license":"ISC"}
