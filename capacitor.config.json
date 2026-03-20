@@ -4,7 +4,9 @@
   "webDir": "www",
   "android": {
     "allowMixedContent": true,
-    "backgroundColor": "#080810"
+    "backgroundColor": "#080810",
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
   },
   "plugins": {
     "GoogleAuth": {

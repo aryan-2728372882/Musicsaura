@@ -15,11 +15,11 @@
       },
       "oauth_client": [
         {
-          "client_id": "792892627539-um7giiori4nlu6jok8ujgnar81esik41.apps.googleusercontent.com",
+          "client_id": "792892627539-8rq9ok1rprifh03pfl5rk6cfv5c7h8c4.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.musicsaura.app",
-            "certificate_hash": "0e471fe76f42501c144adde0f9ac57bc7a95762d"
+            "certificate_hash": "f08a4272e403cc7a4862bf0aa77f2c610a7336fc"
           }
         },
         {
