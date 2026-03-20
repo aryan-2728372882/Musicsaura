@@ -23,13 +23,13 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
         stopService(new Intent(this, AudioForegroundService.class));
     }
 
     @Override
-    protected void onPause() {
+    public void onPause() {
         super.onPause();
         Intent serviceIntent = new Intent(this, AudioForegroundService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -40,7 +40,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onDestroy() {
+    public void onDestroy() {
         super.onDestroy();
         stopService(new Intent(this, AudioForegroundService.class));
     }
