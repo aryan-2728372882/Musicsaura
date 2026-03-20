@@ -21,7 +21,6 @@
   }
   </script>
   <style>
-    /* Auth page overrides: body should scroll */
     html, body { overflow: auto; height: auto; }
   </style>
 </head>
@@ -77,7 +76,6 @@
     doc, setDoc, getDoc, serverTimestamp
   } from "./scripts/firebase-config.js";
 
-  // If already logged in, redirect
   onAuthStateChanged(auth, user => {
     if (user) redirect(user);
   });
@@ -111,20 +109,63 @@
   }
   function clearError() { document.getElementById("auth-error").classList.remove("visible"); }
 
-  // Google
+  // Native = APK (window.Capacitor injected by bridge)
+  // Web/PWA = window.Capacitor is undefined → popup flow
+  function isNative() {
+    return !!(window.Capacitor?.isNativePlatform?.());
+  }
+
+  // ── Google Sign-In ────────────────────────────────────────────────
   document.getElementById("btn-google").onclick = async () => {
     clearError();
+    const btn = document.getElementById("btn-google");
+    btn.disabled = true;
+
     try {
-      const { signInWithPopup } = await import("https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js");
-      const result = await signInWithPopup(auth, provider);
-      await ensureUserDoc(result.user);
-      redirect(result.user);
+      if (isNative()) {
+        // APK: plugin registered in MainActivity.java
+        // Available as window.Capacitor.Plugins.GoogleAuth — no CDN needed
+        const GoogleAuth = window.Capacitor.Plugins.GoogleAuth;
+        if (!GoogleAuth) throw new Error("GoogleAuth plugin not found. Rebuild APK.");
+
+        await GoogleAuth.initialize({
+          clientId: "792892627539-6jlmptdh81kisovtlgsjqkvts5mehch9.apps.googleusercontent.com",
+          scopes: ["profile", "email"],
+          grantOfflineAccess: true
+        });
+
+        const googleUser = await GoogleAuth.signIn();
+        const idToken = googleUser?.authentication?.idToken;
+        if (!idToken) throw new Error("Google sign-in failed: no idToken.");
+
+        const { GoogleAuthProvider, signInWithCredential } =
+          await import("https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js");
+        const credential = GoogleAuthProvider.credential(idToken);
+        const result = await signInWithCredential(auth, credential);
+        await ensureUserDoc(result.user);
+        redirect(result.user);
+
+      } else {
+        // Web / PWA: standard Firebase popup
+        const { signInWithPopup } =
+          await import("https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js");
+        const result = await signInWithPopup(auth, provider);
+        await ensureUserDoc(result.user);
+        redirect(result.user);
+      }
+
     } catch (e) {
-      if (e.code !== "auth/popup-closed-by-user") showError(e.message);
+      const cancelled =
+        e.code === "auth/popup-closed-by-user" ||
+        e.message === "User cancelled." ||
+        e.message === "The user canceled the sign-in flow.";
+      if (!cancelled) showError(e.message || "Google sign-in failed.");
+    } finally {
+      btn.disabled = false;
     }
   };
 
-  // Email sign in / sign up toggle
+  // ── Email sign in / sign up ───────────────────────────────────────
   let isSignUp = false;
   const loginBtn  = document.getElementById("btn-login");
   const toggleBtn = document.getElementById("toggle-form");
@@ -134,8 +175,8 @@
 
   toggleBtn.onclick = () => {
     isSignUp = !isSignUp;
-    loginBtn.textContent   = isSignUp ? "Create Account" : "Sign In";
-    toggleBtn.textContent  = isSignUp ? "Sign in instead" : "Create one";
+    loginBtn.textContent  = isSignUp ? "Create Account" : "Sign In";
+    toggleBtn.textContent = isSignUp ? "Sign in instead" : "Create one";
     switchEl.firstChild.textContent = isSignUp ? "Already have an account? " : "Don't have an account? ";
     clearError();
   };
@@ -160,12 +201,12 @@
       redirect(user);
     } catch (e) {
       const msgs = {
-        "auth/invalid-email":          "Invalid email address.",
-        "auth/user-not-found":         "No account found with this email.",
-        "auth/wrong-password":         "Incorrect password.",
-        "auth/email-already-in-use":   "Email already in use. Sign in instead.",
-        "auth/weak-password":          "Password must be at least 6 characters.",
-        "auth/too-many-requests":      "Too many attempts. Try again later."
+        "auth/invalid-email":        "Invalid email address.",
+        "auth/user-not-found":       "No account found with this email.",
+        "auth/wrong-password":       "Incorrect password.",
+        "auth/email-already-in-use": "Email already in use. Sign in instead.",
+        "auth/weak-password":        "Password must be at least 6 characters.",
+        "auth/too-many-requests":    "Too many attempts. Try again later."
       };
       showError(msgs[e.code] || e.message);
     } finally {
@@ -173,8 +214,9 @@
     }
   };
 
-  // Enter key
-  [emailInp, passInp].forEach(el => el.addEventListener("keydown", e => { if (e.key === "Enter") loginBtn.click(); }));
+  [emailInp, passInp].forEach(el =>
+    el.addEventListener("keydown", e => { if (e.key === "Enter") loginBtn.click(); })
+  );
 </script>
 </body>
 </html>

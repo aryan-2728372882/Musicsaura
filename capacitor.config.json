@@ -1,5 +1,16 @@
 {
   "appId": "com.musicsaura.app",
   "appName": "musicsaura",
-  "webDir": "www"
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#080810"
+  },
+  "plugins": {
+    "GoogleAuth": {
+      "scopes": ["profile", "email"],
+      "serverClientId": "792892627539-6jlmptdh81kisovtlgsjqkvts5mehch9.apps.googleusercontent.com",
+      "forceCodeForRefreshToken": true
+    }
+  }
 }

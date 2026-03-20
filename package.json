@@ -1,1 +1,1 @@
-{"name":"musicsaura","version":"2.0.0","scripts":{"build":"echo ok"},"license":"ISC"}
+{"name":"musicsaura","version":"2.0.0","scripts":{"build":"echo ok"},"license":"ISC","dependencies":{"@capacitor/android":"^8.2.0","@capacitor/cli":"^8.2.0","@capacitor/core":"^8.2.0","@codetrix-studio/capacitor-google-auth":"^3.4.0-rc.4"}}
