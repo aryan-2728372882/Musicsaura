@@ -46,9 +46,21 @@
         <img src="assets/logo.png" alt="MusicsAura" class="app-logo">
         <span class="app-title">MusicsAura</span>
       </div>
-      <button id="profile-btn" aria-label="Profile">
-        <img id="nav-avatar" src="" alt="Profile">
-      </button>
+      <div style="display:flex;align-items:center;gap:0.5rem">
+        <a href="https://drive.google.com/uc?export=download&id=1glnXDIcY8wEaTMJqQLlOPcFd5bSNibfH"
+           target="_blank"
+           rel="noopener"
+           aria-label="Download Android App"
+           style="display:flex;align-items:center;gap:0.3rem;padding:0.38rem 0.72rem;background:linear-gradient(135deg,#8a5cf6,#6d28d9);color:#fff;border-radius:100px;font-size:0.78rem;font-weight:600;text-decoration:none;font-family:'DM Sans',sans-serif;white-space:nowrap;box-shadow:0 2px 12px rgba(138,92,246,0.35);transition:opacity .2s"
+           onmouseover="this.style.opacity='.82'"
+           onmouseout="this.style.opacity='1'">
+          <span class="material-icons" style="font-size:1rem;line-height:1">android</span>
+          Get App
+        </a>
+        <button id="profile-btn" aria-label="Profile">
+          <img id="nav-avatar" src="" alt="Profile">
+        </button>
+      </div>
     </header>
 
     <!-- SEARCH -->
@@ -111,7 +123,6 @@
 
   <script>
     (() => {
-      // Prevent double-tap zoom without blocking inputs
       let last = 0;
       document.addEventListener("touchend", e => {
         const now = Date.now();
