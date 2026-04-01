@@ -120,6 +120,14 @@
         "genre": "Remix"
     },
     {
+        "title": "Soni De Nakhre",
+        "artist": "",
+        "link": "https://file.garden/aRgAQiYidD0tulQV/Remix/Soni%20De%20Nakhre.mp3",
+        "thumbnail": "https://i.scdn.co/image/ab67616d0000b2735f63a32c610dce85cd7887a9",
+        "keywords": ["Soni", "De", "Nakhre", "remix"],
+        "genre": "Remix"
+    },
+    {
         "title": "Balma",
         "artist": "",
         "link": "https://qmsmncjhbrjtpeljhsph.supabase.co/storage/v1/object/public/remixes//Balma.mp3",
