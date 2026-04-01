@@ -134,6 +134,8 @@ body::before {
   align-items: center;
   gap: 12px;
   cursor: default;
+  min-width: 0; /* Crucial: allows flex children to shrink */
+  flex-shrink: 1;
 }
 
 .app-logo {
@@ -156,6 +158,9 @@ body::before {
   -webkit-text-fill-color: transparent;
   background-clip: text;
   pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #profile-btn {
@@ -1068,6 +1073,14 @@ tr:hover td { background: rgba(138,92,246,0.04); }
 /* ── RESPONSIVE ── */
 @media (max-width: 480px) {
   :root { --topbar-h: 64px; }
+  
+  /* Top bar mobile spacing fixes */
+  .top-bar { padding: 0 0.8rem; gap: 0.5rem; }
+  .logo-area { gap: 8px; }
+  .app-logo { width: 30px; height: 30px; }
+  .app-title { font-size: 1.15rem; }
+  #profile-btn { width: 36px; height: 36px; }
+
   .content { padding: 1rem 0.9rem calc(var(--player-h) + 1.2rem); }
   .song-grid { grid-template-columns: repeat(auto-fill, minmax(130px,1fr)); gap: 0.7rem; }
   .player-body { padding: 0.6rem 0.8rem; gap: 0.7rem; }
