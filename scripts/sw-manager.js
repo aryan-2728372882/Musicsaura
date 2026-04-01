@@ -1,267 +1,296 @@
 // scripts/sw-manager.js
 // Centralized service worker lifecycle + cache freshness manager.
 (() => {
-  if (window.__MUSICSAURA_SW_MANAGER__) return;
-  window.__MUSICSAURA_SW_MANAGER__ = true;
+  if (window.__MUSICSAURA_SW_MANAGER__) return;
+  window.__MUSICSAURA_SW_MANAGER__ = true;
 
-  const isLocalhost =
-    location.hostname === "localhost" ||
-    location.hostname === "127.0.0.1" ||
-    location.hostname === "[::1]";
-  const isSecureContext = location.protocol === "https:" || isLocalhost;
+  const isLocalhost =
+    location.hostname === "localhost" ||
+    location.hostname === "127.0.0.1" ||
+    location.hostname === "[::1]";
+  const isSecureContext = location.protocol === "https:" || isLocalhost;
 
-  if (!("serviceWorker" in navigator) || !isSecureContext) return;
+  if (!("serviceWorker" in navigator) || !isSecureContext) return;
 
-  const SW_URL = "/service-worker.js";
-  const SW_SIGNATURE_KEY = "musicsaura:sw-signature";
-  const DEPLOY_SIGNATURE_KEY = "musicsaura:deploy-signature";
-  const RELOAD_GUARD_KEY = "musicsaura:sw-reload-guard";
-  const UPDATE_INTERVAL_MS = 60 * 1000;
-  const DEPLOY_SIGNATURE_URLS = [
-    "/index.html",
-    "/scripts/app.js",
-    "/scripts/player.js",
-    "/styles/styles.css",
-    "/manifest.json"
-  ];
+  const SW_URL = "/service-worker.js";
+  const SW_SIGNATURE_KEY = "musicsaura:sw-signature";
+  const DEPLOY_SIGNATURE_KEY = "musicsaura:deploy-signature";
+  const RELOAD_GUARD_KEY = "musicsaura:sw-reload-guard";
+  const UPDATE_INTERVAL_MS = 60 * 1000;
+  const DEPLOY_SIGNATURE_URLS = [
+    "/index.html",
+    "/scripts/app.js",
+    "/scripts/player.js",
+    "/styles/styles.css",
+    "/manifest.json"
+  ];
 
-  function storageGet(storage, key) {
-    try {
-      return storage.getItem(key);
-    } catch {
-      return null;
-    }
-  }
+  function storageGet(storage, key) {
+    try {
+      return storage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
 
-  function storageSet(storage, key, value) {
-    try {
-      storage.setItem(key, value);
-    } catch {
-      // Ignore storage failures (private mode / quota).
-    }
-  }
+  function storageSet(storage, key, value) {
+    try {
+      storage.setItem(key, value);
+    } catch {
+      // Ignore storage failures (private mode / quota).
+    }
+  }
 
-  function fnv1aHash(text) {
-    let hash = 0x811c9dc5;
-    for (let i = 0; i < text.length; i += 1) {
-      hash ^= text.charCodeAt(i);
-      hash = (hash >>> 0) * 0x01000193;
-    }
-    return (hash >>> 0).toString(16);
-  }
+  function fnv1aHash(text) {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = (hash >>> 0) * 0x01000193;
+    }
+    return (hash >>> 0).toString(16);
+  }
 
-  function reloadOnce(reason) {
-    if (reloadOnce.reloading) return;
-    const currentGuard = storageGet(sessionStorage, RELOAD_GUARD_KEY);
-    if (currentGuard) {
-      const [guardReason, guardAt] = currentGuard.split("@");
-      const elapsedMs = Date.now() - Number(guardAt || 0);
-      if (guardReason === reason && elapsedMs < 15000) return;
-    }
+  function reloadOnce(reason) {
+    if (reloadOnce.reloading) return;
 
-    reloadOnce.reloading = true;
-    storageSet(sessionStorage, RELOAD_GUARD_KEY, `${reason}@${Date.now()}`);
+    // ─── AUDIO PLAYBACK GUARD ────────────────────────────────────────
+    // Do not violently refresh the page if the user is jamming.
+    const audioEl = window._audioEl; 
+    if (audioEl && !audioEl.paused && !audioEl.ended) {
+      console.log(`[SW] Update ready (${reason}). Deferring reload until audio pauses.`);
+      
+      // Queue the reload to happen the moment the user pauses or music stops
+      const deferredReload = () => {
+        audioEl.removeEventListener("pause", deferredReload);
+        audioEl.removeEventListener("ended", deferredReload);
+        reloadOnce(reason); 
+      };
+      
+      audioEl.addEventListener("pause", deferredReload);
+      audioEl.addEventListener("ended", deferredReload);
+      return; // Stop execution here until the event fires
+    }
+    // ─────────────────────────────────────────────────────────────────
 
-    const nextUrl = new URL(window.location.href);
-    nextUrl.searchParams.set("_swv", Date.now().toString(36));
-    window.location.replace(nextUrl.toString());
-  }
+    const currentGuard = storageGet(sessionStorage, RELOAD_GUARD_KEY);
+    if (currentGuard) {
+      const [guardReason, guardAt] = currentGuard.split("@");
+      const elapsedMs = Date.now() - Number(guardAt || 0);
+      if (guardReason === reason && elapsedMs < 15000) return;
+    }
 
-  async function clearWindowCaches() {
-    if (!("caches" in window)) return;
-    const names = await caches.keys();
-    await Promise.all(names.map((name) => caches.delete(name)));
-  }
+    reloadOnce.reloading = true;
+    storageSet(sessionStorage, RELOAD_GUARD_KEY, `${reason}@${Date.now()}`);
 
-  function clearWorkerCaches() {
-    if (!navigator.serviceWorker.controller) return Promise.resolve();
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set("_swv", Date.now().toString(36));
+    window.location.replace(nextUrl.toString());
+  }
 
-    return new Promise((resolve) => {
-      const channel = new MessageChannel();
-      let settled = false;
+  async function clearWindowCaches() {
+    if (!("caches" in window)) return;
+    const names = await caches.keys();
+    await Promise.all(names.map((name) => caches.delete(name)));
+  }
 
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
+  function clearWorkerCaches() {
+    if (!navigator.serviceWorker.controller) return Promise.resolve();
 
-      channel.port1.onmessage = finish;
-      setTimeout(finish, 1200);
+    return new Promise((resolve) => {
+      const channel = new MessageChannel();
+      let settled = false;
 
-      try {
-        navigator.serviceWorker.controller.postMessage(
-          { type: "CLEAR_RUNTIME_CACHE" },
-          [channel.port2]
-        );
-      } catch {
-        finish();
-      }
-    });
-  }
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
 
-  async function getServiceWorkerSignature() {
-    const res = await fetch(`${SW_URL}?_=${Date.now()}`, {
-      cache: "no-store",
-      headers: {
-        "cache-control": "no-cache",
-        pragma: "no-cache"
-      }
-    });
+      channel.port1.onmessage = finish;
+      setTimeout(finish, 1200);
 
-    if (!res.ok) return null;
+      try {
+        navigator.serviceWorker.controller.postMessage(
+          { type: "CLEAR_RUNTIME_CACHE" },
+          [channel.port2]
+        );
+      } catch {
+        finish();
+      }
+    });
+  }
 
-    const etag = res.headers.get("etag");
-    if (etag) return `etag:${etag}`;
+  async function getServiceWorkerSignature() {
+    const res = await fetch(`${SW_URL}?_=${Date.now()}`, {
+      cache: "no-store",
+      headers: {
+        "cache-control": "no-cache",
+        pragma: "no-cache"
+      }
+    });
 
-    const lastModified = res.headers.get("last-modified") || "no-last-modified";
-    const source = await res.text();
-    return `${lastModified}:${source.length}:${fnv1aHash(source)}`;
-  }
+    if (!res.ok) return null;
 
-  async function getUrlSignature(url) {
-    const res = await fetch(`${url}?_=${Date.now()}`, {
-      cache: "no-store",
-      headers: {
-        "cache-control": "no-cache",
-        pragma: "no-cache"
-      }
-    });
+    const etag = res.headers.get("etag");
+    if (etag) return `etag:${etag}`;
 
-    if (!res.ok) return `${url}:status:${res.status}`;
+    const lastModified = res.headers.get("last-modified") || "no-last-modified";
+    const source = await res.text();
+    return `${lastModified}:${source.length}:${fnv1aHash(source)}`;
+  }
 
-    const etag = res.headers.get("etag");
-    if (etag) return `${url}:etag:${etag}`;
+  async function getUrlSignature(url) {
+    const res = await fetch(`${url}?_=${Date.now()}`, {
+      cache: "no-store",
+      headers: {
+        "cache-control": "no-cache",
+        pragma: "no-cache"
+      }
+    });
 
-    const lastModified = res.headers.get("last-modified") || "no-last-modified";
-    const contentLength = res.headers.get("content-length");
-    if (contentLength) {
-      return `${url}:lm:${lastModified}:len:${contentLength}`;
-    }
+    if (!res.ok) return `${url}:status:${res.status}`;
 
-    const source = await res.text();
-    return `${url}:lm:${lastModified}:len:${source.length}:hash:${fnv1aHash(source)}`;
-  }
+    const etag = res.headers.get("etag");
+    if (etag) return `${url}:etag:${etag}`;
 
-  async function getDeployContentSignature() {
-    const parts = await Promise.all(DEPLOY_SIGNATURE_URLS.map((url) => getUrlSignature(url)));
-    return fnv1aHash(parts.join("|"));
-  }
+    const lastModified = res.headers.get("last-modified") || "no-last-modified";
+    const contentLength = res.headers.get("content-length");
+    if (contentLength) {
+      return `${url}:lm:${lastModified}:len:${contentLength}`;
+    }
 
-  async function activateWaitingWorker(registration) {
-    if (!registration?.waiting) return false;
-    try {
-      registration.waiting.postMessage({ type: "SKIP_WAITING" });
-      return true;
-    } catch {
-      return false;
-    }
-  }
+    const source = await res.text();
+    return `${url}:lm:${lastModified}:len:${source.length}:hash:${fnv1aHash(source)}`;
+  }
 
-  async function syncDeploySignature(registration) {
-    try {
-      const latestSignature = await getServiceWorkerSignature();
-      if (!latestSignature) return;
+  async function getDeployContentSignature() {
+    const parts = await Promise.all(DEPLOY_SIGNATURE_URLS.map((url) => getUrlSignature(url)));
+    return fnv1aHash(parts.join("|"));
+  }
 
-      const savedSignature = storageGet(localStorage, SW_SIGNATURE_KEY);
-      if (!savedSignature) {
-        storageSet(localStorage, SW_SIGNATURE_KEY, latestSignature);
-        return;
-      }
+  async function activateWaitingWorker(registration) {
+    if (!registration?.waiting) return false;
+    try {
+      registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
-      if (savedSignature === latestSignature) return;
+  async function syncDeploySignature(registration) {
+    try {
+      const latestSignature = await getServiceWorkerSignature();
+      if (!latestSignature) return;
 
-      storageSet(localStorage, SW_SIGNATURE_KEY, latestSignature);
-      await Promise.allSettled([clearWindowCaches(), clearWorkerCaches()]);
-      await activateWaitingWorker(registration);
-      await registration.update().catch(() => {});
-      reloadOnce(`deploy-signature-changed:${latestSignature}`);
-    } catch {
-      // Ignore update signature errors to keep app usable.
-    }
-  }
+      const savedSignature = storageGet(localStorage, SW_SIGNATURE_KEY);
+      if (!savedSignature) {
+        storageSet(localStorage, SW_SIGNATURE_KEY, latestSignature);
+        return;
+      }
 
-  async function syncDeployContentSignature(registration) {
-    try {
-      const latestSignature = await getDeployContentSignature();
-      if (!latestSignature) return;
+      if (savedSignature === latestSignature) return;
 
-      const savedSignature = storageGet(localStorage, DEPLOY_SIGNATURE_KEY);
-      if (!savedSignature) {
-        storageSet(localStorage, DEPLOY_SIGNATURE_KEY, latestSignature);
-        return;
-      }
+      storageSet(localStorage, SW_SIGNATURE_KEY, latestSignature);
+      await Promise.allSettled([clearWindowCaches(), clearWorkerCaches()]);
+      await activateWaitingWorker(registration);
+      await registration.update().catch(() => {});
+      reloadOnce(`deploy-signature-changed:${latestSignature}`);
+    } catch {
+      // Ignore update signature errors to keep app usable.
+    }
+  }
 
-      if (savedSignature === latestSignature) return;
+  async function syncDeployContentSignature(registration) {
+    try {
+      const latestSignature = await getDeployContentSignature();
+      if (!latestSignature) return;
 
-      storageSet(localStorage, DEPLOY_SIGNATURE_KEY, latestSignature);
-      await Promise.allSettled([clearWindowCaches(), clearWorkerCaches()]);
-      await activateWaitingWorker(registration);
-      await registration.update().catch(() => {});
-      reloadOnce(`deploy-content-changed:${latestSignature}`);
-    } catch {
-      // Ignore update signature errors to keep app usable.
-    }
-  }
+      const savedSignature = storageGet(localStorage, DEPLOY_SIGNATURE_KEY);
+      if (!savedSignature) {
+        storageSet(localStorage, DEPLOY_SIGNATURE_KEY, latestSignature);
+        return;
+      }
 
-  function wireRegistration(registration) {
-    registration.addEventListener("updatefound", () => {
-      const worker = registration.installing;
-      if (!worker) return;
+      if (savedSignature === latestSignature) return;
 
-      worker.addEventListener("statechange", () => {
-        if (worker.state === "installed" && navigator.serviceWorker.controller) {
-          worker.postMessage({ type: "SKIP_WAITING" });
-        }
-      });
-    });
+      storageSet(localStorage, DEPLOY_SIGNATURE_KEY, latestSignature);
+      await Promise.allSettled([clearWindowCaches(), clearWorkerCaches()]);
+      await activateWaitingWorker(registration);
+      await registration.update().catch(() => {});
+      reloadOnce(`deploy-content-changed:${latestSignature}`);
+    } catch {
+      // Ignore update signature errors to keep app usable.
+    }
+  }
 
-    const runUpdateCheck = () => {
-      registration.update().catch(() => {});
-      syncDeploySignature(registration).catch(() => {});
-      syncDeployContentSignature(registration).catch(() => {});
-    };
+  function wireRegistration(registration) {
+    registration.addEventListener("updatefound", () => {
+      const worker = registration.installing;
+      if (!worker) return;
 
-    runUpdateCheck();
-    setInterval(runUpdateCheck, UPDATE_INTERVAL_MS);
+      worker.addEventListener("statechange", () => {
+        if (worker.state === "installed" && navigator.serviceWorker.controller) {
+          worker.postMessage({ type: "SKIP_WAITING" });
+        }
+      });
+    });
 
-    document.addEventListener(
-      "visibilitychange",
-      () => {
-        if (document.visibilityState === "visible") {
-          runUpdateCheck();
-        }
-      },
-      { passive: true }
-    );
-  }
+    const runUpdateCheck = () => {
+      registration.update().catch(() => {});
+      syncDeploySignature(registration).catch(() => {});
+      syncDeployContentSignature(registration).catch(() => {});
+    };
 
-  let isControllerRefreshing = false;
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (isControllerRefreshing) return;
-    isControllerRefreshing = true;
-    reloadOnce("controller-changed");
-  });
+    runUpdateCheck();
+    setInterval(runUpdateCheck, UPDATE_INTERVAL_MS);
 
-  window.addEventListener(
-    "pageshow",
-    (event) => {
-      if (event.persisted) {
-        window.location.reload();
-      }
-    },
-    { passive: true }
-  );
+    document.addEventListener(
+      "visibilitychange",
+      () => {
+        if (document.visibilityState === "visible") {
+          runUpdateCheck();
+        }
+      },
+      { passive: true }
+    );
+  }
 
-  window.addEventListener("load", async () => {
-    try {
-      const registration = await navigator.serviceWorker.register(SW_URL, {
-        updateViaCache: "none"
-      });
-      wireRegistration(registration);
-      await activateWaitingWorker(registration);
-    } catch {
-      // Keep silent in production for benign registration failures.
-    }
-  });
+  let isControllerRefreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (isControllerRefreshing) return;
+    
+    // ─── AUDIO PLAYBACK GUARD ────────────────────────────────────────
+    // Defer if audio is playing so the new controller doesn't kill the vibe.
+    const audioEl = window._audioEl;
+    if (audioEl && !audioEl.paused && !audioEl.ended) {
+      return; // The modified 'reloadOnce' logic will handle the deferred reload later
+    }
+    // ─────────────────────────────────────────────────────────────────
+
+    isControllerRefreshing = true;
+    reloadOnce("controller-changed");
+  });
+
+  window.addEventListener(
+    "pageshow",
+    (event) => {
+      if (event.persisted) {
+        window.location.reload();
+      }
+    },
+    { passive: true }
+  );
+
+  window.addEventListener("load", async () => {
+    try {
+      const registration = await navigator.serviceWorker.register(SW_URL, {
+        updateViaCache: "none"
+      });
+      wireRegistration(registration);
+      await activateWaitingWorker(registration);
+    } catch {
+      // Keep silent in production for benign registration failures.
+    }
+  });
 })();
