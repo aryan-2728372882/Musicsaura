@@ -1,5 +1,5 @@
 // scripts/app.js — MusicsAura 2025
-import { auth, onAuthStateChanged } from "./firebase-config.js";
+import { auth, isAdmin, onAuthStateChanged } from "./firebase-config.js";
 import { player } from "./player.js";
 
 /* ── DOM ── */
@@ -198,8 +198,16 @@ searchInp.addEventListener("keydown", e => {
 
 /* ── Auth ── */
 onAuthStateChanged(auth, user => {
-  if (!user) { location.href = "auth.html"; return; }
+  if (!user) {
+    navAvatar.src = fallbackAvatar();
+    profileBtn.onclick = () => { location.href = "auth.html"; };
+    return;
+  }
+
   navAvatar.src = user.photoURL || fallbackAvatar(user.email);
+  profileBtn.onclick = () => {
+    location.href = isAdmin(user.email) ? "admin-dashboard.html" : "user-dashboard.html";
+  };
 });
 
 function fallbackAvatar(email) {

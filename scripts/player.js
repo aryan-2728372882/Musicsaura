@@ -1041,7 +1041,12 @@ setInterval(() => {
 
 // ─── AUTH ─────────────────────────────────────────────────────────
 onAuthStateChanged(auth, user => {
-  if (!user) return (location.href = "auth.html");
+  if (!user) {
+    navAvatar.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56'%3E%3Ccircle cx='28' cy='28' r='28' fill='%238a5cf6'/%3E%3Ctext x='50%25' y='50%25' font-size='26' fill='white' text-anchor='middle' dy='.35em'%3EU%3C/text%3E%3C/svg%3E`;
+    profileBtn.onclick = () => { location.href = "auth.html"; };
+    return;
+  }
+
   navAvatar.src = user.photoURL
     || `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56'%3E%3Ccircle cx='28' cy='28' r='28' fill='%238a5cf6'/%3E%3Ctext x='50%25' y='50%25' font-size='26' fill='white' text-anchor='middle' dy='.35em'%3E${(user.email?.[0] || "U").toUpperCase()}%3C/text%3E%3C/svg%3E`;
   profileBtn.onclick = () => {
