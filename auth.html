@@ -109,12 +109,6 @@
   }
   function clearError() { document.getElementById("auth-error").classList.remove("visible"); }
 
-  // Native = APK (window.Capacitor injected by bridge)
-  // Web/PWA = window.Capacitor is undefined → popup flow
-  function isNative() {
-    return !!(window.Capacitor?.isNativePlatform?.());
-  }
-
   // ── Google Sign-In ────────────────────────────────────────────────
   document.getElementById("btn-google").onclick = async () => {
     clearError();
@@ -122,37 +116,11 @@
     btn.disabled = true;
 
     try {
-      if (isNative()) {
-        // APK: plugin registered in MainActivity.java
-        // Available as window.Capacitor.Plugins.GoogleAuth — no CDN needed
-        const GoogleAuth = window.Capacitor.Plugins.GoogleAuth;
-        if (!GoogleAuth) throw new Error("GoogleAuth plugin not found. Rebuild APK.");
-
-        await GoogleAuth.initialize({
-          clientId: "792892627539-6jlmptdh81kisovtlgsjqkvts5mehch9.apps.googleusercontent.com",
-          scopes: ["profile", "email"],
-          grantOfflineAccess: true
-        });
-
-        const googleUser = await GoogleAuth.signIn();
-        const idToken = googleUser?.authentication?.idToken;
-        if (!idToken) throw new Error("Google sign-in failed: no idToken.");
-
-        const { GoogleAuthProvider, signInWithCredential } =
-          await import("https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js");
-        const credential = GoogleAuthProvider.credential(idToken);
-        const result = await signInWithCredential(auth, credential);
-        await ensureUserDoc(result.user);
-        redirect(result.user);
-
-      } else {
-        // Web / PWA: standard Firebase popup
-        const { signInWithPopup } =
-          await import("https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js");
-        const result = await signInWithPopup(auth, provider);
-        await ensureUserDoc(result.user);
-        redirect(result.user);
-      }
+      const { signInWithPopup } =
+        await import("https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js");
+      const result = await signInWithPopup(auth, provider);
+      await ensureUserDoc(result.user);
+      redirect(result.user);
 
     } catch (e) {
       const cancelled =

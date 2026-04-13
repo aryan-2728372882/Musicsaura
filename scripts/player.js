@@ -472,32 +472,17 @@ function releaseWakeLock() {
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && !audio.paused) requestWakeLock(); });
 
-// ─── CAPACITOR / CORDOVA BACKGROUND MODE ──────────────────────────
+// ─── PWA / BROWSER BACKGROUND MODE ────────────────────────────────
 function configureBgMode() {
-  const bg = window.cordova?.plugins?.backgroundMode;
-  if (!bg || bgModeConfigured) return;
-  try {
-    bg.setDefaults?.({ title: "MusicsAura", text: "Playing…", resume: true, hidden: false, silent: false });
-    bg.on?.("activate", () => { try { bg.disableWebViewOptimizations?.(); } catch {} });
-    bgModeConfigured = true;
-  } catch {}
+  // Browser PWAs do not use Cordova/Capacitor native background-mode.
+  // Keep this stub for compatibility with existing browser-only logic.
 }
 function enableBgMode() {
-  const bg = window.cordova?.plugins?.backgroundMode;
-  if (!bg) return;
-  try {
-    configureBgMode();
-    bg.setDefaults?.({ title: "MusicsAura", text: currentSong?.title ? `Playing: ${currentSong.title}` : "Playing…", resume: true, hidden: false, silent: false });
-    bg.disableWebViewOptimizations?.();
-    if (!bg.isEnabled()) bg.enable();
-  } catch {}
+  // No native background mode in PWA/browser.
 }
 function disableBgMode() {
-  const bg = window.cordova?.plugins?.backgroundMode;
-  if (!bg) return;
-  try { if (bg.isEnabled()) bg.disable(); } catch {}
+  // No native background mode in PWA/browser.
 }
-document.addEventListener("deviceready", configureBgMode, { once: true });
 
 // ─── AUDIO SESSION (iOS 16+ / Safari) ─────────────────────────────
 if ("audioSession" in navigator) {
@@ -963,9 +948,10 @@ document.addEventListener("visibilitychange", () => {
       stopFade();
       setVol(TARGET_VOL); // CRITICAL: full volume in background
       enableBgMode();
+      scheduleBgResume("vis-hidden", 600);
       // Wall clock already running — will fire advance when song ends
     } else if (!userPaused && !trackTransition && currentSong) {
-      scheduleBgResume("vis-hidden", 500);
+      scheduleBgResume("vis-hidden", 600);
     }
   } else {
     // Screen turning on
@@ -978,6 +964,20 @@ document.addEventListener("visibilitychange", () => {
         wcStart(audio.currentTime, audio.duration);
     }
     if (shouldResume && !userPaused) { shouldResume = false; _play(); }
+  }
+});
+
+document.addEventListener("freeze", () => {
+  if (!audio.paused && !userPaused && !trackTransition) {
+    shouldResume = true;
+    scheduleBgResume("freeze", 700);
+  }
+});
+
+window.addEventListener("pagehide", () => {
+  if (!audio.paused && !userPaused && !trackTransition) {
+    shouldResume = true;
+    scheduleBgResume("pagehide", 700);
   }
 });
 

@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">musicsaura</string>
-    <string name="title_activity_main">musicsaura</string>
-    <string name="package_name">com.musicsaura.app</string>
-    <string name="custom_url_scheme">com.musicsaura.app</string>
-</resources>
