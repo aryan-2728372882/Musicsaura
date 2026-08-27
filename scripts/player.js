@@ -524,6 +524,13 @@ function wireAudioEvents(audioNode) {
 
   audioNode.onerror = (e) => {
     console.warn("Audio node playback error:", e, audioNode.error);
+    if (!audioNode._cacheRetried && audioNode.src && (audioNode.src.includes("file.garden") || audioNode.src.startsWith("http"))) {
+      audioNode._cacheRetried = true;
+      const separator = audioNode.src.includes("?") ? "&" : "?";
+      audioNode.src = audioNode.src + separator + "t=" + Date.now();
+      audioNode.play().catch(() => {});
+      return;
+    }
     if (!userPaused && playlist.length > 1 && !isCrossfading) {
       setTimeout(() => player.next(true), 1500);
     }
