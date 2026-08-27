@@ -1,5 +1,8 @@
 // scripts/app.js — MusicsAura 3.0 Core App Controller
-import { auth, db, isAdmin, onAuthStateChanged, collection, getDocs, query, orderBy } from "./firebase-config.js";
+import {
+  auth, db, isAdmin, onAuthStateChanged,
+  collection, getDocs, query, orderBy, onSnapshot
+} from "./firebase-config.js";
 import { player, formatTime } from "./player.js";
 
 /* ── DOM ELEMENTS ── */
@@ -82,10 +85,11 @@ const DEFAULT_GENRE        = "hindi";
 const FAVORITES_KEY        = "musicsaura_favorites";
 const OFFLINE_STORAGE_KEY  = "musicsaura_offline_songs";
 const OFFLINE_CACHE_NAME   = "musicsaura-pwa-storage-v1";
+const LOCAL_UPLOADS_KEY    = "musicsaura_local_uploads";
 
 let allSongs = [];
+const rawJsonSongs = {};
 const songsByGenre = {};
-const loadedPromises = new Map();
 let activeGenre = DEFAULT_GENRE;
 let searchTimer = null;
 let firestoreSongs = [];
@@ -142,7 +146,7 @@ export async function toggleOfflineStorage(song) {
         await cache.put(song.link, res);
         offlineList.unshift(song);
         localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(offlineList));
-        player.showToast(`⚡ Saved in PWA Storage! You can play this offline anytime.`);
+        player.showToast(`⚡ Saved in PWA Storage! Ready for offline play.`);
         updateOfflineIcons(song, true);
         updateDownloadBadge();
         if (activeGenre === "offline") renderGenre("offline");
@@ -258,7 +262,7 @@ function normalizeSong(song, genre = "hindi", source = "json") {
   const artistWords = song.artist ? song.artist.split(/[,&/]+|\s+/) : [];
   const keywords = Array.from(new Set([...kw, ...titleWords, ...artistWords].map((w) => w.toLowerCase().trim()).filter(Boolean)));
 
-  const cleanGenre = (song.genre || genre || "hindi").toLowerCase();
+  const cleanGenre = (song.genre || genre || "hindi").toLowerCase().trim();
 
   return {
     ...song,
@@ -273,83 +277,107 @@ function normalizeSong(song, genre = "hindi", source = "json") {
   };
 }
 
-/* ── FIRESTORE CATALOGUE LOADER ── */
-async function fetchFirestoreSongs() {
+/* ── LOCAL BACKUP BUFFER LOADER ── */
+function getLocalUploads() {
   try {
-    const q = query(collection(db, "songs"), orderBy("createdAt", "desc"));
-    const snap = await getDocs(q);
-    firestoreSongs = [];
-    snap.forEach((docSnap) => {
-      const data = docSnap.data();
-      const norm = normalizeSong({ id: docSnap.id, ...data }, data.genre, "firestore");
-      firestoreSongs.push(norm);
-    });
-    return firestoreSongs;
-  } catch (err) {
-    console.warn("Firestore songs fetch (offline or network err):", err);
+    return JSON.parse(localStorage.getItem(LOCAL_UPLOADS_KEY) || "[]");
+  } catch {
     return [];
   }
 }
 
-/* ── LOAD GENRE ── */
-async function loadGenre(genre) {
-  if (genre === "favorites") {
-    const favs = getFavorites();
-    songsByGenre["favorites"] = favs.map((s) => normalizeSong(s, s.genre || "favorites", "fav"));
-    return songsByGenre["favorites"];
-  }
+/* ── REBUILD ALL CATALOGUES & GLOBAL SEARCH INDEX ── */
+function rebuildAllCatalogues() {
+  const localUploads = getLocalUploads().map((s) => normalizeSong(s, s.genre, "local"));
+  const allCustom = [...localUploads, ...firestoreSongs];
 
-  if (genre === "offline") {
-    const offList = getOfflineSongs();
-    songsByGenre["offline"] = offList.map((s) => normalizeSong(s, s.genre || "offline", "offline"));
-    return songsByGenre["offline"];
-  }
-
-  if (songsByGenre[genre]) return songsByGenre[genre];
-  if (loadedPromises.has(genre)) return loadedPromises.get(genre);
-
-  const file = GENRE_FILES[genre];
-  const p = (async () => {
-    try {
-      let jsonSongs = [];
-      if (file) {
-        const res = await fetch(file, { cache: "no-store" });
-        if (res.ok) {
-          const raw = await res.json();
-          jsonSongs = raw
-            .filter((s) => s.title && s.link)
-            .map((s) => normalizeSong(s, genre, "json"));
-        }
-      }
-
-      // Filter firestore songs for this genre
-      const customForGenre = firestoreSongs.filter(
-        (s) => (s.genre || "").toLowerCase() === genre.toLowerCase()
-      );
-
-      // Combine custom uploaded songs on top of static JSON catalog
-      const combined = [...customForGenre, ...jsonSongs];
-      songsByGenre[genre] = combined;
-
-      // Add to global search index
-      combined.forEach((s) => {
-        if (!allSongs.some((existing) => (existing.id || existing.link) === (s.id || s.link))) {
-          allSongs.push(s);
-        }
-      });
-
-      return combined;
-    } catch (err) {
-      console.warn(`Failed loading genre ${genre}:`, err);
-      songsByGenre[genre] = [];
-      return [];
-    } finally {
-      loadedPromises.delete(genre);
+  // Remove duplicate custom songs by link
+  const uniqueCustom = [];
+  const seenLinks = new Set();
+  allCustom.forEach((s) => {
+    if (!seenLinks.has(s.link)) {
+      seenLinks.add(s.link);
+      uniqueCustom.push(s);
     }
-  })();
+  });
 
-  loadedPromises.set(genre, p);
-  return p;
+  // Build each genre with NEWEST published uploads at the top!
+  Object.keys(GENRE_FILES).forEach((genre) => {
+    const raw = rawJsonSongs[genre] || [];
+    const genreUploads = uniqueCustom.filter((s) => (s.genre || "").toLowerCase() === genre.toLowerCase());
+    songsByGenre[genre] = [...genreUploads, ...raw];
+  });
+
+  // Rebuild global search index containing ALL songs
+  allSongs = [];
+  const globalSeen = new Set();
+
+  // 1. Add all custom uploads first
+  uniqueCustom.forEach((s) => {
+    if (!globalSeen.has(s.link)) {
+      globalSeen.add(s.link);
+      allSongs.push(s);
+    }
+  });
+
+  // 2. Add all songs from all 3 JSONs
+  Object.values(rawJsonSongs).forEach((list) => {
+    list.forEach((s) => {
+      if (!globalSeen.has(s.link)) {
+        globalSeen.add(s.link);
+        allSongs.push(s);
+      }
+    });
+  });
+
+  // Re-render the active view with latest songs
+  if (!searchGrid.hidden && (searchInp?.value || mobileSearchInp?.value)) {
+    searchSongs(searchInp?.value || mobileSearchInp?.value);
+  } else {
+    renderGenre(activeGenre);
+  }
+}
+
+/* ── LOAD RAW JSON FILES ── */
+async function loadRawJson(genre) {
+  if (rawJsonSongs[genre]) return rawJsonSongs[genre];
+  const file = GENRE_FILES[genre];
+  if (!file) return [];
+
+  try {
+    const res = await fetch(file, { cache: "no-store" });
+    if (res.ok) {
+      const raw = await res.json();
+      rawJsonSongs[genre] = raw
+        .filter((s) => s.title && s.link)
+        .map((s) => normalizeSong(s, genre, "json"));
+      return rawJsonSongs[genre];
+    }
+  } catch (err) {
+    console.warn(`Failed loading JSON ${genre}:`, err);
+  }
+  rawJsonSongs[genre] = [];
+  return [];
+}
+
+/* ── REAL-TIME FIRESTORE SYNCHRONIZATION ── */
+function subscribeToFirestoreSongs() {
+  try {
+    const q = query(collection(db, "songs"), orderBy("createdAt", "desc"));
+    onSnapshot(q, (snap) => {
+      firestoreSongs = [];
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        const norm = normalizeSong({ id: docSnap.id, ...data }, data.genre, "firestore");
+        firestoreSongs.push(norm);
+      });
+      rebuildAllCatalogues();
+    }, (err) => {
+      console.warn("Firestore onSnapshot error:", err);
+    });
+  } catch (err) {
+    console.warn("Firestore subscription error:", err);
+  }
 }
 
 /* ── HTML ESCAPER ── */
@@ -471,7 +499,7 @@ function updateHeroBanner(songs) {
 }
 
 /* ── GENRE SWITCHER ── */
-async function selectGenre(genre) {
+function selectGenre(genre) {
   activeGenre = genre;
 
   genrePills.forEach((pill) => {
@@ -485,20 +513,26 @@ async function selectGenre(genre) {
   if (searchClearBtn) searchClearBtn.style.display = "none";
   if (mobileSearchClearBtn) mobileSearchClearBtn.style.display = "none";
 
-  if (!songsByGenre[genre]) {
-    grid.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading catalogue...</div>';
-    await loadGenre(genre);
-  }
   renderGenre(genre);
 }
 
 function renderGenre(genre) {
+  if (genre === "favorites") {
+    const favs = getFavorites().map((s) => normalizeSong(s, s.genre || "favorites", "fav"));
+    renderSongList(grid, favs, "No favorite songs yet! Tap the heart icon on any song to add it here.");
+    updateHeroBanner(favs);
+    return;
+  }
+
+  if (genre === "offline") {
+    const offList = getOfflineSongs().map((s) => normalizeSong(s, s.genre || "offline", "offline"));
+    renderSongList(grid, offList, "No songs downloaded in App Storage yet. Tap the ⚡ icon on any song to download it for offline play (even on Airplane Mode)!");
+    updateHeroBanner(offList);
+    return;
+  }
+
   const songs = songsByGenre[genre] || [];
-  const emptyMsg = genre === "favorites"
-    ? "No favorite songs yet! Tap the heart icon on any song to add it here."
-    : genre === "offline"
-    ? "No songs downloaded in App Storage yet. Tap the ⚡ icon on any song to download it for offline play (even on Airplane Mode)!"
-    : "No songs available in this category.";
+  const emptyMsg = "No songs available in this category.";
   renderSongList(grid, songs, emptyMsg);
   updateHeroBanner(songs);
 }
@@ -518,7 +552,7 @@ function searchSongs(query) {
 
   const terms = q.split(/\s+/).filter(Boolean);
   const matches = allSongs.filter((song) => {
-    return terms.every((term) => song._search.includes(term));
+    return terms.every((term) => (song._search || "").includes(term));
   });
 
   renderSongList(searchGrid, matches, `No songs matching "${escapeHtml(query)}"`);
@@ -829,7 +863,7 @@ function bindSearchInput(inputEl, clearBtnEl) {
     const val = e.target.value;
     if (searchInp && searchInp !== inputEl) searchInp.value = val;
     if (mobileSearchInp && mobileSearchInp !== inputEl) mobileSearchInp.value = val;
-    searchTimer = setTimeout(() => searchSongs(val), 150);
+    searchTimer = setTimeout(() => searchSongs(val), 100);
   });
 
   inputEl.addEventListener("keydown", (e) => {
@@ -965,7 +999,7 @@ window.addEventListener("offline", () => {
 
 window.addEventListener("online", () => {
   player.showToast("🌐 Connected to Internet", 2500);
-  fetchFirestoreSongs();
+  subscribeToFirestoreSongs();
 });
 
 /* ── INITIALIZATION ── */
@@ -977,32 +1011,29 @@ window.addEventListener("online", () => {
 
     grid.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading catalogue...</div>';
 
-    // If completely offline on launch, jump straight to In-App Downloads!
+    // 1. If completely offline on launch, jump straight to In-App Downloads!
     if (!navigator.onLine) {
-      await loadGenre("offline");
       selectGenre("offline");
       player.showToast("✈️ Offline Mode: Playing from In-App Storage", 3500);
       return;
     }
 
-    // 1. Instant Render: Load default genre catalogue in 0ms from local JSON/Cache
-    await loadGenre(DEFAULT_GENRE);
+    // 2. Load all 3 JSON catalogues immediately
+    await Promise.allSettled([
+      loadRawJson("hindi"),
+      loadRawJson("punjabi"),
+      loadRawJson("haryanvi")
+    ]);
+
+    // 3. Build initial catalogue & render immediately in < 30ms
+    rebuildAllCatalogues();
     renderGenre(DEFAULT_GENRE);
 
-    // 2. Background Asynchronous: Fetch new Firestore uploads & pre-fetch other genres
-    (async () => {
-      await fetchFirestoreSongs();
-      if (activeGenre !== "offline" && activeGenre !== "favorites") {
-        await loadGenre(activeGenre);
-        renderGenre(activeGenre);
-      }
-      const otherGenres = Object.keys(GENRE_FILES).filter((g) => g !== DEFAULT_GENRE);
-      Promise.allSettled(otherGenres.map((g) => loadGenre(g)));
-    })();
+    // 4. Connect real-time Firestore sync for instant live uploads
+    subscribeToFirestoreSongs();
 
   } catch (err) {
-    console.warn("App init fallback to offline:", err);
-    await loadGenre("offline");
-    selectGenre("offline");
+    console.warn("App init fallback:", err);
+    renderGenre(DEFAULT_GENRE);
   }
 })();

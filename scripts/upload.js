@@ -241,7 +241,7 @@ if (uploadForm) {
       await addDoc(collection(db, "songs"), {
         title,
         artist,
-        genre,
+        genre: genre.toLowerCase(),
         link: audioUrl,
         thumbnail: coverUrl || "assets/logo.png",
         keywords,
@@ -249,6 +249,25 @@ if (uploadForm) {
         createdAt: serverTimestamp(),
         plays: 0
       });
+
+      // Save local backup buffer for instant 0ms appearance
+      try {
+        const localUpload = {
+          id: "local_" + Date.now(),
+          title,
+          artist,
+          genre: genre.toLowerCase(),
+          link: audioUrl,
+          thumbnail: coverUrl || "assets/logo.png",
+          keywords,
+          uploadedBy: uploaderName,
+          createdAt: Date.now(),
+          plays: 0
+        };
+        const existingLocal = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
+        existingLocal.unshift(localUpload);
+        localStorage.setItem("musicsaura_local_uploads", JSON.stringify(existingLocal.slice(0, 100)));
+      } catch {}
 
       showAlert(`🎉 "${title}" published successfully! It's now live for everyone in MusicsAura.`);
       uploadForm.reset();
