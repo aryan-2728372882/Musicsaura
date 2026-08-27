@@ -744,7 +744,7 @@ export const player = {
   },
 
   setCrossfade(sec) {
-    crossfadeSeconds = clamp(parseFloat(sec) || 0, 0, 30);
+    crossfadeSeconds = clamp(parseFloat(sec) || 0, 0, 15);
     localStorage.setItem(CROSSFADE_STORAGE_KEY, String(crossfadeSeconds));
     player.showToast(crossfadeSeconds === 0 ? "⚡ Gapless mode active" : `🎚️ Crossfade set to ${crossfadeSeconds}s`);
   },
