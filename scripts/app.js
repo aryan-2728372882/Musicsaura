@@ -12,6 +12,7 @@ const mobileSearchClearBtn = document.getElementById("mobile-search-clear-btn");
 const profileBtn           = document.getElementById("profile-btn");
 const navAvatar            = document.getElementById("nav-avatar");
 const genrePills           = document.querySelectorAll(".genre-pill");
+const pillOffline          = document.getElementById("pill-offline");
 
 // Hero Banner Elements
 const heroBanner           = document.getElementById("hero-banner");
@@ -80,7 +81,7 @@ const GENRE_FILES = {
 const DEFAULT_GENRE        = "hindi";
 const FAVORITES_KEY        = "musicsaura_favorites";
 const OFFLINE_STORAGE_KEY  = "musicsaura_offline_songs";
-const OFFLINE_CACHE_NAME   = "musicsaura-app-offline-v1";
+const OFFLINE_CACHE_NAME   = "musicsaura-pwa-storage-v1";
 
 let allSongs = [];
 const songsByGenre = {};
@@ -89,7 +90,7 @@ let activeGenre = DEFAULT_GENRE;
 let searchTimer = null;
 let firestoreSongs = [];
 
-/* ── IN-APP OFFLINE STORAGE (SANDBOX) ── */
+/* ── IN-APP OFFLINE STORAGE (PWA SANDBOX) ── */
 export function getOfflineSongs() {
   try {
     return JSON.parse(localStorage.getItem(OFFLINE_STORAGE_KEY) || "[]");
@@ -103,6 +104,16 @@ export function isSongOffline(song) {
   const list = getOfflineSongs();
   const id = song.id || song.link;
   return list.some((s) => (s.id || s.link) === id);
+}
+
+function updateDownloadBadge() {
+  const list = getOfflineSongs();
+  if (pillOffline) {
+    pillOffline.innerHTML = `
+      <span class="material-icons" style="font-size:0.95rem;color:var(--cyan);margin-right:2px">download_for_offline</span>
+      In-App Downloads 📥 (${list.length})
+    `;
+  }
 }
 
 export async function toggleOfflineStorage(song) {
@@ -119,19 +130,21 @@ export async function toggleOfflineStorage(song) {
       offlineList.splice(existsIndex, 1);
       localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(offlineList));
       await cache.delete(song.link);
-      player.showToast(`Removed from App Offline Storage`);
+      player.showToast(`Removed from In-App Downloads`);
       updateOfflineIcons(song, false);
+      updateDownloadBadge();
       if (activeGenre === "offline") renderGenre("offline");
     } else {
       // Save inside in-app storage sandbox (NOT to phone download folder)
-      player.showToast(`Saving "${song.title}" to App Storage...`);
+      player.showToast(`📥 Saving "${song.title}" into In-App Storage...`);
       const res = await fetch(song.link, { mode: "cors" });
       if (res.ok) {
         await cache.put(song.link, res);
         offlineList.unshift(song);
         localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(offlineList));
-        player.showToast(`⚡ Saved in App Storage for Offline Playback`);
+        player.showToast(`⚡ Saved in PWA Storage! You can play this offline anytime.`);
         updateOfflineIcons(song, true);
+        updateDownloadBadge();
         if (activeGenre === "offline") renderGenre("offline");
       } else {
         player.showToast("Could not download audio stream for offline cache", 3000);
@@ -144,7 +157,8 @@ export async function toggleOfflineStorage(song) {
 }
 
 function updateOfflineIcons(song, isOff) {
-  const songId = song.id || song.link;
+  const songId = song?.id || song?.link;
+  if (!songId) return;
 
   // Grid cards
   document.querySelectorAll(`.song-card[data-id="${songId}"] .card-offline-btn`).forEach((btn) => {
@@ -165,7 +179,7 @@ function updateOfflineIcons(song, isOff) {
     fsOfflineBtn.classList.toggle("active", isOff);
     const icon = fsOfflineBtn.querySelector(".material-icons");
     if (icon) icon.textContent = isOff ? "offline_pin" : "offline_bolt";
-    if (fsOfflineText) fsOfflineText.textContent = isOff ? "Offline Ready" : "Save Offline";
+    if (fsOfflineText) fsOfflineText.textContent = isOff ? "Downloaded 📥" : "Save Offline";
   }
 }
 
@@ -212,7 +226,7 @@ function updateHeartIcons(song, isFav) {
   const songId = song.id || song.link;
 
   // Grid cards
-  document.querySelectorAll(`.song-card[data-id="${songId}"] .card-fav-btn`).forEach((btn) => {
+  document.querySelectorAll(`.song-card[data-id="${songId}"] .card-fav-btn:not(.card-offline-btn)`).forEach((btn) => {
     btn.classList.toggle("active", isFav);
     const icon = btn.querySelector(".material-icons");
     if (icon) icon.textContent = isFav ? "favorite" : "favorite_border";
@@ -272,7 +286,7 @@ async function fetchFirestoreSongs() {
     });
     return firestoreSongs;
   } catch (err) {
-    console.warn("Firestore songs fetch:", err);
+    console.warn("Firestore songs fetch (offline or network err):", err);
     return [];
   }
 }
@@ -326,7 +340,7 @@ async function loadGenre(genre) {
 
       return combined;
     } catch (err) {
-      console.error(`Failed loading genre ${genre}:`, err);
+      console.warn(`Failed loading genre ${genre}:`, err);
       songsByGenre[genre] = [];
       return [];
     } finally {
@@ -368,7 +382,7 @@ function createCard(song, index) {
       <button class="card-fav-btn ${isFav ? "active" : ""}" aria-label="Favorite" title="Favorite">
         <span class="material-icons">${isFav ? "favorite" : "favorite_border"}</span>
       </button>
-      <button class="card-fav-btn card-offline-btn ${isOff ? "active" : ""}" style="top:auto;bottom:8px;right:8px;background:rgba(12,12,22,0.85);color:${isOff ? "var(--cyan)" : "var(--text-muted)"}" aria-label="Offline Storage" title="Save in App Storage for Offline Listening">
+      <button class="card-fav-btn card-offline-btn ${isOff ? "active" : ""}" style="top:auto;bottom:8px;right:8px;background:rgba(12,12,22,0.85);color:${isOff ? "var(--cyan)" : "var(--text-muted)"}" aria-label="Offline Storage" title="${isOff ? "Downloaded in App Storage" : "Save in App Storage for Offline Listening"}">
         <span class="material-icons" style="font-size:1.1rem">${isOff ? "offline_pin" : "offline_bolt"}</span>
       </button>
     </div>
@@ -457,7 +471,7 @@ function renderGenre(genre) {
   const emptyMsg = genre === "favorites"
     ? "No favorite songs yet! Tap the heart icon on any song to add it here."
     : genre === "offline"
-    ? "No songs saved in App Storage yet. Tap the ⚡ icon on any song to save it for offline listening inside the app!"
+    ? "No songs downloaded in App Storage yet. Tap the ⚡ icon on any song to download it for offline play (even on Airplane Mode)!"
     : "No songs available in this category.";
   renderSongList(grid, songs, emptyMsg);
   updateHeroBanner(songs);
@@ -914,13 +928,33 @@ onAuthStateChanged(auth, (user) => {
   }
 });
 
+/* ── ONLINE / OFFLINE DETECTOR ── */
+window.addEventListener("offline", () => {
+  player.showToast("✈️ Offline Mode: Switched to In-App Downloads", 3500);
+  selectGenre("offline");
+});
+
+window.addEventListener("online", () => {
+  player.showToast("🌐 Connected to Internet", 2500);
+  fetchFirestoreSongs();
+});
+
 /* ── INITIALIZATION ── */
 (async () => {
   try {
     setupContainerClickHandler(grid);
     setupContainerClickHandler(searchGrid);
+    updateDownloadBadge();
 
     grid.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading catalogue...</div>';
+
+    // If completely offline on launch, jump straight to In-App Downloads!
+    if (!navigator.onLine) {
+      await loadGenre("offline");
+      selectGenre("offline");
+      player.showToast("✈️ Offline Mode: Playing from In-App Storage", 3500);
+      return;
+    }
 
     // 1. Fetch live uploaded Firestore songs
     await fetchFirestoreSongs();
@@ -934,7 +968,8 @@ onAuthStateChanged(auth, (user) => {
     Promise.allSettled(otherGenres.map((g) => loadGenre(g)));
 
   } catch (err) {
-    console.error("App init failure:", err);
-    grid.innerHTML = '<div class="state-msg" style="color:var(--rose)">Failed to load songs. Please check connection and refresh.</div>';
+    console.warn("App init fallback to offline:", err);
+    await loadGenre("offline");
+    selectGenre("offline");
   }
 })();

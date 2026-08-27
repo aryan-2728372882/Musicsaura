@@ -1,154 +1,115 @@
-// service-worker.js - MusicsAura 3.0 runtime cache
-const CACHE_NAME = "musicsaura-runtime-v10";
+// service-worker.js — MusicsAura 3.0 Offline-First PWA Engine
+const APP_SHELL_CACHE = "musicsaura-shell-v1";
+const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v1";
 
-function isAppDataRequest(url) {
-  return url.pathname.startsWith("/jsons/");
-}
+const PRECACHE_ASSETS = [
+  "/",
+  "/index.html",
+  "/styles/styles.css",
+  "/scripts/app.js",
+  "/scripts/player.js",
+  "/scripts/firebase-config.js",
+  "/scripts/sw-manager.js",
+  "/manifest.json",
+  "/assets/logo.png",
+  "/assets/favicon.ico",
+  "/jsons/hindi.json",
+  "/jsons/punjabi.json",
+  "/jsons/haryanvi.json"
+];
 
-async function networkFirst(request, options = {}) {
-  const cache = await caches.open(CACHE_NAME);
-  try {
-    const response = await fetch(request, options);
-    if (response && response.ok && request.method === "GET") {
-      cache.put(request, response.clone());
-    }
-    return response;
-  } catch (error) {
-    const cached = await cache.match(request);
-    if (cached) return cached;
-    return new Response("", { status: 504, statusText: "Gateway Timeout" });
-  }
-}
-
-async function staleWhileRevalidate(request) {
-  const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(request);
-  const networkPromise = fetch(request)
-    .then((response) => {
-      if (response && response.ok) {
-        cache.put(request, response.clone());
-      }
-      return response;
-    })
-    .catch(() => null);
-
-  if (cached) return cached;
-  const network = await networkPromise;
-  if (network) return network;
-  return new Response("", { status: 504, statusText: "Gateway Timeout" });
-}
-
+// ─── INSTALL: PRE-CACHE COMPLETE APP SHELL ─────────────────────────
 self.addEventListener("install", (event) => {
-  event.waitUntil(self.skipWaiting());
-});
-
-self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((names) =>
-        Promise.all(
-          names.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name))
-        )
-      )
-      .then(() => self.clients.claim())
+    caches.open(APP_SHELL_CACHE).then(async (cache) => {
+      // Precache critical app files quietly
+      for (const asset of PRECACHE_ASSETS) {
+        try {
+          await cache.add(new Request(asset, { cache: "reload" }));
+        } catch (e) {
+          console.warn("Precache failed for:", asset, e);
+        }
+      }
+      return self.skipWaiting();
+    })
   );
 });
 
+// ─── ACTIVATE: CLEANUP OLD CACHES & CLAIM CLIENTS ─────────────────
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys().then((names) => {
+      return Promise.all(
+        names.map((name) => {
+          if (name !== APP_SHELL_CACHE && name !== OFFLINE_PWA_STORAGE) {
+            return caches.delete(name);
+          }
+        })
+      );
+    }).then(() => self.clients.claim())
+  );
+});
+
+// ─── FETCH: OFFLINE-FIRST STRATEGY ────────────────────────────────
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
-  const isSameOrigin = url.origin === self.location.origin;
 
-  // Let browser handle third-party requests directly (fonts/Firebase/etc.)
-  if (!isSameOrigin) return;
-
-  // Never proxy the service worker script itself.
-  if (url.pathname === "/service-worker.js") return;
-
-  // Do not proxy audio requests through SW to preserve native streaming/range behavior.
+  // 1. Check if it's an In-App Downloaded Audio Track from PWA Storage
   if (request.destination === "audio" || /\.(mp3|m4a|aac|wav|ogg|flac)($|\?)/i.test(url.pathname)) {
-    return;
-  }
-
-  // Always fetch latest dynamic app data.
-  if (isAppDataRequest(url)) {
     event.respondWith(
-      fetch(request, { cache: "no-store" }).catch(async () => {
-        const cached = await caches.match(request);
-        if (cached) return cached;
-        return new Response("[]", {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-            "cache-control": "no-store"
-          }
+      caches.open(OFFLINE_PWA_STORAGE).then(async (pwaCache) => {
+        const cachedTrack = await pwaCache.match(request);
+        if (cachedTrack) {
+          return cachedTrack;
+        }
+        // If not in offline PWA storage, stream natively from network
+        return fetch(request).catch(() => {
+          return new Response("", { status: 504, statusText: "Offline" });
         });
       })
     );
     return;
   }
 
-  // Always check network first for app shell files so deployments show immediately.
-  const isNavigation = request.mode === "navigate";
-  const isAppShellAsset =
-    request.destination === "document" ||
-    request.destination === "script" ||
-    request.destination === "style" ||
-    request.destination === "worker";
-
-  if (isNavigation || isAppShellAsset) {
+  // 2. Navigation Request (App Open / Page Load) — Network first, fallback to cached index.html
+  if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request, { cache: "no-store" }).catch(async () => {
-        const cached = await caches.match(request);
-        if (cached) return cached;
-
-        if (isNavigation) {
-          return (await caches.match("/index.html")) || new Response("", { status: 503 });
-        }
-
-        if (request.destination === "style") {
-          return new Response("/* offline fallback */", {
-            status: 200,
-            headers: { "content-type": "text/css" }
-          });
-        }
-
-        return new Response("", { status: 503 });
+      fetch(request).catch(async () => {
+        const cache = await caches.open(APP_SHELL_CACHE);
+        const cachedIndex = await cache.match("/index.html") || await cache.match("/");
+        if (cachedIndex) return cachedIndex;
+        return new Response("MusicsAura Offline Mode", {
+          status: 200,
+          headers: { "content-type": "text/html" }
+        });
       })
     );
     return;
   }
 
-  if (request.destination === "image" || request.destination === "font") {
-    event.respondWith(staleWhileRevalidate(request));
-    return;
-  }
+  // 3. App Shell Files (Scripts, Styles, JSONs) — Stale While Revalidate
+  event.respondWith(
+    caches.open(APP_SHELL_CACHE).then(async (cache) => {
+      const cached = await cache.match(request);
 
-  event.respondWith(networkFirst(request));
+      const networkFetch = fetch(request).then((networkRes) => {
+        if (networkRes && networkRes.ok) {
+          cache.put(request, networkRes.clone());
+        }
+        return networkRes;
+      }).catch(() => null);
+
+      return cached || networkFetch || new Response("", { status: 504 });
+    })
+  );
 });
 
+// ─── MESSAGE EVENT ────────────────────────────────────────────────
 self.addEventListener("message", (event) => {
-  const type = event.data?.type;
-
-  if (type === "SKIP_WAITING") {
+  if (event.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
-    return;
-  }
-
-  if (type === "CLEAR_RUNTIME_CACHE") {
-    const clearPromise = caches.keys().then((names) =>
-      Promise.all(names.map((name) => caches.delete(name)))
-    );
-    event.waitUntil(clearPromise);
-
-    const messagePort = event.ports && event.ports[0];
-    if (messagePort) {
-      clearPromise.finally(() => {
-        messagePort.postMessage({ ok: true });
-      });
-    }
   }
 });

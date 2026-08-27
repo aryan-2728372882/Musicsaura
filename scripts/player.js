@@ -622,7 +622,7 @@ export const player = {
     let streamUrl = cleanUrl;
     try {
       if ("caches" in window) {
-        const cache = await caches.open("musicsaura-app-offline-v1");
+        const cache = await caches.open("musicsaura-pwa-storage-v1");
         const cachedRes = await cache.match(cleanUrl);
         if (cachedRes) {
           const blob = await cachedRes.blob();
