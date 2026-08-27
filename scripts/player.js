@@ -559,10 +559,11 @@ function wireAudioEvents(audioNode) {
     console.warn("Audio node error:", e, audioNode.error);
     if (audioNode.error && audioNode.error.code === 4 && !audioNode._retried) {
       audioNode._retried = true;
+      audioNode.removeAttribute("crossorigin");
       setTimeout(() => {
         audioNode.load();
         audioNode.play().catch(() => {});
-      }, 400);
+      }, 300);
       return;
     }
     if (!userPaused && playlist.length > 1 && !isCrossfading) {
@@ -656,9 +657,15 @@ export const player = {
       if ("caches" in window) {
         const cache = await caches.open("musicsaura-pwa-storage-v1");
         const cachedRes = await cache.match(cleanUrl);
-        if (cachedRes) {
+        if (cachedRes && (cachedRes.ok || cachedRes.status === 200)) {
           const blob = await cachedRes.blob();
-          streamUrl = URL.createObjectURL(blob);
+          if (blob && blob.size > 10240) { // Only use valid audio blobs (> 10KB)
+            streamUrl = URL.createObjectURL(blob);
+          } else {
+            await cache.delete(cleanUrl);
+          }
+        } else if (cachedRes) {
+          await cache.delete(cleanUrl);
         }
       }
     } catch (e) {
