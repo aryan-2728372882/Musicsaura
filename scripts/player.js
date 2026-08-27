@@ -609,17 +609,7 @@ export const player = {
   },
 
   prefetchAudioStream(link) {
-    if (!link || prefetchedLinks.has(link)) return;
-    prefetchedLinks.add(link);
-    const cleanUrl = normalizeUrl(link);
-    if (!cleanUrl) return;
-
-    try {
-      // Warm up audio buffer natively without DOM prefetch tag rejection
-      const preAudio = new Audio();
-      preAudio.preload = "metadata";
-      preAudio.src = cleanUrl;
-    } catch {}
+    // No-op: let main audio stream handle bandwidth with 100% priority
   },
 
   async playSong(song, playlistContext = null, index = null) {
@@ -665,11 +655,9 @@ export const player = {
       console.warn("Offline cache check:", e);
     }
 
-    // Ultra-Fast Stream Assignment & Direct Play
+    // Direct Audio Stream Assignment
     if (activeAudio.src !== streamUrl) {
       activeAudio.src = streamUrl;
-      activeAudio.preload = "auto";
-      activeAudio.load();
     }
     activeAudio.playbackRate = playbackRate;
     activeAudio.volume = masterVolume;
