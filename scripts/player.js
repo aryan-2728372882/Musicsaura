@@ -1,4 +1,4 @@
-// scripts/player.js — MusicsAura 3.0 Pro Audio Engine (Gapless, Crossfade & Web Audio Studio)
+// scripts/player.js — MusicsAura 3.0 Pro Audio Engine (Gapless, Crossfade & 5-Band Web Audio Studio)
 import {
   auth, db,
   doc, updateDoc, increment, serverTimestamp
@@ -62,12 +62,14 @@ let crossfadeSeconds  = parseFloat(localStorage.getItem(CROSSFADE_STORAGE_KEY)) 
 let playbackRate      = parseFloat(localStorage.getItem(SPEED_STORAGE_KEY)) || 1.0;
 let masterVolume      = clamp(parseFloat(localStorage.getItem(VOLUME_STORAGE_KEY)) || 1.0, 0, 1);
 
-// Web Audio API & Visualizer Nodes
+// Web Audio API & 5-Band Equalizer Nodes
 let audioCtx          = null;
+let subBassFilter     = null; // 60Hz
+let bassFilter        = null; // 250Hz
+let midFilter         = null; // 1000Hz
+let presenceFilter    = null; // 3500Hz
+let trebleFilter      = null; // 10000Hz
 let analyserNode      = null;
-let bassFilter        = null;
-let midFilter         = null;
-let trebleFilter      = null;
 let sourceA           = null;
 let sourceB           = null;
 let wakeLock          = null;
@@ -124,7 +126,7 @@ function normalizeUrl(url) {
   }
 }
 
-// ─── WEB AUDIO API EQUALIZER & VISUALIZER SETUP ───────────────────
+// ─── WEB AUDIO API 5-BAND EQUALIZER & VISUALIZER SETUP ─────────────
 function initAudioContext() {
   if (audioCtx) return;
   try {
@@ -133,30 +135,56 @@ function initAudioContext() {
 
     audioCtx = new AudioContextClass();
 
-    // 3-Band Equalizer (Bass, Mid, Treble)
-    bassFilter = audioCtx.createBiquadFilter();
-    bassFilter.type = "lowshelf";
-    bassFilter.frequency.value = 250;
+    // 1. Sub-Bass (60 Hz Lowshelf)
+    subBassFilter = audioCtx.createBiquadFilter();
+    subBassFilter.type = "lowshelf";
+    subBassFilter.frequency.value = 60;
 
+    // 2. Bass (250 Hz Peaking)
+    bassFilter = audioCtx.createBiquadFilter();
+    bassFilter.type = "peaking";
+    bassFilter.frequency.value = 250;
+    bassFilter.Q.value = 1.0;
+
+    // 3. Mid / Vocals (1000 Hz Peaking)
     midFilter = audioCtx.createBiquadFilter();
     midFilter.type = "peaking";
-    midFilter.frequency.value = 1500;
+    midFilter.frequency.value = 1000;
     midFilter.Q.value = 1.0;
 
+    // 4. Presence / Crispness (3500 Hz Peaking)
+    presenceFilter = audioCtx.createBiquadFilter();
+    presenceFilter.type = "peaking";
+    presenceFilter.frequency.value = 3500;
+    presenceFilter.Q.value = 1.0;
+
+    // 5. Treble / Air (10000 Hz Highshelf)
     trebleFilter = audioCtx.createBiquadFilter();
     trebleFilter.type = "highshelf";
-    trebleFilter.frequency.value = 4000;
+    trebleFilter.frequency.value = 10000;
 
     // Real-time Analyser
     analyserNode = audioCtx.createAnalyser();
     analyserNode.fftSize = 128;
     analyserNode.smoothingTimeConstant = 0.8;
 
-    // Connect filter chain -> analyser -> speakers
+    // Connect Filter Chain: SubBass -> Bass -> Mid -> Presence -> Treble -> Analyser -> Speakers
+    subBassFilter.connect(bassFilter);
     bassFilter.connect(midFilter);
-    midFilter.connect(trebleFilter);
+    midFilter.connect(presenceFilter);
+    presenceFilter.connect(trebleFilter);
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
+
+    // Route active and standby audio elements through the equalizer filter chain!
+    if (!sourceA && activeAudio) {
+      sourceA = audioCtx.createMediaElementSource(activeAudio);
+      sourceA.connect(subBassFilter);
+    }
+    if (!sourceB && standbyAudio) {
+      sourceB = audioCtx.createMediaElementSource(standbyAudio);
+      sourceB.connect(subBassFilter);
+    }
 
     // Apply saved preset
     const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
@@ -384,7 +412,7 @@ function updateUI() {
     if (currentSong) playerEl.classList.add("visible");
   }
 
-  if (titleEl) titleEl.textContent = currentSong?.title || "Select a song";
+  if (titleEl) titleEl.textContent = currentSong?.title || "Select a track";
   if (artistEl) artistEl.textContent = currentSong?.artist || "MusicsAura";
 
   if (thumbEl) {
@@ -681,37 +709,71 @@ export const player = {
 
   setEqualizerPreset(presetName) {
     initAudioContext();
-    if (!bassFilter || !midFilter || !trebleFilter) return;
+    if (!subBassFilter || !bassFilter || !midFilter || !presenceFilter || !trebleFilter) return;
 
     localStorage.setItem(EQ_PRESET_KEY, presetName);
 
     switch (presetName.toLowerCase()) {
-      case "bass":
-        bassFilter.gain.value = 8;
-        midFilter.gain.value = -1;
-        trebleFilter.gain.value = 2;
+      case "bass": // Mega Sub-Bass & Low-End Punch
+        subBassFilter.gain.value = 11;
+        bassFilter.gain.value = 7;
+        midFilter.gain.value = 0;
+        presenceFilter.gain.value = 2;
+        trebleFilter.gain.value = 3;
+        player.showToast("🔥 Bass Boost Active (+11dB Sub-Bass)");
         break;
-      case "acoustic":
+      case "vocal": // Crystal Vocals
+        subBassFilter.gain.value = -3;
+        bassFilter.gain.value = -1;
+        midFilter.gain.value = 8;
+        presenceFilter.gain.value = 5;
+        trebleFilter.gain.value = 2;
+        player.showToast("🎤 Vocal Focus Active");
+        break;
+      case "acoustic": // Natural Warmth
+        subBassFilter.gain.value = 3;
         bassFilter.gain.value = 4;
         midFilter.gain.value = 3;
+        presenceFilter.gain.value = 4;
         trebleFilter.gain.value = 5;
+        player.showToast("🎸 Acoustic Warmth Active");
         break;
-      case "vocal":
-        bassFilter.gain.value = -2;
-        midFilter.gain.value = 7;
-        trebleFilter.gain.value = 2;
+      case "electronic": // Club & EDM
+        subBassFilter.gain.value = 10;
+        bassFilter.gain.value = 6;
+        midFilter.gain.value = -1;
+        presenceFilter.gain.value = 4;
+        trebleFilter.gain.value = 7;
+        player.showToast("🪩 Club / EDM Profile Active");
         break;
-      case "electronic":
-        bassFilter.gain.value = 7;
-        midFilter.gain.value = 1;
-        trebleFilter.gain.value = 6;
+      case "rock": // Rock Swag
+        subBassFilter.gain.value = 7;
+        bassFilter.gain.value = 5;
+        midFilter.gain.value = 3;
+        presenceFilter.gain.value = 6;
+        trebleFilter.gain.value = 4;
+        player.showToast("⚡ Rock & Swag Profile Active");
         break;
-      default: // flat
+      default: // Pure flat reference
+        subBassFilter.gain.value = 0;
         bassFilter.gain.value = 0;
         midFilter.gain.value = 0;
+        presenceFilter.gain.value = 0;
         trebleFilter.gain.value = 0;
+        player.showToast("🎧 Pure Flat Studio Reference");
         break;
     }
+  },
+
+  setEqualizerCustom(subBass, bass, mid, presence, treble) {
+    initAudioContext();
+    if (!subBassFilter || !bassFilter || !midFilter || !presenceFilter || !trebleFilter) return;
+
+    subBassFilter.gain.value  = clamp(subBass, -15, 15);
+    bassFilter.gain.value     = clamp(bass, -15, 15);
+    midFilter.gain.value      = clamp(mid, -15, 15);
+    presenceFilter.gain.value = clamp(presence, -15, 15);
+    trebleFilter.gain.value   = clamp(treble, -15, 15);
   },
 
   cycleRepeat() {

@@ -497,12 +497,71 @@ if (crossfadeSlider && crossfadeVal) {
   });
 }
 
-// EQ Presets
+// EQ Presets & 5-Band Slider Elements
+const eqActiveLabel = document.getElementById("eq-active-label");
+const b60  = document.getElementById("eq-band-60");
+const b250 = document.getElementById("eq-band-250");
+const b1k  = document.getElementById("eq-band-1k");
+const b3k  = document.getElementById("eq-band-3k");
+const b10k = document.getElementById("eq-band-10k");
+
+const v60  = document.getElementById("eq-val-60");
+const v250 = document.getElementById("eq-val-250");
+const v1k  = document.getElementById("eq-val-1k");
+const v3k  = document.getElementById("eq-val-3k");
+const v10k = document.getElementById("eq-val-10k");
+
+function syncSlidersToPreset(preset) {
+  let g60 = 0, g250 = 0, g1k = 0, g3k = 0, g10k = 0;
+  if (preset === "bass")       { g60 = 11; g250 = 7; g1k = 0; g3k = 2; g10k = 3; }
+  else if (preset === "vocal") { g60 = -3; g250 = -1; g1k = 8; g3k = 5; g10k = 2; }
+  else if (preset === "acoustic") { g60 = 3; g250 = 4; g1k = 3; g3k = 4; g10k = 5; }
+  else if (preset === "electronic") { g60 = 10; g250 = 6; g1k = -1; g3k = 4; g10k = 7; }
+  else if (preset === "rock")  { g60 = 7; g250 = 5; g1k = 3; g3k = 6; g10k = 4; }
+
+  if (b60)  b60.value  = g60;
+  if (b250) b250.value = g250;
+  if (b1k)  b1k.value  = g1k;
+  if (b3k)  b3k.value  = g3k;
+  if (b10k) b10k.value = g10k;
+
+  if (v60)  v60.textContent  = `${g60 > 0 ? "+" : ""}${g60}dB`;
+  if (v250) v250.textContent = `${g250 > 0 ? "+" : ""}${g250}dB`;
+  if (v1k)  v1k.textContent  = `${g1k > 0 ? "+" : ""}${g1k}dB`;
+  if (v3k)  v3k.textContent  = `${g3k > 0 ? "+" : ""}${g3k}dB`;
+  if (v10k) v10k.textContent = `${g10k > 0 ? "+" : ""}${g10k}dB`;
+}
+
 document.querySelectorAll(".eq-preset-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".eq-preset-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    player.setEqualizerPreset(btn.dataset.preset);
+    const preset = btn.dataset.preset;
+    if (eqActiveLabel) eqActiveLabel.textContent = btn.textContent;
+    syncSlidersToPreset(preset);
+    player.setEqualizerPreset(preset);
+  });
+});
+
+[b60, b250, b1k, b3k, b10k].forEach((slider) => {
+  if (!slider) return;
+  slider.addEventListener("input", () => {
+    document.querySelectorAll(".eq-preset-btn").forEach((b) => b.classList.remove("active"));
+    if (eqActiveLabel) eqActiveLabel.textContent = "Custom Profile";
+
+    const g60  = parseFloat(b60?.value || 0);
+    const g250 = parseFloat(b250?.value || 0);
+    const g1k  = parseFloat(b1k?.value || 0);
+    const g3k  = parseFloat(b3k?.value || 0);
+    const g10k = parseFloat(b10k?.value || 0);
+
+    if (v60)  v60.textContent  = `${g60 > 0 ? "+" : ""}${g60}dB`;
+    if (v250) v250.textContent = `${g250 > 0 ? "+" : ""}${g250}dB`;
+    if (v1k)  v1k.textContent  = `${g1k > 0 ? "+" : ""}${g1k}dB`;
+    if (v3k)  v3k.textContent  = `${g3k > 0 ? "+" : ""}${g3k}dB`;
+    if (v10k) v10k.textContent = `${g10k > 0 ? "+" : ""}${g10k}dB`;
+
+    player.setEqualizerCustom(g60, g250, g1k, g3k, g10k);
   });
 });
 
