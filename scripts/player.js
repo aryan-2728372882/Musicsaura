@@ -8,13 +8,11 @@ import {
 let activeAudio  = new Audio();
 let standbyAudio = new Audio();
 
-activeAudio.preload   = "auto";
-activeAudio.crossOrigin = "anonymous";
+activeAudio.preload = "auto";
 activeAudio.setAttribute("playsinline", "");
 activeAudio.setAttribute("webkit-playsinline", "");
 
-standbyAudio.preload  = "auto";
-standbyAudio.crossOrigin = "anonymous";
+standbyAudio.preload = "auto";
 standbyAudio.setAttribute("playsinline", "");
 standbyAudio.setAttribute("webkit-playsinline", "");
 
@@ -178,14 +176,22 @@ function initAudioContext() {
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
 
-    // Route active and standby audio elements through the equalizer filter chain!
-    if (!sourceA && activeAudio) {
-      sourceA = audioCtx.createMediaElementSource(activeAudio);
-      sourceA.connect(subBassFilter);
+    // Route active and standby audio through the EQ chain (requires same-origin or CORS)
+    try {
+      if (!sourceA && activeAudio) {
+        sourceA = audioCtx.createMediaElementSource(activeAudio);
+        sourceA.connect(subBassFilter);
+      }
+    } catch (corsErr) {
+      console.warn("EQ routing skipped (no CORS):", corsErr);
     }
-    if (!sourceB && standbyAudio) {
-      sourceB = audioCtx.createMediaElementSource(standbyAudio);
-      sourceB.connect(subBassFilter);
+    try {
+      if (!sourceB && standbyAudio) {
+        sourceB = audioCtx.createMediaElementSource(standbyAudio);
+        sourceB.connect(subBassFilter);
+      }
+    } catch (corsErr) {
+      console.warn("EQ routing skipped (no CORS):", corsErr);
     }
 
     // Apply saved preset values quietly
