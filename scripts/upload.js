@@ -1,7 +1,8 @@
 // scripts/upload.js — MusicsAura 3.0 Creator Studio
 import {
   db,
-  collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp
+  collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp,
+  doc, deleteDoc, updateDoc
 } from "./firebase-config.js";
 
 // Folder URLs
@@ -414,20 +415,73 @@ async function loadCommunityUploads() {
 
     snap.forEach((docSnap) => {
       const song = docSnap.data();
+      const songId = docSnap.id;
       const item = document.createElement("div");
       item.className = "fav-item";
+      item.dataset.id = songId;
       const thumb = song.thumbnail || "assets/logo.png";
 
       item.innerHTML = `
         <img src="${thumb}" alt="" class="fav-thumb" onerror="this.src='assets/logo.png'">
         <div class="fav-info">
           <div class="fav-title">${escapeHtml(song.title)}</div>
-          <div class="fav-artist">${escapeHtml(song.artist || "Unknown")} • <span style="color:var(--violet-light)">${escapeHtml(song.genre?.toUpperCase())}</span> • <span style="color:var(--text-muted)">by ${escapeHtml(song.uploadedBy || "Community")}</span></div>
+          <div class="fav-artist">${escapeHtml(song.artist || "Unknown")} • <span class="genre-badge" style="color:var(--cyan);font-weight:600">${escapeHtml(song.genre?.toUpperCase())}</span> • <span style="color:var(--text-muted)">by ${escapeHtml(song.uploadedBy || "Community")}</span></div>
         </div>
-        <a href="${song.link}" target="_blank" rel="noopener" class="action-btn" title="Stream link">
-          <span class="material-icons">open_in_new</span>
-        </a>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button class="action-btn btn-change-genre" title="Change Genre" style="color:var(--cyan)">
+            <span class="material-icons" style="font-size:1.1rem">swap_horiz</span>
+          </button>
+          <a href="${song.link}" target="_blank" rel="noopener" class="action-btn" title="Stream link">
+            <span class="material-icons" style="font-size:1.1rem">open_in_new</span>
+          </a>
+          <button class="action-btn btn-delete-song" title="Delete Song" style="color:var(--rose)">
+            <span class="material-icons" style="font-size:1.1rem">delete</span>
+          </button>
+        </div>
       `;
+
+      // ── Change Genre Action ──
+      const genreBtn = item.querySelector(".btn-change-genre");
+      if (genreBtn) {
+        genreBtn.addEventListener("click", async () => {
+          const currentG = (song.genre || "hindi").toLowerCase();
+          const targetG = currentG === "hindi" ? "punjabi" : currentG === "punjabi" ? "haryanvi" : "hindi";
+          if (!confirm(`Change genre of "${song.title}" from ${currentG.toUpperCase()} to ${targetG.toUpperCase()}?`)) return;
+
+          try {
+            await updateDoc(doc(db, "songs", songId), { genre: targetG });
+            showAlert(`✅ Changed "${song.title}" genre to ${targetG.toUpperCase()}`);
+            loadCommunityUploads();
+          } catch (err) {
+            showAlert("Error updating genre: " + err.message, true);
+          }
+        });
+      }
+
+      // ── Delete Song Action ──
+      const delBtn = item.querySelector(".btn-delete-song");
+      if (delBtn) {
+        delBtn.addEventListener("click", async () => {
+          if (!confirm(`Are you sure you want to permanently delete "${song.title}" from MusicsAura?`)) return;
+
+          try {
+            await deleteDoc(doc(db, "songs", songId));
+
+            // Clean from local uploads buffer
+            try {
+              const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
+              const filtered = local.filter((s) => (s.id !== songId && s.link !== song.link));
+              localStorage.setItem("musicsaura_local_uploads", JSON.stringify(filtered));
+            } catch {}
+
+            showAlert(`🗑️ Deleted "${song.title}" from MusicsAura!`);
+            loadCommunityUploads();
+          } catch (err) {
+            showAlert("Could not delete track: " + err.message, true);
+          }
+        });
+      }
+
       frag.appendChild(item);
     });
 
