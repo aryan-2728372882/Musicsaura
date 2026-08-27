@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine
-const APP_SHELL_CACHE = "musicsaura-shell-v6";
+const APP_SHELL_CACHE = "musicsaura-shell-v7";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v1";
 
 const PRECACHE_ASSETS = [
@@ -49,14 +49,15 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// ─── FETCH: NETWORK-FIRST STRATEGY (ALWAYS FRESH UPDATES) ─────────
+// ─── FETCH: STREAMING & APP SHELL STRATEGY ────────────────────────
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
 
-  // 1. Audio Streaming & PWA Downloaded Tracks
+  // 1. Audio Streaming: Only intercept if cached in PWA Offline Storage!
+  // If not offline-saved, let the browser stream natively without SW interference
   if (request.destination === "audio" || /\.(mp3|m4a|aac|wav|ogg|flac)($|\?)/i.test(url.pathname)) {
     event.respondWith(
       (async () => {
@@ -65,19 +66,20 @@ self.addEventListener("fetch", (event) => {
           const cachedTrack = await pwaCache.match(request);
           if (cachedTrack) return cachedTrack;
 
+          // Stream natively directly from remote server with full Range support
           return await fetch(request);
         } catch {
-          return new Response("", { status: 200 });
+          return fetch(request);
         }
       })()
     );
     return;
   }
 
-  // Only handle same-origin assets through cache; let third-party pass through
+  // Only handle same-origin app files through SW cache
   if (url.origin !== self.location.origin) return;
 
-  // 2. Network-First with Cache Fallback (Guarantees freshest scripts & catalogue updates)
+  // 2. App Shell & Scripts — Network-First with Cache Fallback
   event.respondWith(
     (async () => {
       try {

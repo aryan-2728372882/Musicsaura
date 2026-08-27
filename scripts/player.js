@@ -613,13 +613,10 @@ export const player = {
     if (!cleanUrl) return;
 
     try {
-      // Warm up HTTP stream connection in background
-      const linkEl = document.createElement("link");
-      linkEl.rel = "prefetch";
-      linkEl.as = "fetch";
-      linkEl.crossOrigin = "anonymous";
-      linkEl.href = cleanUrl;
-      document.head.appendChild(linkEl);
+      // Warm up audio buffer natively without DOM prefetch tag rejection
+      const preAudio = new Audio();
+      preAudio.preload = "metadata";
+      preAudio.src = cleanUrl;
     } catch {}
   },
 
