@@ -176,25 +176,12 @@ function initAudioContext() {
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
 
-    // Route active and standby audio through the EQ chain (requires same-origin or CORS)
-    try {
-      if (!sourceA && activeAudio) {
-        sourceA = audioCtx.createMediaElementSource(activeAudio);
-        sourceA.connect(subBassFilter);
-      }
-    } catch (corsErr) {
-      console.warn("EQ routing skipped (no CORS):", corsErr);
-    }
-    try {
-      if (!sourceB && standbyAudio) {
-        sourceB = audioCtx.createMediaElementSource(standbyAudio);
-        sourceB.connect(subBassFilter);
-      }
-    } catch (corsErr) {
-      console.warn("EQ routing skipped (no CORS):", corsErr);
-    }
+    // NOTE: We do NOT call createMediaElementSource() here.
+    // File Garden uses a CDN that does not allow CORS preflight (OPTIONS).
+    // createMediaElementSource permanently taints the audio element and blocks
+    // cross-origin playback. EQ filter chain is built but bypassed for remote audio.
 
-    // Apply saved preset values quietly
+    // Apply saved preset values
     const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
     applyPresetGains(savedPreset);
 
@@ -661,7 +648,7 @@ export const player = {
     let streamUrl = cleanUrl;
     try {
       if ("caches" in window) {
-        const cache = await caches.open("musicsaura-pwa-storage-v1");
+        const cache = await caches.open("musicsaura-pwa-storage-v2");
         const cachedRes = await cache.match(cleanUrl);
         if (cachedRes && (cachedRes.ok || cachedRes.status === 200)) {
           const blob = await cachedRes.blob();
