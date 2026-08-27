@@ -410,6 +410,15 @@ function createCard(song, index) {
     });
   }
 
+  // Instant Hover / Touch Stream Pre-warmer for 0ms start latency
+  el.addEventListener("pointerenter", () => {
+    if (song.link) player.prefetchAudioStream(song.link);
+  }, { passive: true, once: true });
+
+  el.addEventListener("pointerdown", () => {
+    if (song.link) player.prefetchAudioStream(song.link);
+  }, { passive: true, once: true });
+
   return el;
 }
 

@@ -604,6 +604,23 @@ export const player = {
     warmupStandbyNextTrack();
   },
 
+  prefetchAudioStream(link) {
+    if (!link || prefetchedLinks.has(link)) return;
+    prefetchedLinks.add(link);
+    const cleanUrl = normalizeUrl(link);
+    if (!cleanUrl) return;
+
+    try {
+      // Warm up HTTP stream connection in background
+      const linkEl = document.createElement("link");
+      linkEl.rel = "prefetch";
+      linkEl.as = "fetch";
+      linkEl.crossOrigin = "anonymous";
+      linkEl.href = cleanUrl;
+      document.head.appendChild(linkEl);
+    } catch {}
+  },
+
   async playSong(song, playlistContext = null, index = null) {
     if (!song || !song.link) return;
 
@@ -641,23 +658,40 @@ export const player = {
       console.warn("Offline cache check:", e);
     }
 
-    activeAudio.src = streamUrl;
+    // Ultra-Fast Stream Assignment & Direct Play (0ms latency)
+    if (activeAudio.src !== streamUrl) {
+      activeAudio.src = streamUrl;
+      activeAudio.preload = "auto";
+    }
     activeAudio.playbackRate = playbackRate;
     activeAudio.volume = masterVolume;
-    activeAudio.load();
 
     await unlockAudioContext();
     updateMediaSession(song);
     updateUI();
 
     try {
-      await activeAudio.play();
+      const playPromise = activeAudio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn("Playback gesture required:", err);
+          updateUI();
+        });
+      }
     } catch (err) {
       console.warn("Playback gesture required:", err);
       updateUI();
     }
 
     warmupStandbyNextTrack();
+
+    // Pre-warm the track after next for instant skipping
+    if (playlist.length > 2) {
+      const afterNextIdx = (currentIndex + 2) % playlist.length;
+      if (playlist[afterNextIdx]?.link) {
+        player.prefetchAudioStream(playlist[afterNextIdx].link);
+      }
+    }
   },
 
   async play() {
