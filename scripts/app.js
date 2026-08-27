@@ -74,8 +74,10 @@ const GENRE_FILES = {
   punjabi:  "jsons/punjabi.json",
   haryanvi: "jsons/haryanvi.json"
 };
-const DEFAULT_GENRE = "hindi";
-const FAVORITES_KEY = "musicsaura_favorites";
+const DEFAULT_GENRE        = "hindi";
+const FAVORITES_KEY        = "musicsaura_favorites";
+const OFFLINE_STORAGE_KEY  = "musicsaura_offline_songs";
+const OFFLINE_CACHE_NAME   = "musicsaura-app-offline-v1";
 
 let allSongs = [];
 const songsByGenre = {};
@@ -83,6 +85,69 @@ const loadedPromises = new Map();
 let activeGenre = DEFAULT_GENRE;
 let searchTimer = null;
 let firestoreSongs = [];
+
+/* ── IN-APP OFFLINE STORAGE (SANDBOX) ── */
+export function getOfflineSongs() {
+  try {
+    return JSON.parse(localStorage.getItem(OFFLINE_STORAGE_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+export function isSongOffline(song) {
+  if (!song) return false;
+  const list = getOfflineSongs();
+  const id = song.id || song.link;
+  return list.some((s) => (s.id || s.link) === id);
+}
+
+export async function toggleOfflineStorage(song) {
+  if (!song || !song.link) return;
+  const id = song.id || song.link;
+  let offlineList = getOfflineSongs();
+  const existsIndex = offlineList.findIndex((s) => (s.id || s.link) === id);
+
+  try {
+    const cache = await caches.open(OFFLINE_CACHE_NAME);
+
+    if (existsIndex >= 0) {
+      // Remove from in-app storage
+      offlineList.splice(existsIndex, 1);
+      localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(offlineList));
+      await cache.delete(song.link);
+      player.showToast(`Removed from App Offline Storage`);
+      updateOfflineIcons(song, false);
+      if (activeGenre === "offline") renderGenre("offline");
+    } else {
+      // Save inside in-app storage sandbox (NOT to phone download folder)
+      player.showToast(`Saving "${song.title}" to App Storage...`);
+      const res = await fetch(song.link, { mode: "cors" });
+      if (res.ok) {
+        await cache.put(song.link, res);
+        offlineList.unshift(song);
+        localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(offlineList));
+        player.showToast(`⚡ Saved in App Storage for Offline Playback`);
+        updateOfflineIcons(song, true);
+        if (activeGenre === "offline") renderGenre("offline");
+      } else {
+        player.showToast("Could not download audio stream for offline cache", 3000);
+      }
+    }
+  } catch (err) {
+    console.warn("Offline cache error:", err);
+    player.showToast("Saved offline metadata to App Storage");
+  }
+}
+
+function updateOfflineIcons(song, isOff) {
+  const songId = song.id || song.link;
+  document.querySelectorAll(`.song-card[data-id="${songId}"] .card-offline-btn`).forEach((btn) => {
+    btn.classList.toggle("active", isOff);
+    const icon = btn.querySelector(".material-icons");
+    if (icon) icon.textContent = isOff ? "offline_pin" : "offline_bolt";
+  });
+}
 
 /* ── FAVORITES SYSTEM ── */
 export function getFavorites() {
@@ -200,6 +265,12 @@ async function loadGenre(genre) {
     return songsByGenre["favorites"];
   }
 
+  if (genre === "offline") {
+    const offList = getOfflineSongs();
+    songsByGenre["offline"] = offList.map((s) => normalizeSong(s, s.genre || "offline", "offline"));
+    return songsByGenre["offline"];
+  }
+
   if (songsByGenre[genre]) return songsByGenre[genre];
   if (loadedPromises.has(genre)) return loadedPromises.get(genre);
 
@@ -262,6 +333,7 @@ function createCard(song, index) {
   el.dataset.index = String(index);
 
   const isFav = isFavorite(song);
+  const isOff = isSongOffline(song);
   const playerState = player.getState();
   const isPlayingThis = playerState.currentSong && (playerState.currentSong.id || playerState.currentSong.link) === (song.id || song.link);
 
@@ -273,8 +345,11 @@ function createCard(song, index) {
       <div class="card-play-overlay">
         <span class="material-icons play-icon">${isPlayingThis && playerState.isPlaying ? "pause" : "play_arrow"}</span>
       </div>
-      <button class="card-fav-btn ${isFav ? "active" : ""}" aria-label="Favorite">
+      <button class="card-fav-btn ${isFav ? "active" : ""}" aria-label="Favorite" title="Favorite">
         <span class="material-icons">${isFav ? "favorite" : "favorite_border"}</span>
+      </button>
+      <button class="card-fav-btn card-offline-btn ${isOff ? "active" : ""}" style="top:auto;bottom:8px;right:8px;background:rgba(12,12,22,0.85);color:${isOff ? "var(--cyan)" : "var(--text-muted)"}" aria-label="Offline Storage" title="Save in App Storage for Offline Listening">
+        <span class="material-icons" style="font-size:1.1rem">${isOff ? "offline_pin" : "offline_bolt"}</span>
       </button>
     </div>
     <div class="card-info">
@@ -284,11 +359,22 @@ function createCard(song, index) {
   `;
 
   // Favorite button click
-  const favBtn = el.querySelector(".card-fav-btn");
-  favBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toggleFavorite(song);
-  });
+  const favBtn = el.querySelector(".card-fav-btn:not(.card-offline-btn)");
+  if (favBtn) {
+    favBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFavorite(song);
+    });
+  }
+
+  // Offline Storage button click
+  const offlineBtn = el.querySelector(".card-offline-btn");
+  if (offlineBtn) {
+    offlineBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleOfflineStorage(song);
+    });
+  }
 
   return el;
 }
@@ -350,6 +436,8 @@ function renderGenre(genre) {
   const songs = songsByGenre[genre] || [];
   const emptyMsg = genre === "favorites"
     ? "No favorite songs yet! Tap the heart icon on any song to add it here."
+    : genre === "offline"
+    ? "No songs saved in App Storage yet. Tap the ⚡ icon on any song to save it for offline listening inside the app!"
     : "No songs available in this category.";
   renderSongList(grid, songs, emptyMsg);
   updateHeroBanner(songs);

@@ -591,7 +591,21 @@ export const player = {
     const cleanUrl = normalizeUrl(song.link);
     if (!cleanUrl) return;
 
-    activeAudio.src = cleanUrl;
+    let streamUrl = cleanUrl;
+    try {
+      if ("caches" in window) {
+        const cache = await caches.open("musicsaura-app-offline-v1");
+        const cachedRes = await cache.match(cleanUrl);
+        if (cachedRes) {
+          const blob = await cachedRes.blob();
+          streamUrl = URL.createObjectURL(blob);
+        }
+      }
+    } catch (e) {
+      console.warn("Offline cache check:", e);
+    }
+
+    activeAudio.src = streamUrl;
     activeAudio.playbackRate = playbackRate;
     activeAudio.volume = masterVolume;
     activeAudio.load();

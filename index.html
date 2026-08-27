@@ -97,6 +97,10 @@
           <span class="material-icons" style="font-size:0.95rem;color:var(--rose);margin-right:2px">favorite</span>
           Favorites
         </button>
+        <button class="genre-pill" data-genre="offline">
+          <span class="material-icons" style="font-size:0.95rem;color:var(--cyan);margin-right:2px">offline_bolt</span>
+          Offline ⚡
+        </button>
       </div>
     </nav>
 
@@ -331,27 +335,27 @@
         <div style="margin-top:1rem;display:flex;justify-content:space-between;gap:6px;text-align:center">
           <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
             <span style="font-size:0.68rem;color:var(--text-muted)">60Hz</span>
-            <input type="range" id="eq-band-60" min="-12" max="12" step="1" value="0" style="writing-mode:bt-lr;-webkit-appearance:slider-vertical;width:16px;height:70px;accent-color:var(--violet)">
+            <input type="range" id="eq-band-60" min="-12" max="12" step="1" value="0" style="writing-mode: vertical-lr; direction: rtl; width:16px; height:70px; accent-color:var(--violet); cursor:pointer;">
             <span id="eq-val-60" style="font-size:0.65rem;color:var(--cyan)">0dB</span>
           </div>
           <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
             <span style="font-size:0.68rem;color:var(--text-muted)">250Hz</span>
-            <input type="range" id="eq-band-250" min="-12" max="12" step="1" value="0" style="writing-mode:bt-lr;-webkit-appearance:slider-vertical;width:16px;height:70px;accent-color:var(--violet)">
+            <input type="range" id="eq-band-250" min="-12" max="12" step="1" value="0" style="writing-mode: vertical-lr; direction: rtl; width:16px; height:70px; accent-color:var(--violet); cursor:pointer;">
             <span id="eq-val-250" style="font-size:0.65rem;color:var(--cyan)">0dB</span>
           </div>
           <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
             <span style="font-size:0.68rem;color:var(--text-muted)">1kHz</span>
-            <input type="range" id="eq-band-1k" min="-12" max="12" step="1" value="0" style="writing-mode:bt-lr;-webkit-appearance:slider-vertical;width:16px;height:70px;accent-color:var(--violet)">
+            <input type="range" id="eq-band-1k" min="-12" max="12" step="1" value="0" style="writing-mode: vertical-lr; direction: rtl; width:16px; height:70px; accent-color:var(--violet); cursor:pointer;">
             <span id="eq-val-1k" style="font-size:0.65rem;color:var(--cyan)">0dB</span>
           </div>
           <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
             <span style="font-size:0.68rem;color:var(--text-muted)">3.5kHz</span>
-            <input type="range" id="eq-band-3k" min="-12" max="12" step="1" value="0" style="writing-mode:bt-lr;-webkit-appearance:slider-vertical;width:16px;height:70px;accent-color:var(--violet)">
+            <input type="range" id="eq-band-3k" min="-12" max="12" step="1" value="0" style="writing-mode: vertical-lr; direction: rtl; width:16px; height:70px; accent-color:var(--violet); cursor:pointer;">
             <span id="eq-val-3k" style="font-size:0.65rem;color:var(--cyan)">0dB</span>
           </div>
           <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
             <span style="font-size:0.68rem;color:var(--text-muted)">10kHz</span>
-            <input type="range" id="eq-band-10k" min="-12" max="12" step="1" value="0" style="writing-mode:bt-lr;-webkit-appearance:slider-vertical;width:16px;height:70px;accent-color:var(--violet)">
+            <input type="range" id="eq-band-10k" min="-12" max="12" step="1" value="0" style="writing-mode: vertical-lr; direction: rtl; width:16px; height:70px; accent-color:var(--violet); cursor:pointer;">
             <span id="eq-val-10k" style="font-size:0.65rem;color:var(--cyan)">0dB</span>
           </div>
         </div>
