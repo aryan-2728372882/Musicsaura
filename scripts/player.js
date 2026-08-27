@@ -11,10 +11,12 @@ let activeAudio  = new Audio();
 let standbyAudio = new Audio();
 
 activeAudio.preload = "auto";
+activeAudio.crossOrigin = "anonymous";
 activeAudio.setAttribute("playsinline", "");
 activeAudio.setAttribute("webkit-playsinline", "");
 
 standbyAudio.preload = "auto";
+standbyAudio.crossOrigin = "anonymous";
 standbyAudio.setAttribute("playsinline", "");
 standbyAudio.setAttribute("webkit-playsinline", "");
 
@@ -70,6 +72,8 @@ let midFilter         = null; // 1000Hz Peaking
 let presenceFilter    = null; // 3500Hz Peaking
 let trebleFilter      = null; // 10000Hz Highshelf
 let analyserNode      = null;
+let sourceA           = null;
+let sourceB           = null;
 let wakeLock          = null;
 
 // Stats Tracking
@@ -116,6 +120,10 @@ export function normalizeUrl(url) {
     if (host.includes("file.garden") || host.includes("supabase.co")) {
       u.searchParams.delete("download");
       u.searchParams.delete("dl");
+      // Add stream timestamp to prevent browser negative 404 disk caching
+      if (!u.searchParams.has("t")) {
+        u.searchParams.set("t", Date.now().toString(36));
+      }
       return u.toString();
     }
     return u.toString();
@@ -166,6 +174,25 @@ function initAudioContext() {
     presenceFilter.connect(trebleFilter);
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
+
+    // Route active and standby audio through the EQ chain
+    try {
+      if (!sourceA && activeAudio) {
+        sourceA = audioCtx.createMediaElementSource(activeAudio);
+        sourceA.connect(subBassFilter);
+      }
+    } catch (e) {
+      console.warn("sourceA connect:", e);
+    }
+
+    try {
+      if (!sourceB && standbyAudio) {
+        sourceB = audioCtx.createMediaElementSource(standbyAudio);
+        sourceB.connect(subBassFilter);
+      }
+    } catch (e) {
+      console.warn("sourceB connect:", e);
+    }
 
     const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
     applyPresetGains(savedPreset);
