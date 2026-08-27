@@ -557,8 +557,16 @@ function wireAudioEvents(audioNode) {
 
   audioNode.onerror = (e) => {
     console.warn("Audio node error:", e, audioNode.error);
+    if (audioNode.error && audioNode.error.code === 4 && !audioNode._retried) {
+      audioNode._retried = true;
+      setTimeout(() => {
+        audioNode.load();
+        audioNode.play().catch(() => {});
+      }, 400);
+      return;
+    }
     if (!userPaused && playlist.length > 1 && !isCrossfading) {
-      setTimeout(() => player.next(true), 1000);
+      setTimeout(() => player.next(true), 1500);
     }
   };
 }
