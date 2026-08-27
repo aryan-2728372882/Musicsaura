@@ -416,13 +416,35 @@ async function deleteSong(songId) {
   const song = allUploadedSongs.find((s) => s.id === songId);
   if (!song) return;
 
-  if (!confirm(`Are you sure you want to delete "${song.title}"?`)) {
+  if (!confirm(`Are you sure you want to permanently delete "${song.title}" from MusicsAura and Firestore?`)) {
     return;
   }
 
   try {
+    // 1. Delete from Firestore 'songs' collection
     await deleteDoc(doc(db, "songs", songId));
-    showAlert(`Deleted "${song.title}"`);
+
+    // 2. Add to 'deleted_songs' collection so it stays deleted across all users and caches
+    if (song.link) {
+      try {
+        await addDoc(collection(db, "deleted_songs"), {
+          link: song.link,
+          title: song.title || "Deleted Song",
+          deletedAt: serverTimestamp()
+        });
+      } catch (e) {
+        console.warn("Blacklist notice:", e);
+      }
+    }
+
+    // 3. Clean from local storage buffers
+    try {
+      const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
+      const filtered = local.filter((s) => (s.id !== songId && s.link !== song.link));
+      localStorage.setItem("musicsaura_local_uploads", JSON.stringify(filtered));
+    } catch {}
+
+    showAlert(`🗑️ Deleted "${song.title}" from MusicsAura & Firestore!`);
     loadUploadedSongs();
   } catch (err) {
     console.error("Delete failed:", err);

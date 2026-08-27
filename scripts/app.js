@@ -286,10 +286,16 @@ function getLocalUploads() {
   }
 }
 
+let deletedSongLinks = new Set();
+
 /* ── REBUILD ALL CATALOGUES & GLOBAL SEARCH INDEX ── */
 function rebuildAllCatalogues() {
-  const localUploads = getLocalUploads().map((s) => normalizeSong(s, s.genre, "local"));
-  const allCustom = [...localUploads, ...firestoreSongs];
+  const localUploads = getLocalUploads()
+    .filter((s) => !deletedSongLinks.has(s.link))
+    .map((s) => normalizeSong(s, s.genre, "local"));
+
+  const allCustom = [...localUploads, ...firestoreSongs]
+    .filter((s) => !deletedSongLinks.has(s.link));
 
   // Remove duplicate custom songs by link
   const uniqueCustom = [];
@@ -303,7 +309,7 @@ function rebuildAllCatalogues() {
 
   // Build each genre with NEWEST published uploads at the top!
   Object.keys(GENRE_FILES).forEach((genre) => {
-    const raw = rawJsonSongs[genre] || [];
+    const raw = (rawJsonSongs[genre] || []).filter((s) => !deletedSongLinks.has(s.link));
     const genreUploads = uniqueCustom.filter((s) => (s.genre || "").toLowerCase() === genre.toLowerCase());
     songsByGenre[genre] = [...genreUploads, ...raw];
   });
@@ -320,10 +326,10 @@ function rebuildAllCatalogues() {
     }
   });
 
-  // 2. Add all songs from all 3 JSONs
+  // 2. Add all songs from all 3 JSONs (excluding deleted songs)
   Object.values(rawJsonSongs).forEach((list) => {
     list.forEach((s) => {
-      if (!globalSeen.has(s.link)) {
+      if (!globalSeen.has(s.link) && !deletedSongLinks.has(s.link)) {
         globalSeen.add(s.link);
         allSongs.push(s);
       }
@@ -349,7 +355,7 @@ async function loadRawJson(genre) {
     if (res.ok) {
       const raw = await res.json();
       rawJsonSongs[genre] = raw
-        .filter((s) => s.title && s.link)
+        .filter((s) => s.title && s.link && !deletedSongLinks.has(s.link))
         .map((s) => normalizeSong(s, genre, "json"));
       return rawJsonSongs[genre];
     }
@@ -363,18 +369,32 @@ async function loadRawJson(genre) {
 /* ── REAL-TIME FIRESTORE SYNCHRONIZATION ── */
 function subscribeToFirestoreSongs() {
   try {
+    // 1. Subscribe to published songs
     const q = query(collection(db, "songs"), orderBy("createdAt", "desc"));
     onSnapshot(q, (snap) => {
       firestoreSongs = [];
       snap.forEach((docSnap) => {
         const data = docSnap.data();
-        const norm = normalizeSong({ id: docSnap.id, ...data }, data.genre, "firestore");
-        firestoreSongs.push(norm);
+        if (!deletedSongLinks.has(data.link)) {
+          const norm = normalizeSong({ id: docSnap.id, ...data }, data.genre, "firestore");
+          firestoreSongs.push(norm);
+        }
       });
       rebuildAllCatalogues();
     }, (err) => {
       console.warn("Firestore onSnapshot error:", err);
     });
+
+    // 2. Subscribe to deleted songs blacklist
+    onSnapshot(collection(db, "deleted_songs"), (delSnap) => {
+      deletedSongLinks.clear();
+      delSnap.forEach((d) => {
+        const link = d.data().link;
+        if (link) deletedSongLinks.add(link);
+      });
+      rebuildAllCatalogues();
+    }, () => {});
+
   } catch (err) {
     console.warn("Firestore subscription error:", err);
   }
