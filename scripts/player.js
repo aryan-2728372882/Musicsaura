@@ -1,10 +1,12 @@
-// scripts/player.js — MusicsAura 3.0 Pro Audio Engine (Gapless, Crossfade & 5-Band Web Audio Studio)
+// scripts/player.js — MusicsAura 3.0 Ultra Pro Audio Engine
+// High-Speed Streaming, Seamless Crossfade (0-15s), 5-Band Studio Equalizer & Offline PWA Integration
+
 import {
   auth, db,
   doc, updateDoc, increment, serverTimestamp
 } from "./firebase-config.js";
 
-// ─── DUAL AUDIO ENGINE FOR SEAMLESS CROSSFADE ──────────────────────
+// ─── DUAL AUDIO ENGINE FOR SEAMLESS STREAMING & CROSSFADE ───────────
 let activeAudio  = new Audio();
 let standbyAudio = new Audio();
 
@@ -16,11 +18,9 @@ standbyAudio.preload = "auto";
 standbyAudio.setAttribute("playsinline", "");
 standbyAudio.setAttribute("webkit-playsinline", "");
 
-const prefetchedLinks = new Set();
-
 window._musicsaura_audio = activeAudio;
 
-// ─── DOM ELEMENTS ──────────────────────────────────────────────────
+// ─── DOM ELEMENT BINDINGS ──────────────────────────────────────────
 const titleEl         = document.getElementById("player-title");
 const artistEl        = document.getElementById("player-artist");
 const thumbEl         = document.getElementById("player-thumb");
@@ -39,7 +39,7 @@ const playerEl        = document.getElementById("player");
 const volumeSlider    = document.getElementById("volume-slider");
 const volumeBtn       = document.getElementById("volume-btn");
 
-// ─── CONSTANTS & KEYS ──────────────────────────────────────────────
+// ─── CONSTANTS & PERSISTENCE KEYS ──────────────────────────────────
 const STATS_MIN_PLAY_SECONDS = 25;
 const CROSSFADE_STORAGE_KEY  = "musicsaura_crossfade_sec";
 const EQ_PRESET_KEY          = "musicsaura_eq_preset";
@@ -57,35 +57,33 @@ let isSeeking         = false;
 let userPaused        = false;
 let isCrossfading     = false;
 
-// Audio Settings
-let crossfadeSeconds  = parseFloat(localStorage.getItem(CROSSFADE_STORAGE_KEY)) || 4; // default 4s crossfade
+// Audio Configuration
+let crossfadeSeconds  = parseFloat(localStorage.getItem(CROSSFADE_STORAGE_KEY)) || 4;
 let playbackRate      = parseFloat(localStorage.getItem(SPEED_STORAGE_KEY)) || 1.0;
 let masterVolume      = clamp(parseFloat(localStorage.getItem(VOLUME_STORAGE_KEY)) || 1.0, 0, 1);
 
-// Web Audio API & 5-Band Equalizer Nodes
+// Web Audio API Equalizer Nodes
 let audioCtx          = null;
-let subBassFilter     = null; // 60Hz
-let bassFilter        = null; // 250Hz
-let midFilter         = null; // 1000Hz
-let presenceFilter    = null; // 3500Hz
-let trebleFilter      = null; // 10000Hz
+let subBassFilter     = null; // 60Hz Lowshelf
+let bassFilter        = null; // 250Hz Peaking
+let midFilter         = null; // 1000Hz Peaking
+let presenceFilter    = null; // 3500Hz Peaking
+let trebleFilter      = null; // 10000Hz Highshelf
 let analyserNode      = null;
-let sourceA           = null;
-let sourceB           = null;
 let wakeLock          = null;
 
-// Stats tracking
+// Stats Tracking
 let playSessionStart  = 0;
 let accumulatedPlaySec= 0;
 let hasRecordedStat   = false;
 
-// Sleep timer
+// Sleep Timer
 let sleepTimerId      = null;
 
-// State listeners
+// State Change Subscribers
 const stateListeners  = new Set();
 
-// ─── UTILITIES ─────────────────────────────────────────────────────
+// ─── HELPER UTILITIES ──────────────────────────────────────────────
 function clamp(val, min, max) {
   return Math.max(min, Math.min(max, val));
 }
@@ -93,7 +91,7 @@ function clamp(val, min, max) {
 export function formatTime(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
   const totalSec = Math.floor(seconds);
-  const hrs = Math.floor(totalSec / 3600);
+  const hrs  = Math.floor(totalSec / 3600);
   const mins = Math.floor((totalSec % 3600) / 60);
   const secs = totalSec % 60;
   if (hrs > 0) {
@@ -102,7 +100,7 @@ export function formatTime(seconds) {
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
-function normalizeUrl(url) {
+export function normalizeUrl(url) {
   if (!url) return "";
   let clean = url.trim();
   if (clean.startsWith("http://")) clean = "https://" + clean.slice(7);
@@ -115,7 +113,7 @@ function normalizeUrl(url) {
       u.searchParams.delete("dl");
       return u.toString();
     }
-    if (host.includes("filegarden.com") || host.includes("supabase.co")) {
+    if (host.includes("file.garden") || host.includes("supabase.co")) {
       u.searchParams.delete("download");
       u.searchParams.delete("dl");
       return u.toString();
@@ -126,7 +124,7 @@ function normalizeUrl(url) {
   }
 }
 
-// ─── WEB AUDIO API 5-BAND EQUALIZER & VISUALIZER SETUP ─────────────
+// ─── EQUALIZER & AUDIO CONTEXT ─────────────────────────────────────
 function initAudioContext() {
   if (audioCtx) return audioCtx;
   try {
@@ -135,40 +133,33 @@ function initAudioContext() {
 
     audioCtx = new AudioContextClass();
 
-    // 1. Sub-Bass (60 Hz Lowshelf)
     subBassFilter = audioCtx.createBiquadFilter();
     subBassFilter.type = "lowshelf";
     subBassFilter.frequency.value = 60;
 
-    // 2. Bass (250 Hz Peaking)
     bassFilter = audioCtx.createBiquadFilter();
     bassFilter.type = "peaking";
     bassFilter.frequency.value = 250;
     bassFilter.Q.value = 1.0;
 
-    // 3. Mid / Vocals (1000 Hz Peaking)
     midFilter = audioCtx.createBiquadFilter();
     midFilter.type = "peaking";
     midFilter.frequency.value = 1000;
     midFilter.Q.value = 1.0;
 
-    // 4. Presence / Crispness (3500 Hz Peaking)
     presenceFilter = audioCtx.createBiquadFilter();
     presenceFilter.type = "peaking";
     presenceFilter.frequency.value = 3500;
     presenceFilter.Q.value = 1.0;
 
-    // 5. Treble / Air (10000 Hz Highshelf)
     trebleFilter = audioCtx.createBiquadFilter();
     trebleFilter.type = "highshelf";
     trebleFilter.frequency.value = 10000;
 
-    // Real-time Analyser
     analyserNode = audioCtx.createAnalyser();
     analyserNode.fftSize = 128;
     analyserNode.smoothingTimeConstant = 0.8;
 
-    // Connect Filter Chain: SubBass -> Bass -> Mid -> Presence -> Treble -> Analyser -> Speakers
     subBassFilter.connect(bassFilter);
     bassFilter.connect(midFilter);
     midFilter.connect(presenceFilter);
@@ -176,18 +167,12 @@ function initAudioContext() {
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
 
-    // NOTE: We do NOT call createMediaElementSource() here.
-    // File Garden uses a CDN that does not allow CORS preflight (OPTIONS).
-    // createMediaElementSource permanently taints the audio element and blocks
-    // cross-origin playback. EQ filter chain is built but bypassed for remote audio.
-
-    // Apply saved preset values
     const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
     applyPresetGains(savedPreset);
 
     return audioCtx;
   } catch (e) {
-    console.warn("Web Audio setup:", e);
+    console.warn("AudioContext setup:", e);
     return null;
   }
 }
@@ -217,9 +202,7 @@ function applyPresetGains(presetName) {
 }
 
 async function unlockAudioContext() {
-  if (!audioCtx) {
-    initAudioContext();
-  }
+  if (!audioCtx) initAudioContext();
   if (audioCtx && audioCtx.state === "suspended") {
     try {
       await audioCtx.resume();
@@ -246,7 +229,7 @@ function releaseWakeLock() {
   }
 }
 
-// ─── MEDIA SESSION API ────────────────────────────────────────────
+// ─── MEDIA SESSION API (LOCKSCREEN / NOTIFICATIONS) ────────────────
 function initMediaSession() {
   if (!("mediaSession" in navigator)) return;
 
@@ -302,7 +285,7 @@ function updatePositionState() {
   } catch {}
 }
 
-// ─── STATS RECORDER ───────────────────────────────────────────────
+// ─── LISTENING TIME STATS TRACKING ────────────────────────────────
 function capturePlaySeconds() {
   if (playSessionStart > 0) {
     accumulatedPlaySec += (Date.now() - playSessionStart) / 1000;
@@ -318,8 +301,7 @@ async function flushStatsToFirebase() {
   const minutes = Math.max(0.5, Math.round((accumulatedPlaySec / 60) * 2) / 2);
 
   try {
-    const statsStr = localStorage.getItem("musicsaura_local_stats") || "{}";
-    const stats = JSON.parse(statsStr);
+    const stats = JSON.parse(localStorage.getItem("musicsaura_local_stats") || "{}");
     stats.songsPlayed = (stats.songsPlayed || 0) + 1;
     stats.minutesListened = (stats.minutesListened || 0) + minutes;
     localStorage.setItem("musicsaura_local_stats", JSON.stringify(stats));
@@ -335,16 +317,15 @@ async function flushStatsToFirebase() {
         lastActive: new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }) + " IST"
       });
     } catch (err) {
-      console.warn("Could not sync play stats:", err);
+      console.warn("Stats sync warning:", err);
     }
   }
 }
 
-// ─── GAPLESS PRELOADER & STANDBY WARMUP ────────────────────────────
+// ─── NEXT TRACK PRE-WARMING ────────────────────────────────────────
 function warmupStandbyNextTrack() {
   if (playlist.length <= 1) return;
 
-  // On slow 2G/3G networks or Data Saver mode, preserve bandwidth exclusively for the active song!
   const conn = navigator.connection;
   if (conn && (conn.saveData || conn.effectiveType === "2g" || conn.effectiveType === "slow-2g")) {
     standbyAudio.preload = "none";
@@ -363,7 +344,7 @@ function warmupStandbyNextTrack() {
   }
 }
 
-// ─── CROSSFADE TRANSITION CONTROLLER ──────────────────────────────
+// ─── ADVANCED CROSSFADE TRANSITION ────────────────────────────────
 function startCrossfadeTransition() {
   if (isCrossfading || playlist.length <= 1 || repeatMode === "one") return;
   isCrossfading = true;
@@ -384,7 +365,6 @@ function startCrossfadeTransition() {
   standbyAudio.volume = 0;
   standbyAudio.playbackRate = playbackRate;
 
-  // Start fading in standby and fading out active
   standbyAudio.play().then(() => {
     const fadeSteps = 20;
     const stepTime = (crossfadeSeconds * 1000) / fadeSteps;
@@ -394,13 +374,12 @@ function startCrossfadeTransition() {
       step++;
       const progress = step / fadeSteps;
 
-      activeAudio.volume = clamp(masterVolume * (1 - progress), 0, 1);
+      activeAudio.volume  = clamp(masterVolume * (1 - progress), 0, 1);
       standbyAudio.volume = clamp(masterVolume * progress, 0, 1);
 
       if (step >= fadeSteps) {
         clearInterval(fadeTimer);
 
-        // Swap primary & standby audio references
         activeAudio.pause();
         activeAudio.currentTime = 0;
         activeAudio.volume = masterVolume;
@@ -410,7 +389,6 @@ function startCrossfadeTransition() {
         standbyAudio = temp;
         window._musicsaura_audio = activeAudio;
 
-        // Update state to next song
         currentIndex = nextIdx;
         currentSong = nextSong;
         isCrossfading = false;
@@ -419,17 +397,16 @@ function startCrossfadeTransition() {
         updateMediaSession(currentSong);
         updateUI();
 
-        // Warm up the new standby
         warmupStandbyNextTrack();
       }
     }, stepTime);
   }).catch((e) => {
-    console.warn("Crossfade play:", e);
+    console.warn("Crossfade playback:", e);
     isCrossfading = false;
   });
 }
 
-// ─── UI SYNC & NOTIFICATIONS ──────────────────────────────────────
+// ─── UI SYNCHRONIZATION ────────────────────────────────────────────
 function emitStateChange() {
   const state = player.getState();
   stateListeners.forEach((fn) => {
@@ -443,7 +420,7 @@ function updateUI() {
     if (currentSong) playerEl.classList.add("visible");
   }
 
-  if (titleEl) titleEl.textContent = currentSong?.title || "Select a track";
+  if (titleEl)  titleEl.textContent  = currentSong?.title || "Select a track";
   if (artistEl) artistEl.textContent = currentSong?.artist || "MusicsAura";
 
   if (thumbEl) {
@@ -469,7 +446,6 @@ function updateUI() {
     shuffleBtnEl.classList.toggle("active", isShuffle);
   }
 
-  // Active song card indicator
   document.querySelectorAll(".song-card").forEach((card) => {
     const isPlayingThis = currentSong && card.dataset.id === (currentSong.id || currentSong.link);
     card.classList.toggle("is-playing", !!isPlayingThis);
@@ -484,7 +460,7 @@ function updateProgress() {
   const dur = activeAudio.duration || 0;
 
   if (currentTimeEl) currentTimeEl.textContent = formatTime(cur);
-  if (durationEl) durationEl.textContent = formatTime(dur);
+  if (durationEl)    durationEl.textContent    = formatTime(dur);
 
   if (Number.isFinite(dur) && dur > 0) {
     const pct = clamp((cur / dur) * 100, 0, 100);
@@ -496,7 +472,7 @@ function updateProgress() {
   }
 }
 
-// ─── ATTACH AUDIO LISTENERS ───────────────────────────────────────
+// ─── AUDIO NODE EVENT HANDLING ────────────────────────────────────
 function wireAudioEvents(audioNode) {
   audioNode.onplay = () => {
     userPaused = false;
@@ -520,14 +496,12 @@ function wireAudioEvents(audioNode) {
     const dur = audioNode.duration;
     const cur = audioNode.currentTime;
 
-    // Trigger crossfade when remaining time matches crossfadeSeconds
     if (crossfadeSeconds > 0 && dur && (dur - cur <= crossfadeSeconds) && !isCrossfading && playlist.length > 1 && repeatMode !== "one") {
       startCrossfadeTransition();
-    } else if (dur && (dur - cur <= 12) && !isCrossfading) {
+    } else if (dur && (dur - cur <= 10) && !isCrossfading) {
       warmupStandbyNextTrack();
     }
 
-    // Check stats threshold
     if (playSessionStart > 0 && !hasRecordedStat) {
       const currentSessionSec = (Date.now() - playSessionStart) / 1000;
       if (accumulatedPlaySec + currentSessionSec >= STATS_MIN_PLAY_SECONDS) {
@@ -549,16 +523,7 @@ function wireAudioEvents(audioNode) {
   };
 
   audioNode.onerror = (e) => {
-    console.warn("Audio node error:", e, audioNode.error);
-    if (audioNode.error && audioNode.error.code === 4 && !audioNode._retried) {
-      audioNode._retried = true;
-      audioNode.removeAttribute("crossorigin");
-      setTimeout(() => {
-        audioNode.load();
-        audioNode.play().catch(() => {});
-      }, 300);
-      return;
-    }
+    console.warn("Audio node playback error:", e, audioNode.error);
     if (!userPaused && playlist.length > 1 && !isCrossfading) {
       setTimeout(() => player.next(true), 1500);
     }
@@ -567,12 +532,12 @@ function wireAudioEvents(audioNode) {
 
 wireAudioEvents(activeAudio);
 
-// Restore initial volume
-activeAudio.volume = masterVolume;
+// Volume initialization
+activeAudio.volume  = masterVolume;
 standbyAudio.volume = 0;
 if (volumeSlider) volumeSlider.value = Math.round(masterVolume * 100);
 
-// ─── CORE PLAYER API ──────────────────────────────────────────────
+// ─── EXPORTED PLAYER API ──────────────────────────────────────────
 export const player = {
   subscribe(fn) {
     stateListeners.add(fn);
@@ -609,17 +574,17 @@ export const player = {
   },
 
   prefetchAudioStream(link) {
-    // No-op: let main audio stream handle bandwidth with 100% priority
+    // Kept for backward compatibility
   },
 
   async playSong(song, playlistContext = null, index = null) {
     if (!song || !song.link) return;
 
     await flushStatsToFirebase();
-    hasRecordedStat = false;
+    hasRecordedStat    = false;
     accumulatedPlaySec = 0;
-    playSessionStart = 0;
-    isCrossfading = false;
+    playSessionStart   = 0;
+    isCrossfading      = false;
 
     currentSong = song;
 
@@ -636,13 +601,15 @@ export const player = {
     if (!cleanUrl) return;
 
     let streamUrl = cleanUrl;
+
+    // Check offline Cache Storage for downloaded tracks
     try {
       if ("caches" in window) {
         const cache = await caches.open("musicsaura-pwa-storage-v2");
         const cachedRes = await cache.match(cleanUrl);
         if (cachedRes && (cachedRes.ok || cachedRes.status === 200)) {
           const blob = await cachedRes.blob();
-          if (blob && blob.size > 10240) { // Only use valid audio blobs (> 10KB)
+          if (blob && blob.size > 10240) {
             streamUrl = URL.createObjectURL(blob);
           } else {
             await cache.delete(cleanUrl);
@@ -652,10 +619,10 @@ export const player = {
         }
       }
     } catch (e) {
-      console.warn("Offline cache check:", e);
+      console.warn("Offline check:", e);
     }
 
-    // Direct Audio Stream Assignment
+    // Assign source directly
     if (activeAudio.src !== streamUrl) {
       activeAudio.src = streamUrl;
     }
@@ -670,24 +637,16 @@ export const player = {
       const playPromise = activeAudio.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
-          console.warn("Playback gesture required:", err);
+          console.warn("Gesture required:", err);
           updateUI();
         });
       }
     } catch (err) {
-      console.warn("Playback gesture required:", err);
+      console.warn("Playback gesture:", err);
       updateUI();
     }
 
     warmupStandbyNextTrack();
-
-    // Pre-warm the track after next for instant skipping
-    if (playlist.length > 2) {
-      const afterNextIdx = (currentIndex + 2) % playlist.length;
-      if (playlist[afterNextIdx]?.link) {
-        player.prefetchAudioStream(playlist[afterNextIdx].link);
-      }
-    }
   },
 
   async play() {
@@ -781,7 +740,7 @@ export const player = {
 
   setPlaybackSpeed(speed) {
     playbackRate = clamp(parseFloat(speed) || 1.0, 0.5, 2.0);
-    activeAudio.playbackRate = playbackRate;
+    activeAudio.playbackRate  = playbackRate;
     standbyAudio.playbackRate = playbackRate;
     localStorage.setItem(SPEED_STORAGE_KEY, String(playbackRate));
     player.showToast(`⏩ Playback speed: ${playbackRate}x`);
@@ -792,54 +751,25 @@ export const player = {
     if (!subBassFilter || !bassFilter || !midFilter || !presenceFilter || !trebleFilter) return;
 
     localStorage.setItem(EQ_PRESET_KEY, presetName);
+    applyPresetGains(presetName);
 
     switch (presetName.toLowerCase()) {
-      case "bass": // Mega Sub-Bass & Low-End Punch
-        subBassFilter.gain.value = 11;
-        bassFilter.gain.value = 7;
-        midFilter.gain.value = 0;
-        presenceFilter.gain.value = 2;
-        trebleFilter.gain.value = 3;
+      case "bass":
         player.showToast("🔥 Bass Boost Active (+11dB Sub-Bass)");
         break;
-      case "vocal": // Crystal Vocals
-        subBassFilter.gain.value = -3;
-        bassFilter.gain.value = -1;
-        midFilter.gain.value = 8;
-        presenceFilter.gain.value = 5;
-        trebleFilter.gain.value = 2;
+      case "vocal":
         player.showToast("🎤 Vocal Focus Active");
         break;
-      case "acoustic": // Natural Warmth
-        subBassFilter.gain.value = 3;
-        bassFilter.gain.value = 4;
-        midFilter.gain.value = 3;
-        presenceFilter.gain.value = 4;
-        trebleFilter.gain.value = 5;
+      case "acoustic":
         player.showToast("🎸 Acoustic Warmth Active");
         break;
-      case "electronic": // Club & EDM
-        subBassFilter.gain.value = 10;
-        bassFilter.gain.value = 6;
-        midFilter.gain.value = -1;
-        presenceFilter.gain.value = 4;
-        trebleFilter.gain.value = 7;
+      case "electronic":
         player.showToast("🪩 Club / EDM Profile Active");
         break;
-      case "rock": // Rock Swag
-        subBassFilter.gain.value = 7;
-        bassFilter.gain.value = 5;
-        midFilter.gain.value = 3;
-        presenceFilter.gain.value = 6;
-        trebleFilter.gain.value = 4;
+      case "rock":
         player.showToast("⚡ Rock & Swag Profile Active");
         break;
-      default: // Pure flat reference
-        subBassFilter.gain.value = 0;
-        bassFilter.gain.value = 0;
-        midFilter.gain.value = 0;
-        presenceFilter.gain.value = 0;
-        trebleFilter.gain.value = 0;
+      default:
         player.showToast("🎧 Pure Flat Studio Reference");
         break;
     }
@@ -934,7 +864,7 @@ export const player = {
   }
 };
 
-// ─── HARDWARE / EVENT BINDINGS ────────────────────────────────────
+// ─── HARDWARE & BROWSER EVENT BINDINGS ─────────────────────────────
 initMediaSession();
 
 ["click", "touchend"].forEach((evt) => {
@@ -945,10 +875,10 @@ initMediaSession();
   }, { once: true, passive: true });
 });
 
-if (playBtnEl) playBtnEl.onclick = () => player.togglePlay();
-if (prevBtn) prevBtn.onclick = () => player.prev();
-if (nextBtn) nextBtn.onclick = () => player.next();
-if (repeatBtnEl) repeatBtnEl.onclick = () => player.cycleRepeat();
+if (playBtnEl)    playBtnEl.onclick    = () => player.togglePlay();
+if (prevBtn)      prevBtn.onclick      = () => player.prev();
+if (nextBtn)      nextBtn.onclick      = () => player.next();
+if (repeatBtnEl)  repeatBtnEl.onclick  = () => player.cycleRepeat();
 if (shuffleBtnEl) shuffleBtnEl.onclick = () => player.toggleShuffle();
 
 if (seekBar) {
@@ -956,7 +886,7 @@ if (seekBar) {
     isSeeking = true;
     if (Number.isFinite(activeAudio.duration) && activeAudio.duration > 0) {
       const sec = (seekBar.value / 100) * activeAudio.duration;
-      if (progressFill) progressFill.style.width = `${seekBar.value}%`;
+      if (progressFill)  progressFill.style.width = `${seekBar.value}%`;
       if (currentTimeEl) currentTimeEl.textContent = formatTime(sec);
     }
   });
