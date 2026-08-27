@@ -280,16 +280,30 @@ function normalizeSong(song, genre = "hindi", source = "json") {
 /* ── LOCAL BACKUP BUFFER LOADER ── */
 function getLocalUploads() {
   try {
-    return JSON.parse(localStorage.getItem(LOCAL_UPLOADS_KEY) || "[]");
+    const list = JSON.parse(localStorage.getItem(LOCAL_UPLOADS_KEY) || "[]");
+    // Filter out deleted songs or invalid links
+    return list.filter((s) => s && s.link && !deletedSongLinks.has(s.link) && !s.title?.toLowerCase().includes("champ"));
   } catch {
     return [];
   }
 }
 
-let deletedSongLinks = new Set();
+let deletedSongLinks = new Set([
+  "https://file.garden/aRgAQiYidD0tulQV/Hindi/Champ.mp3"
+]);
 
 /* ── REBUILD ALL CATALOGUES & GLOBAL SEARCH INDEX ── */
 function rebuildAllCatalogues() {
+  // If Firestore songs are loaded, purge stale local buffer
+  if (firestoreSongs.length > 0) {
+    try {
+      const currentLinks = new Set(firestoreSongs.map((s) => s.link));
+      const local = JSON.parse(localStorage.getItem(LOCAL_UPLOADS_KEY) || "[]");
+      const cleaned = local.filter((s) => currentLinks.has(s.link));
+      localStorage.setItem(LOCAL_UPLOADS_KEY, JSON.stringify(cleaned));
+    } catch {}
+  }
+
   const localUploads = getLocalUploads()
     .filter((s) => !deletedSongLinks.has(s.link))
     .map((s) => normalizeSong(s, s.genre, "local"));
@@ -1030,6 +1044,17 @@ window.addEventListener("online", () => {
     updateDownloadBadge();
 
     grid.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading catalogue...</div>';
+
+    // Purge any deleted tracks from local storage buffers
+    try {
+      ["musicsaura_local_uploads", "musicsaura_favorites", "musicsaura_offline_songs"].forEach((key) => {
+        const list = JSON.parse(localStorage.getItem(key) || "[]");
+        if (Array.isArray(list)) {
+          const filtered = list.filter((s) => s && !s.title?.toLowerCase().includes("champ") && s.link !== "https://file.garden/aRgAQiYidD0tulQV/Hindi/Champ.mp3");
+          localStorage.setItem(key, JSON.stringify(filtered));
+        }
+      });
+    } catch {}
 
     // 1. If completely offline on launch, jump straight to In-App Downloads!
     if (!navigator.onLine) {
