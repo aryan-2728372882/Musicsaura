@@ -96,14 +96,28 @@
           <input type="url" id="creator-audio-url" class="form-input" placeholder="https://file.garden/aRgAQiYidD0tulQV/Hindi/Song_Name.mp3" required>
         </div>
 
-        <!-- Select MP3 File Button -->
-        <div style="margin:0.6rem 0 1.2rem;display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap">
-          <button type="button" id="btn-select-audio-file" class="btn-primary" style="background:var(--surface-raised);border:1px solid var(--border-strong);color:var(--text-primary);box-shadow:none;display:inline-flex;align-items:center;gap:8px;padding:0.7rem 1.25rem;font-size:0.9rem;border-radius:var(--radius-full);cursor:pointer">
-            <span class="material-icons" style="font-size:1.2rem;color:var(--violet-light)">audio_file</span>
-            <span>Select Your MP3 File (.mp3, .m4a, .wav)</span>
-          </button>
-          <span id="selected-file-label" style="font-size:0.84rem;color:var(--text-muted)">No file chosen yet</span>
-          <input type="file" id="quick-audio-picker" accept=".mp3,.m4a,.wav,.flac,.aac,audio/*" style="display:none">
+        <!-- Select MP3 File Button & Dynamic Folder Link -->
+        <div style="margin:0.6rem 0 1.2rem;display:flex;flex-direction:column;gap:0.6rem">
+          <div style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap">
+            <button type="button" id="btn-select-audio-file" class="btn-primary" style="background:var(--surface-raised);border:1px solid var(--border-strong);color:var(--text-primary);box-shadow:none;display:inline-flex;align-items:center;gap:8px;padding:0.7rem 1.25rem;font-size:0.9rem;border-radius:var(--radius-full);cursor:pointer">
+              <span class="material-icons" style="font-size:1.2rem;color:var(--violet-light)">audio_file</span>
+              <span>Select Your MP3 File (.mp3, .m4a, .wav)</span>
+            </button>
+            <span id="selected-file-label" style="font-size:0.84rem;color:var(--text-muted)">No file chosen yet</span>
+            <input type="file" id="quick-audio-picker" accept=".mp3,.m4a,.wav,.flac,.aac,audio/*" style="display:none">
+          </div>
+
+          <div id="filegarden-guide-box" style="padding:0.8rem 1rem;background:rgba(34,211,238,0.08);border:1px solid rgba(34,211,238,0.25);border-radius:var(--radius-md);font-size:0.82rem;color:var(--text-secondary);line-height:1.5">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem">
+              <div>
+                <strong style="color:var(--cyan)">📌 File Garden Upload Reminder:</strong> Drag & drop your MP3 into your File Garden folder so it's live on the internet!
+              </div>
+              <a id="dynamic-folder-link" href="https://file.garden/aRgAQiYidD0tulQV/Hindi" target="_blank" rel="noopener" class="genre-pill" style="background:var(--cyan);color:#07070e;font-weight:700;font-size:0.78rem;border:none">
+                <span class="material-icons" style="font-size:0.95rem">open_in_new</span>
+                Open Hindi File Garden Folder
+              </a>
+            </div>
+          </div>
         </div>
 
         <!-- 3. AUTO-DETECTED METADATA PREVIEW & EDIT -->

@@ -171,6 +171,7 @@ if (audioUrlInput) {
     const detectedGenre = detectGenreFromUrl(url);
     if (detectedGenre && genreSelect) {
       genreSelect.value = detectedGenre;
+      updateFolderLink(detectedGenre);
     }
 
     clearTimeout(autoFetchDebounce);
@@ -178,6 +179,21 @@ if (audioUrlInput) {
       triggerAutoFetch(cleanTitle);
     }, 350);
   });
+}
+
+const dynamicFolderLink = document.getElementById("dynamic-folder-link");
+function updateFolderLink(genre) {
+  const g = (genre || "hindi").toLowerCase();
+  const folderUrl = FILE_GARDEN_FOLDERS[g] || FILE_GARDEN_FOLDERS.hindi;
+  if (dynamicFolderLink) {
+    dynamicFolderLink.href = folderUrl;
+    const name = g.charAt(0).toUpperCase() + g.slice(1);
+    dynamicFolderLink.innerHTML = `<span class="material-icons" style="font-size:0.95rem">open_in_new</span> Open ${name} File Garden Folder`;
+  }
+}
+
+if (genreSelect) {
+  genreSelect.addEventListener("change", () => updateFolderLink(genreSelect.value));
 }
 
 if (manualFetchBtn) {
