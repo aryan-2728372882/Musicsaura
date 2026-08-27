@@ -348,6 +348,14 @@ async function flushStatsToFirebase() {
 // ─── GAPLESS PRELOADER & STANDBY WARMUP ────────────────────────────
 function warmupStandbyNextTrack() {
   if (playlist.length <= 1) return;
+
+  // On slow 2G/3G networks or Data Saver mode, preserve bandwidth exclusively for the active song!
+  const conn = navigator.connection;
+  if (conn && (conn.saveData || conn.effectiveType === "2g" || conn.effectiveType === "slow-2g")) {
+    standbyAudio.preload = "none";
+    return;
+  }
+
   const nextIdx = (currentIndex + 1) % playlist.length;
   const nextSong = playlist[nextIdx];
   if (!nextSong?.link) return;
@@ -355,7 +363,7 @@ function warmupStandbyNextTrack() {
   const url = normalizeUrl(nextSong.link);
   if (standbyAudio.src !== url) {
     standbyAudio.src = url;
-    standbyAudio.load();
+    standbyAudio.preload = "metadata";
     standbyAudio.volume = 0;
   }
 }

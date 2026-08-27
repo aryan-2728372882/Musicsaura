@@ -375,7 +375,7 @@ function createCard(song, index) {
 
   el.innerHTML = `
     <div class="card-img-wrap">
-      <img src="${escapeHtml(song.thumbnail)}" loading="lazy" alt="${escapeHtml(song.title)}" onerror="this.src='assets/logo.png'">
+      <img src="${escapeHtml(song.thumbnail)}" loading="lazy" decoding="async" alt="${escapeHtml(song.title)}" onerror="this.src='assets/logo.png'">
       <div class="card-play-overlay">
         <span class="material-icons play-icon">${isPlayingThis && playerState.isPlaying ? "pause" : "play_arrow"}</span>
       </div>
@@ -413,19 +413,36 @@ function createCard(song, index) {
   return el;
 }
 
-/* ── RENDER SONG LIST ── */
+/* ── HIGH-SPEED PROGRESSIVE RENDERER ── */
 function renderSongList(container, songs, emptyMsg = "No tracks available.") {
-  const frag = document.createDocumentFragment();
+  container._songs = songs;
+
   if (!songs.length) {
     const p = document.createElement("div");
     p.className = "state-msg empty-msg";
     p.innerHTML = `<span class="material-icons" style="font-size:2.5rem;display:block;margin-bottom:0.5rem;opacity:0.6">library_music</span>${escapeHtml(emptyMsg)}`;
-    frag.appendChild(p);
-  } else {
-    songs.forEach((song, i) => frag.appendChild(createCard(song, i)));
+    container.replaceChildren(p);
+    return;
   }
+
+  // 1. Render first 16 cards instantly for 0ms initial paint on 3G
+  const INITIAL_BATCH = 16;
+  const frag = document.createDocumentFragment();
+  const firstBatch = songs.slice(0, INITIAL_BATCH);
+  firstBatch.forEach((song, i) => frag.appendChild(createCard(song, i)));
   container.replaceChildren(frag);
-  container._songs = songs;
+
+  // 2. Append remaining cards smoothly in background chunks
+  if (songs.length > INITIAL_BATCH) {
+    const remaining = songs.slice(INITIAL_BATCH);
+    const scheduleNext = (window.requestIdleCallback || window.requestAnimationFrame);
+    scheduleNext(() => {
+      if (container._songs !== songs) return; // genre switched in between
+      const remFrag = document.createDocumentFragment();
+      remaining.forEach((song, idx) => remFrag.appendChild(createCard(song, INITIAL_BATCH + idx)));
+      container.appendChild(remFrag);
+    });
+  }
 }
 
 /* ── HERO BANNER UPDATE ── */
@@ -956,16 +973,20 @@ window.addEventListener("online", () => {
       return;
     }
 
-    // 1. Fetch live uploaded Firestore songs
-    await fetchFirestoreSongs();
-
-    // 2. Load default genre
+    // 1. Instant Render: Load default genre catalogue in 0ms from local JSON/Cache
     await loadGenre(DEFAULT_GENRE);
     renderGenre(DEFAULT_GENRE);
 
-    // 3. Background pre-fetch remaining genres
-    const otherGenres = Object.keys(GENRE_FILES).filter((g) => g !== DEFAULT_GENRE);
-    Promise.allSettled(otherGenres.map((g) => loadGenre(g)));
+    // 2. Background Asynchronous: Fetch new Firestore uploads & pre-fetch other genres
+    (async () => {
+      await fetchFirestoreSongs();
+      if (activeGenre !== "offline" && activeGenre !== "favorites") {
+        await loadGenre(activeGenre);
+        renderGenre(activeGenre);
+      }
+      const otherGenres = Object.keys(GENRE_FILES).filter((g) => g !== DEFAULT_GENRE);
+      Promise.allSettled(otherGenres.map((g) => loadGenre(g)));
+    })();
 
   } catch (err) {
     console.warn("App init fallback to offline:", err);
