@@ -943,8 +943,12 @@ export const player = {
 // ─── HARDWARE / EVENT BINDINGS ────────────────────────────────────
 initMediaSession();
 
-["click", "touchstart", "keydown"].forEach((evt) => {
-  document.addEventListener(evt, () => unlockAudioContext(), { once: true, passive: true });
+["click", "touchend"].forEach((evt) => {
+  document.addEventListener(evt, () => {
+    if (audioCtx && audioCtx.state === "suspended") {
+      audioCtx.resume().catch(() => {});
+    }
+  }, { once: true, passive: true });
 });
 
 if (playBtnEl) playBtnEl.onclick = () => player.togglePlay();
