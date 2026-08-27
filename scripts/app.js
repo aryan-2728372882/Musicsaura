@@ -389,9 +389,8 @@ async function loadRawJson(genre) {
 /* ── REAL-TIME FIRESTORE SYNCHRONIZATION ── */
 function subscribeToFirestoreSongs() {
   try {
-    // 1. Subscribe to published songs
-    const q = query(collection(db, "songs"), orderBy("createdAt", "desc"));
-    onSnapshot(q, (snap) => {
+    // 1. Subscribe to published songs (query whole collection so all uploaded songs are received)
+    onSnapshot(collection(db, "songs"), (snap) => {
       firestoreSongs = [];
       snap.forEach((docSnap) => {
         const data = docSnap.data();
@@ -402,9 +401,31 @@ function subscribeToFirestoreSongs() {
           }
         }
       });
+
+      // Sort client-side: newest uploads first
+      firestoreSongs.sort((a, b) => {
+        const tA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (typeof a.createdAt === "number" ? a.createdAt : 0);
+        const tB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (typeof b.createdAt === "number" ? b.createdAt : 0);
+        return tB - tA;
+      });
+
       rebuildAllCatalogues();
-    }, (err) => {
-      console.warn("Firestore onSnapshot error:", err);
+    }, async (err) => {
+      console.warn("Firestore onSnapshot error, falling back to getDocs:", err);
+      try {
+        const snap = await getDocs(collection(db, "songs"));
+        firestoreSongs = [];
+        snap.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data && data.link && !deletedSongLinks.has(data.link)) {
+            const norm = normalizeSong({ id: docSnap.id, ...data }, data.genre, "firestore");
+            if (norm && norm.link) firestoreSongs.push(norm);
+          }
+        });
+        rebuildAllCatalogues();
+      } catch (e) {
+        console.warn("getDocs fallback failed:", e);
+      }
     });
 
     // 2. Subscribe to deleted songs blacklist

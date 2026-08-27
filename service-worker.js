@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine
-const APP_SHELL_CACHE = "musicsaura-shell-v3";
+const APP_SHELL_CACHE = "musicsaura-shell-v4";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v1";
 
 const PRECACHE_ASSETS = [
@@ -28,9 +28,7 @@ self.addEventListener("install", (event) => {
       for (const asset of PRECACHE_ASSETS) {
         try {
           await cache.add(new Request(asset, { cache: "reload" }));
-        } catch (e) {
-          // Precache non-blocking
-        }
+        } catch {}
       }
     })
   );
@@ -69,7 +67,7 @@ self.addEventListener("fetch", (event) => {
 
           return await fetch(request);
         } catch {
-          return new Response("", { status: 504, statusText: "Offline" });
+          return new Response("", { status: 200 });
         }
       })()
     );
@@ -79,7 +77,7 @@ self.addEventListener("fetch", (event) => {
   // Only handle same-origin assets through cache; let third-party pass through
   if (url.origin !== self.location.origin) return;
 
-  // 2. Navigation Request (App Open / Page Load)
+  // 2. Navigation Request (App Open / Page Load) — Network first, fallback to cached file
   if (request.mode === "navigate") {
     event.respondWith(
       (async () => {
@@ -93,7 +91,10 @@ self.addEventListener("fetch", (event) => {
         } catch {}
 
         const cache = await caches.open(APP_SHELL_CACHE);
-        const cached = (await cache.match(request)) || (await cache.match(url.pathname)) || (await cache.match("/index.html")) || (await cache.match("/"));
+        const cached = (await cache.match(request, { ignoreSearch: true })) ||
+                       (await cache.match(url.pathname, { ignoreSearch: true })) ||
+                       (await cache.match("/index.html")) ||
+                       (await cache.match("/"));
         if (cached) return cached;
 
         return new Response("MusicsAura Offline Mode", {
@@ -105,14 +106,15 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 3. App Shell Files (Scripts, Styles, JSONs, Images) — Stale While Revalidate
+  // 3. App Shell Files (Scripts, Styles, JSONs, Images) — Cache first with background network update
   event.respondWith(
     (async () => {
       try {
         const cache = await caches.open(APP_SHELL_CACHE);
-        const cached = (await cache.match(request)) || (await cache.match(url.pathname));
+        const cached = (await cache.match(request, { ignoreSearch: true })) ||
+                       (await cache.match(url.pathname, { ignoreSearch: true }));
 
-        const fetchPromise = fetch(request).then((networkRes) => {
+        const networkPromise = fetch(request).then((networkRes) => {
           if (networkRes && networkRes.ok && request.method === "GET") {
             cache.put(request, networkRes.clone());
           }
@@ -123,12 +125,15 @@ self.addEventListener("fetch", (event) => {
           return cached;
         }
 
-        const networkRes = await fetchPromise;
+        const networkRes = await networkPromise;
         if (networkRes) return networkRes;
 
-        return new Response("", { status: 504, statusText: "Gateway Timeout" });
+        const fallback = (await cache.match("/index.html")) || (await cache.match("/"));
+        if (fallback) return fallback;
+
+        return new Response("", { status: 200 });
       } catch {
-        return new Response("", { status: 504, statusText: "Offline" });
+        return new Response("", { status: 200 });
       }
     })()
   );
