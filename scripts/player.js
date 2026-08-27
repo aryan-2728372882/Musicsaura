@@ -128,10 +128,10 @@ function normalizeUrl(url) {
 
 // ─── WEB AUDIO API 5-BAND EQUALIZER & VISUALIZER SETUP ─────────────
 function initAudioContext() {
-  if (audioCtx) return;
+  if (audioCtx) return audioCtx;
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return;
+    if (!AudioContextClass) return null;
 
     audioCtx = new AudioContextClass();
 
@@ -186,17 +186,45 @@ function initAudioContext() {
       sourceB.connect(subBassFilter);
     }
 
-    // Apply saved preset
+    // Apply saved preset values quietly
     const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
-    player.setEqualizerPreset(savedPreset);
+    applyPresetGains(savedPreset);
 
+    return audioCtx;
   } catch (e) {
     console.warn("Web Audio setup:", e);
+    return null;
+  }
+}
+
+function applyPresetGains(presetName) {
+  if (!subBassFilter || !bassFilter || !midFilter || !presenceFilter || !trebleFilter) return;
+  switch (presetName.toLowerCase()) {
+    case "bass":
+      subBassFilter.gain.value = 11; bassFilter.gain.value = 7; midFilter.gain.value = 0; presenceFilter.gain.value = 2; trebleFilter.gain.value = 3;
+      break;
+    case "vocal":
+      subBassFilter.gain.value = -3; bassFilter.gain.value = -1; midFilter.gain.value = 8; presenceFilter.gain.value = 5; trebleFilter.gain.value = 2;
+      break;
+    case "acoustic":
+      subBassFilter.gain.value = 3; bassFilter.gain.value = 4; midFilter.gain.value = 3; presenceFilter.gain.value = 4; trebleFilter.gain.value = 5;
+      break;
+    case "electronic":
+      subBassFilter.gain.value = 10; bassFilter.gain.value = 6; midFilter.gain.value = -1; presenceFilter.gain.value = 4; trebleFilter.gain.value = 7;
+      break;
+    case "rock":
+      subBassFilter.gain.value = 7; bassFilter.gain.value = 5; midFilter.gain.value = 3; presenceFilter.gain.value = 6; trebleFilter.gain.value = 4;
+      break;
+    default:
+      subBassFilter.gain.value = 0; bassFilter.gain.value = 0; midFilter.gain.value = 0; presenceFilter.gain.value = 0; trebleFilter.gain.value = 0;
+      break;
   }
 }
 
 async function unlockAudioContext() {
-  initAudioContext();
+  if (!audioCtx) {
+    initAudioContext();
+  }
   if (audioCtx && audioCtx.state === "suspended") {
     try {
       await audioCtx.resume();
@@ -913,7 +941,6 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     if (!activeAudio.paused) acquireWakeLock();
   } else {
-    unlockAudioContext();
     if (!activeAudio.paused) updateMediaSession(currentSong);
   }
 });
