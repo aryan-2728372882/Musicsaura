@@ -71,11 +71,12 @@ function cleanFilenameToTitle(urlOrFilename) {
 }
 
 function detectGenreFromUrl(url) {
+  if (!url) return null;
   const lower = url.toLowerCase();
-  if (lower.includes("/hindi/") || lower.includes("hindi")) return "hindi";
-  if (lower.includes("/punjabi/") || lower.includes("punjabi")) return "punjabi";
   if (lower.includes("/haryanvi/") || lower.includes("haryanvi")) return "haryanvi";
-  return "hindi";
+  if (lower.includes("/punjabi/") || lower.includes("punjabi")) return "punjabi";
+  if (lower.includes("/hindi/") || lower.includes("hindi")) return "hindi";
+  return null;
 }
 
 // ─── ITUNES METADATA & HD ARTWORK FETCHER ──────────────────────────
@@ -146,11 +147,11 @@ function handleAudioSelection(file) {
   const cleanTitle = cleanFilenameToTitle(file.name);
   titleInput.value = cleanTitle;
 
-  const currentGenre = genreSelect.value || "hindi";
+  const currentGenre = (genreSelect ? genreSelect.value : "hindi").toLowerCase();
   const baseFolder = FILE_GARDEN_FOLDERS[currentGenre] || FILE_GARDEN_FOLDERS.hindi;
   const encodedName = encodeURIComponent(file.name);
 
-  // Auto-generate the File Garden stream URL
+  // Auto-generate the File Garden stream URL matching selected genre
   audioUrlInput.value = `${baseFolder}${encodedName}`;
 
   triggerAutoFetch(cleanTitle);
@@ -168,9 +169,9 @@ if (audioUrlInput) {
       titleInput.value = cleanTitle;
     }
 
-    // Auto detect genre
+    // Auto detect genre ONLY if clearly specified in URL
     const detectedGenre = detectGenreFromUrl(url);
-    if (detectedGenre && genreSelect) {
+    if (detectedGenre && genreSelect && genreSelect.value !== detectedGenre) {
       genreSelect.value = detectedGenre;
       updateFolderLink(detectedGenre);
     }
@@ -194,7 +195,20 @@ function updateFolderLink(genre) {
 }
 
 if (genreSelect) {
-  genreSelect.addEventListener("change", () => updateFolderLink(genreSelect.value));
+  genreSelect.addEventListener("change", () => {
+    const chosenGenre = genreSelect.value;
+    updateFolderLink(chosenGenre);
+
+    // If an audio link is already present, update its folder to match the new genre!
+    if (audioUrlInput && audioUrlInput.value) {
+      const currentUrl = audioUrlInput.value.trim();
+      const filename = currentUrl.substring(currentUrl.lastIndexOf("/") + 1);
+      if (filename && (currentUrl.includes("file.garden") || !currentUrl.startsWith("http"))) {
+        const baseFolder = FILE_GARDEN_FOLDERS[chosenGenre] || FILE_GARDEN_FOLDERS.hindi;
+        audioUrlInput.value = `${baseFolder}${filename}`;
+      }
+    }
+  });
 }
 
 if (manualFetchBtn) {
