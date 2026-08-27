@@ -253,6 +253,13 @@ function updateHeartIcons(song, isFav) {
 
 /* ── NORMALIZATION ── */
 function normalizeSong(song, genre = "hindi", source = "json") {
+  if (!song || !song.title) return null;
+  const rawTitle = (song.title || "").toLowerCase().trim();
+  const rawLink = (song.link || "").toLowerCase();
+  if (rawTitle === "champ" || rawLink.includes("champ.mp3")) {
+    return null; // Manually excluded
+  }
+
   let kw = song.keywords || [];
   if (typeof kw === "string") kw = kw.split(/[,;]/).map((x) => x.trim());
   else if (Array.isArray(kw)) kw = kw.flatMap((k) => (typeof k === "string" ? k.split(/[,;]/).map((x) => x.trim()) : []));
@@ -486,9 +493,10 @@ function createCard(song, index) {
 
 /* ── HIGH-SPEED PROGRESSIVE RENDERER ── */
 function renderSongList(container, songs, emptyMsg = "No tracks available.") {
-  container._songs = songs;
+  const cleanSongs = (songs || []).filter((s) => s && s.title && s.title.toLowerCase().trim() !== "champ" && !s.link?.toLowerCase().includes("champ.mp3"));
+  container._songs = cleanSongs;
 
-  if (!songs.length) {
+  if (!cleanSongs.length) {
     const p = document.createElement("div");
     p.className = "state-msg empty-msg";
     p.innerHTML = `<span class="material-icons" style="font-size:2.5rem;display:block;margin-bottom:0.5rem;opacity:0.6">library_music</span>${escapeHtml(emptyMsg)}`;
@@ -499,16 +507,16 @@ function renderSongList(container, songs, emptyMsg = "No tracks available.") {
   // 1. Render first 16 cards instantly for 0ms initial paint on 3G
   const INITIAL_BATCH = 16;
   const frag = document.createDocumentFragment();
-  const firstBatch = songs.slice(0, INITIAL_BATCH);
+  const firstBatch = cleanSongs.slice(0, INITIAL_BATCH);
   firstBatch.forEach((song, i) => frag.appendChild(createCard(song, i)));
   container.replaceChildren(frag);
 
   // 2. Append remaining cards smoothly in background chunks
-  if (songs.length > INITIAL_BATCH) {
-    const remaining = songs.slice(INITIAL_BATCH);
+  if (cleanSongs.length > INITIAL_BATCH) {
+    const remaining = cleanSongs.slice(INITIAL_BATCH);
     const scheduleNext = (window.requestIdleCallback || window.requestAnimationFrame);
     scheduleNext(() => {
-      if (container._songs !== songs) return; // genre switched in between
+      if (container._songs !== cleanSongs) return; // genre switched in between
       const remFrag = document.createDocumentFragment();
       remaining.forEach((song, idx) => remFrag.appendChild(createCard(song, INITIAL_BATCH + idx)));
       container.appendChild(remFrag);
