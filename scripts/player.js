@@ -18,6 +18,8 @@ standbyAudio.crossOrigin = "anonymous";
 standbyAudio.setAttribute("playsinline", "");
 standbyAudio.setAttribute("webkit-playsinline", "");
 
+const prefetchedLinks = new Set();
+
 window._musicsaura_audio = activeAudio;
 
 // ─── DOM ELEMENTS ──────────────────────────────────────────────────
