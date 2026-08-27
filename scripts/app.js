@@ -67,6 +67,9 @@ const fsSleepBtn           = document.getElementById("fs-sleep-btn");
 const playerMobileTrigger  = document.getElementById("player-mobile-trigger");
 const expandPlayerBtn      = document.getElementById("expand-player-btn");
 const playerHeartBtn       = document.getElementById("player-heart-btn");
+const playerOfflineBtn     = document.getElementById("player-offline-btn");
+const fsOfflineBtn         = document.getElementById("fs-offline-btn");
+const fsOfflineText        = document.getElementById("fs-offline-text");
 
 /* ── STATE & CONSTANTS ── */
 const GENRE_FILES = {
@@ -142,11 +145,28 @@ export async function toggleOfflineStorage(song) {
 
 function updateOfflineIcons(song, isOff) {
   const songId = song.id || song.link;
+
+  // Grid cards
   document.querySelectorAll(`.song-card[data-id="${songId}"] .card-offline-btn`).forEach((btn) => {
     btn.classList.toggle("active", isOff);
     const icon = btn.querySelector(".material-icons");
     if (icon) icon.textContent = isOff ? "offline_pin" : "offline_bolt";
   });
+
+  // Footer player offline button
+  if (playerOfflineBtn) {
+    playerOfflineBtn.classList.toggle("active", isOff);
+    const icon = playerOfflineBtn.querySelector(".material-icons");
+    if (icon) icon.textContent = isOff ? "offline_pin" : "offline_bolt";
+  }
+
+  // Fullscreen mobile player offline button
+  if (fsOfflineBtn) {
+    fsOfflineBtn.classList.toggle("active", isOff);
+    const icon = fsOfflineBtn.querySelector(".material-icons");
+    if (icon) icon.textContent = isOff ? "offline_pin" : "offline_bolt";
+    if (fsOfflineText) fsOfflineText.textContent = isOff ? "Offline Ready" : "Save Offline";
+  }
 }
 
 /* ── FAVORITES SYSTEM ── */
@@ -522,10 +542,25 @@ if (playerHeartBtn) {
   };
 }
 
+if (playerOfflineBtn) {
+  playerOfflineBtn.onclick = (e) => {
+    e.stopPropagation();
+    const state = player.getState();
+    if (state.currentSong) toggleOfflineStorage(state.currentSong);
+  };
+}
+
 if (fsFavBtn) {
   fsFavBtn.onclick = () => {
     const state = player.getState();
     if (state.currentSong) toggleFavorite(state.currentSong);
+  };
+}
+
+if (fsOfflineBtn) {
+  fsOfflineBtn.onclick = () => {
+    const state = player.getState();
+    if (state.currentSong) toggleOfflineStorage(state.currentSong);
   };
 }
 
@@ -829,6 +864,9 @@ player.subscribe((state) => {
 
     const isFav = isFavorite(state.currentSong);
     updateHeartIcons(state.currentSong, isFav);
+
+    const isOff = isSongOffline(state.currentSong);
+    updateOfflineIcons(state.currentSong, isOff);
   }
 
   if (fsPlayIcon) {

@@ -808,19 +808,33 @@ body.page-scroll {
   border-radius: 50%;
   width: 22px;
   height: 22px;
-  display: none;
+  display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
   cursor: pointer;
+  z-index: 2;
+  transition: transform var(--ease-fast);
 }
 
-@media (min-width: 900px) {
-  .player-fav-btn { display: flex; }
+.player-fav-btn:hover {
+  transform: scale(1.15);
 }
 
 .player-fav-btn.active { color: var(--rose); }
 .player-fav-btn .material-icons { font-size: 0.85rem; }
+
+.player-offline-btn {
+  right: auto;
+  left: -4px;
+  bottom: -4px;
+  color: var(--text-muted);
+}
+
+.player-offline-btn.active {
+  color: var(--cyan);
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.5);
+}
 
 .player-meta {
   min-width: 0;

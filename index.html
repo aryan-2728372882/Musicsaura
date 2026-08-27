@@ -155,8 +155,11 @@
       <div class="player-left" id="player-mobile-trigger" title="Tap to expand">
         <div class="player-thumb-wrap">
           <div class="thumb-placeholder no-thumb" id="player-thumb"></div>
-          <button class="player-fav-btn" id="player-heart-btn" aria-label="Favorite">
+          <button class="player-fav-btn" id="player-heart-btn" aria-label="Favorite" title="Favorite">
             <span class="material-icons">favorite_border</span>
+          </button>
+          <button class="player-fav-btn player-offline-btn" id="player-offline-btn" aria-label="Save in App Storage" title="Save in App Storage for Offline Playback">
+            <span class="material-icons" style="color:var(--cyan)">offline_bolt</span>
           </button>
         </div>
         <div class="player-meta">
@@ -278,6 +281,10 @@
 
     <!-- Fullscreen Bottom Utility Row -->
     <div class="fs-bottom-row">
+      <button id="fs-offline-btn" class="fs-pill-btn" title="Save in App Storage for Offline Listening">
+        <span class="material-icons" style="font-size:1.1rem;margin-right:4px;color:var(--cyan)">offline_bolt</span>
+        <span id="fs-offline-text">Save Offline</span>
+      </button>
       <button id="fs-fx-btn" class="fs-pill-btn">
         <span class="material-icons" style="font-size:1.1rem;margin-right:4px">tune</span>
         EQ Studio
