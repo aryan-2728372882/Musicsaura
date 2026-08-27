@@ -254,11 +254,6 @@ function updateHeartIcons(song, isFav) {
 /* ── NORMALIZATION ── */
 function normalizeSong(song, genre = "hindi", source = "json") {
   if (!song || !song.title) return null;
-  const rawTitle = (song.title || "").toLowerCase().trim();
-  const rawLink = (song.link || "").toLowerCase();
-  if (rawTitle === "champ" || rawLink.includes("champ.mp3")) {
-    return null; // Manually excluded
-  }
 
   let kw = song.keywords || [];
   if (typeof kw === "string") kw = kw.split(/[,;]/).map((x) => x.trim());
@@ -288,15 +283,13 @@ function normalizeSong(song, genre = "hindi", source = "json") {
 function getLocalUploads() {
   try {
     const list = JSON.parse(localStorage.getItem(LOCAL_UPLOADS_KEY) || "[]");
-    return list.filter((s) => s && s.link && !deletedSongLinks.has(s.link) && !s.title?.toLowerCase().includes("champ"));
+    return list.filter((s) => s && s.link && !deletedSongLinks.has(s.link));
   } catch {
     return [];
   }
 }
 
-let deletedSongLinks = new Set([
-  "https://file.garden/aRgAQiYidD0tulQV/Hindi/Champ.mp3"
-]);
+let deletedSongLinks = new Set();
 
 /* ── REBUILD ALL CATALOGUES & GLOBAL SEARCH INDEX ── */
 function rebuildAllCatalogues() {
@@ -515,7 +508,7 @@ function createCard(song, index) {
 
 /* ── HIGH-SPEED PROGRESSIVE RENDERER ── */
 function renderSongList(container, songs, emptyMsg = "No tracks available.") {
-  const cleanSongs = (songs || []).filter((s) => s && s.title && s.title.toLowerCase().trim() !== "champ" && !s.link?.toLowerCase().includes("champ.mp3"));
+  const cleanSongs = (songs || []).filter((s) => s && s.title && s.link);
   container._songs = cleanSongs;
 
   if (!cleanSongs.length) {
@@ -1074,17 +1067,6 @@ window.addEventListener("online", () => {
     updateDownloadBadge();
 
     grid.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading catalogue...</div>';
-
-    // Purge any deleted tracks from local storage buffers
-    try {
-      ["musicsaura_local_uploads", "musicsaura_favorites", "musicsaura_offline_songs"].forEach((key) => {
-        const list = JSON.parse(localStorage.getItem(key) || "[]");
-        if (Array.isArray(list)) {
-          const filtered = list.filter((s) => s && !s.title?.toLowerCase().includes("champ") && s.link !== "https://file.garden/aRgAQiYidD0tulQV/Hindi/Champ.mp3");
-          localStorage.setItem(key, JSON.stringify(filtered));
-        }
-      });
-    } catch {}
 
     // 1. If completely offline on launch, jump straight to In-App Downloads!
     if (!navigator.onLine) {
