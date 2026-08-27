@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine
-const APP_SHELL_CACHE = "musicsaura-shell-v4";
+const APP_SHELL_CACHE = "musicsaura-shell-v6";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v1";
 
 const PRECACHE_ASSETS = [
@@ -34,7 +34,7 @@ self.addEventListener("install", (event) => {
   );
 });
 
-// ─── ACTIVATE: CLEANUP OLD CACHES & CLAIM CLIENTS ─────────────────
+// ─── ACTIVATE: PURGE ALL OLD CACHES IMMEDIATELY ───────────────────
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((names) => {
@@ -49,7 +49,7 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// ─── FETCH: OFFLINE-FIRST STRATEGY ────────────────────────────────
+// ─── FETCH: NETWORK-FIRST STRATEGY (ALWAYS FRESH UPDATES) ─────────
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
@@ -77,64 +77,29 @@ self.addEventListener("fetch", (event) => {
   // Only handle same-origin assets through cache; let third-party pass through
   if (url.origin !== self.location.origin) return;
 
-  // 2. Navigation Request (App Open / Page Load) — Network first, fallback to cached file
-  if (request.mode === "navigate") {
-    event.respondWith(
-      (async () => {
-        try {
-          const networkRes = await fetch(request);
-          if (networkRes && networkRes.ok) {
-            const cache = await caches.open(APP_SHELL_CACHE);
-            cache.put(request, networkRes.clone());
-            return networkRes;
-          }
-        } catch {}
-
-        const cache = await caches.open(APP_SHELL_CACHE);
-        const cached = (await cache.match(request, { ignoreSearch: true })) ||
-                       (await cache.match(url.pathname, { ignoreSearch: true })) ||
-                       (await cache.match("/index.html")) ||
-                       (await cache.match("/"));
-        if (cached) return cached;
-
-        return new Response("MusicsAura Offline Mode", {
-          status: 200,
-          headers: { "content-type": "text/html" }
-        });
-      })()
-    );
-    return;
-  }
-
-  // 3. App Shell Files (Scripts, Styles, JSONs, Images) — Cache first with background network update
+  // 2. Network-First with Cache Fallback (Guarantees freshest scripts & catalogue updates)
   event.respondWith(
     (async () => {
       try {
-        const cache = await caches.open(APP_SHELL_CACHE);
-        const cached = (await cache.match(request, { ignoreSearch: true })) ||
-                       (await cache.match(url.pathname, { ignoreSearch: true }));
-
-        const networkPromise = fetch(request).then((networkRes) => {
-          if (networkRes && networkRes.ok && request.method === "GET") {
-            cache.put(request, networkRes.clone());
-          }
+        const networkRes = await fetch(request);
+        if (networkRes && networkRes.ok) {
+          const cache = await caches.open(APP_SHELL_CACHE);
+          cache.put(request, networkRes.clone());
           return networkRes;
-        }).catch(() => null);
-
-        if (cached) {
-          return cached;
         }
+      } catch {}
 
-        const networkRes = await networkPromise;
-        if (networkRes) return networkRes;
+      const cache = await caches.open(APP_SHELL_CACHE);
+      const cached = (await cache.match(request, { ignoreSearch: true })) ||
+                     (await cache.match(url.pathname, { ignoreSearch: true })) ||
+                     (await cache.match("/index.html")) ||
+                     (await cache.match("/"));
+      if (cached) return cached;
 
-        const fallback = (await cache.match("/index.html")) || (await cache.match("/"));
-        if (fallback) return fallback;
-
-        return new Response("", { status: 200 });
-      } catch {
-        return new Response("", { status: 200 });
-      }
+      return new Response("MusicsAura Offline Mode", {
+        status: 200,
+        headers: { "content-type": "text/html" }
+      });
     })()
   );
 });
