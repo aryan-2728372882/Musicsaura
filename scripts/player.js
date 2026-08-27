@@ -660,10 +660,11 @@ export const player = {
       console.warn("Offline cache check:", e);
     }
 
-    // Ultra-Fast Stream Assignment & Direct Play (0ms latency)
+    // Ultra-Fast Stream Assignment & Direct Play
     if (activeAudio.src !== streamUrl) {
       activeAudio.src = streamUrl;
       activeAudio.preload = "auto";
+      activeAudio.load();
     }
     activeAudio.playbackRate = playbackRate;
     activeAudio.volume = masterVolume;
