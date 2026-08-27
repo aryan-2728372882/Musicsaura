@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine
-const APP_SHELL_CACHE = "musicsaura-shell-v1";
+const APP_SHELL_CACHE = "musicsaura-shell-v2";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v1";
 
 const PRECACHE_ASSETS = [
@@ -22,12 +22,11 @@ const PRECACHE_ASSETS = [
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(APP_SHELL_CACHE).then(async (cache) => {
-      // Precache critical app files quietly
       for (const asset of PRECACHE_ASSETS) {
         try {
           await cache.add(new Request(asset, { cache: "reload" }));
         } catch (e) {
-          console.warn("Precache failed for:", asset, e);
+          console.warn("Precache skipped for:", asset);
         }
       }
       return self.skipWaiting();
@@ -57,53 +56,73 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
 
-  // 1. Check if it's an In-App Downloaded Audio Track from PWA Storage
+  // 1. Audio Streaming & PWA Downloaded Tracks
   if (request.destination === "audio" || /\.(mp3|m4a|aac|wav|ogg|flac)($|\?)/i.test(url.pathname)) {
     event.respondWith(
-      caches.open(OFFLINE_PWA_STORAGE).then(async (pwaCache) => {
-        const cachedTrack = await pwaCache.match(request);
-        if (cachedTrack) {
-          return cachedTrack;
-        }
-        // If not in offline PWA storage, stream natively from network
-        return fetch(request).catch(() => {
+      (async () => {
+        try {
+          const pwaCache = await caches.open(OFFLINE_PWA_STORAGE);
+          const cachedTrack = await pwaCache.match(request);
+          if (cachedTrack) return cachedTrack;
+
+          // Stream from network natively
+          return await fetch(request);
+        } catch {
           return new Response("", { status: 504, statusText: "Offline" });
-        });
-      })
+        }
+      })()
     );
     return;
   }
 
-  // 2. Navigation Request (App Open / Page Load) — Network first, fallback to cached index.html
+  // 2. Navigation Request (App Open / Page Load)
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request).catch(async () => {
+      (async () => {
+        try {
+          const networkRes = await fetch(request);
+          if (networkRes && networkRes.ok) {
+            const cache = await caches.open(APP_SHELL_CACHE);
+            cache.put(request, networkRes.clone());
+            return networkRes;
+          }
+        } catch {}
+
         const cache = await caches.open(APP_SHELL_CACHE);
-        const cachedIndex = await cache.match("/index.html") || await cache.match("/");
-        if (cachedIndex) return cachedIndex;
+        const cached = (await cache.match(request)) || (await cache.match("/index.html")) || (await cache.match("/"));
+        if (cached) return cached;
+
         return new Response("MusicsAura Offline Mode", {
           status: 200,
           headers: { "content-type": "text/html" }
         });
-      })
+      })()
     );
     return;
   }
 
-  // 3. App Shell Files (Scripts, Styles, JSONs) — Stale While Revalidate
+  // 3. App Shell Files (Scripts, Styles, JSONs, Images) — Stale While Revalidate
   event.respondWith(
-    caches.open(APP_SHELL_CACHE).then(async (cache) => {
+    (async () => {
+      const cache = await caches.open(APP_SHELL_CACHE);
       const cached = await cache.match(request);
 
-      const networkFetch = fetch(request).then((networkRes) => {
-        if (networkRes && networkRes.ok) {
+      const fetchPromise = fetch(request).then((networkRes) => {
+        if (networkRes && networkRes.ok && request.method === "GET") {
           cache.put(request, networkRes.clone());
         }
         return networkRes;
       }).catch(() => null);
 
-      return cached || networkFetch || new Response("", { status: 504 });
-    })
+      if (cached) {
+        return cached;
+      }
+
+      const networkRes = await fetchPromise;
+      if (networkRes) return networkRes;
+
+      return new Response("", { status: 504, statusText: "Gateway Timeout" });
+    })()
   );
 });
 

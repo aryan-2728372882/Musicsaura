@@ -178,8 +178,12 @@
         <h3>📁 Studio Catalog <span id="songs-count-badge" class="genre-tag">0 tracks</span></h3>
         <p style="font-size:0.8rem;color:var(--text-secondary)">All songs published via studio stored in Firestore</p>
       </div>
-      <div style="display:flex;gap:0.5rem;align-items:center">
-        <input type="search" id="songs-search" class="form-input" placeholder="Filter songs..." style="width:200px;padding:0.45rem 0.8rem">
+      <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+        <input type="search" id="songs-search" class="form-input" placeholder="Filter songs..." style="width:180px;padding:0.45rem 0.8rem">
+        <button id="sync-json-btn" class="btn-primary" style="padding:0.45rem 0.9rem;font-size:0.8rem;background:linear-gradient(135deg,var(--cyan),var(--violet))" title="Populate Firestore songs database from cleaned local JSONs">
+          <span class="material-icons" style="font-size:1rem;vertical-align:middle;margin-right:2px">cloud_upload</span>
+          Sync JSONs &rarr; Firestore
+        </button>
         <button id="export-json-btn" class="genre-pill" title="Export songs to JSON backup">
           <span class="material-icons" style="font-size:1rem;vertical-align:middle;margin-right:2px">file_download</span>
           Export JSON

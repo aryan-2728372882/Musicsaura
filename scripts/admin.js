@@ -539,6 +539,87 @@ function initAdminDashboard() {
   loadUsersAndMetrics();
 }
 
+// ─── SYNC JSONS TO FIRESTORE ───
+const syncJsonBtn = document.getElementById("sync-json-btn");
+if (syncJsonBtn) {
+  syncJsonBtn.addEventListener("click", async () => {
+    if (!confirm("Do you want to sync all cleaned songs from hindi.json, punjabi.json, and haryanvi.json into Firestore? (Existing duplicate links will be skipped)")) {
+      return;
+    }
+
+    syncJsonBtn.disabled = true;
+    syncJsonBtn.textContent = "Syncing...";
+
+    try {
+      const genres = [
+        { file: "jsons/hindi.json", genre: "Hindi" },
+        { file: "jsons/punjabi.json", genre: "Punjabi" },
+        { file: "jsons/haryanvi.json", genre: "Haryanvi" }
+      ];
+
+      // Fetch existing songs from Firestore to avoid duplicate links
+      const existingSnap = await getDocs(collection(db, "songs"));
+      const existingLinks = new Set();
+      existingSnap.forEach(d => {
+        const link = d.data().link;
+        if (link) existingLinks.add(link);
+      });
+
+      let addedCount = 0;
+      let skippedCount = 0;
+
+      for (const item of genres) {
+        try {
+          const res = await fetch(item.file);
+          if (!res.ok) continue;
+          const songs = await res.json();
+
+          for (const s of songs) {
+            if (!s.title || !s.link) continue;
+            if (existingLinks.has(s.link)) {
+              skippedCount++;
+              continue;
+            }
+
+            const keywords = Array.from(new Set([
+              ...s.title.toLowerCase().split(/\s+/),
+              ...(s.artist ? s.artist.toLowerCase().split(/[,&/ ]+/) : []),
+              ...(Array.isArray(s.keywords) ? s.keywords.map(k => k.toLowerCase()) : []),
+              item.genre.toLowerCase()
+            ].filter(Boolean)));
+
+            await addDoc(collection(db, "songs"), {
+              title: s.title,
+              artist: s.artist || "MusicsAura",
+              genre: s.genre || item.genre,
+              link: s.link,
+              thumbnail: s.thumbnail || "",
+              keywords,
+              uploadedBy: currentAdminUser?.email || "admin@musicsaura.com",
+              createdAt: serverTimestamp(),
+              plays: 0
+            });
+
+            existingLinks.add(s.link);
+            addedCount++;
+            syncJsonBtn.textContent = `Syncing... (${addedCount} added)`;
+          }
+        } catch (e) {
+          console.warn("Sync error for", item.genre, e);
+        }
+      }
+
+      alert(`✅ Sync Complete!\n${addedCount} songs added to Firestore database.\n${skippedCount} duplicate songs skipped.`);
+      loadUploadedSongs();
+    } catch (err) {
+      alert("Sync failed: " + err.message);
+    } finally {
+      syncJsonBtn.disabled = false;
+      syncJsonBtn.innerHTML = '<span class="material-icons" style="font-size:1rem;vertical-align:middle;margin-right:2px">cloud_upload</span>Sync JSONs &rarr; Firestore';
+    }
+  });
+}
+
 // Logout handler
 const logoutBtn = document.getElementById("logout");
 if (logoutBtn) {
