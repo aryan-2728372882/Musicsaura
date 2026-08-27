@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#07070e">
+  <title>MusicsAura Studio — File Garden Auto Publisher</title>
+  <link rel="icon" href="assets/favicon.ico">
+  <link rel="stylesheet" href="styles/styles.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="page-scroll">
+
+  <!-- Ambient Dynamic Lighting -->
+  <div class="ambient-aura-canvas">
+    <div class="aura-orb aura-1"></div>
+    <div class="aura-orb aura-2"></div>
+  </div>
+
+  <div class="dashboard-page" style="max-width:850px">
+
+    <!-- HEADER -->
+    <header class="dash-header">
+      <div style="display:flex;align-items:center;gap:0.8rem">
+        <a href="index.html" class="back-link">
+          <span class="material-icons">arrow_back</span>
+          Back to Music
+        </a>
+        <h1 style="font-family:'Syne',sans-serif;font-size:1.35rem">MusicsAura Studio</h1>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.6rem">
+        <span class="genre-tag" style="background:rgba(34,211,238,0.15);color:var(--cyan);border-color:rgba(34,211,238,0.3)">
+          🌿 File Garden Direct
+        </span>
+      </div>
+    </header>
+
+    <!-- QUICK HOW-TO CARD -->
+    <div class="section-card" style="padding:1.2rem;background:linear-gradient(135deg,rgba(138,92,246,0.1) 0%,rgba(17,17,30,0.85) 100%);margin-bottom:1.5rem">
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <span class="material-icons" style="color:var(--gold);font-size:1.6rem;flex-shrink:0">lightbulb</span>
+        <div style="font-size:0.86rem;color:var(--text-secondary);line-height:1.5">
+          <strong style="color:var(--text-primary)">Simple 2-Step Song Upload for You & Friends:</strong><br>
+          1. Upload your MP3 to your File Garden folder (<a href="https://file.garden/aRgAQiYidD0tulQV/Hindi" target="_blank" rel="noopener" style="color:var(--cyan);font-weight:600;text-decoration:underline">Hindi</a> / <a href="https://file.garden/aRgAQiYidD0tulQV/Punjabi" target="_blank" rel="noopener" style="color:var(--cyan);font-weight:600;text-decoration:underline">Punjabi</a> / <a href="https://file.garden/aRgAQiYidD0tulQV/Haryanvi" target="_blank" rel="noopener" style="color:var(--cyan);font-weight:600;text-decoration:underline">Haryanvi</a>).<br>
+          2. Paste the link or select the MP3 file below &rarr; <strong>Title, artist, and HD cover artwork will auto-detect automatically!</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN UPLOAD CARD -->
+    <section class="section-card" style="box-shadow:0 16px 40px rgba(0,0,0,0.5)">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:1.5rem">
+        <div>
+          <h2 style="font-family:'Syne',sans-serif;font-size:1.3rem;font-weight:800;margin-bottom:0.3rem">
+            ⚡ Track Auto-Publisher
+          </h2>
+          <p style="font-size:0.86rem;color:var(--text-secondary)">
+            Paste link or drop audio — creates live stream link and auto-fetches artwork!
+          </p>
+        </div>
+        <div style="display:flex;gap:0.5rem">
+          <button type="button" id="toggle-bulk-btn" class="genre-pill" style="font-size:0.8rem">
+            <span class="material-icons" style="font-size:0.95rem;vertical-align:middle;margin-right:3px">format_list_bulleted</span>
+            Bulk Links
+          </button>
+          <button type="button" id="btn-export-json" class="genre-pill" style="font-size:0.8rem" title="Export updated JSON">
+            <span class="material-icons" style="font-size:0.95rem;vertical-align:middle;margin-right:3px">file_download</span>
+            Export JSON
+          </button>
+        </div>
+      </div>
+
+      <div id="upload-alert" class="alert-box"></div>
+
+      <!-- SINGLE SONG FORM -->
+      <form id="creator-upload-form">
+        <!-- 1. GENRE SELECTOR -->
+        <div class="input-group">
+          <label for="creator-genre" style="font-size:0.88rem;color:var(--violet-light);font-weight:700">1. Select Target Category</label>
+          <select id="creator-genre" class="form-select">
+            <option value="hindi" data-folder="https://file.garden/aRgAQiYidD0tulQV/Hindi/">Hindi Hits (https://file.garden/aRgAQiYidD0tulQV/Hindi/)</option>
+            <option value="punjabi" data-folder="https://file.garden/aRgAQiYidD0tulQV/Punjabi/">Punjabi Vibes (https://file.garden/aRgAQiYidD0tulQV/Punjabi/)</option>
+            <option value="haryanvi" data-folder="https://file.garden/aRgAQiYidD0tulQV/Haryanvi/">Haryanvi Swag (https://file.garden/aRgAQiYidD0tulQV/Haryanvi/)</option>
+          </select>
+        </div>
+
+        <!-- 2. FILEGARDEN / AUDIO LINK INPUT -->
+        <div class="input-group">
+          <label for="creator-audio-url" style="font-size:0.88rem;color:var(--text-primary);font-weight:600;display:flex;justify-content:space-between">
+            <span>2. Paste File Garden MP3 Link (or drop file below) *</span>
+            <span id="auto-fetch-tag" style="font-size:0.75rem;color:var(--cyan);display:none">✨ Auto-fetching metadata...</span>
+          </label>
+          <input type="url" id="creator-audio-url" class="form-input" placeholder="https://file.garden/aRgAQiYidD0tulQV/Hindi/Song_Name.mp3" required autofocus>
+        </div>
+
+        <!-- Select MP3 File Button -->
+        <div style="margin:0.6rem 0 1.2rem;display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap">
+          <button type="button" id="btn-select-audio-file" class="btn-primary" style="background:var(--surface-raised);border:1px solid var(--border-strong);color:var(--text-primary);box-shadow:none;display:inline-flex;align-items:center;gap:8px;padding:0.7rem 1.25rem;font-size:0.9rem;border-radius:var(--radius-full);cursor:pointer">
+            <span class="material-icons" style="font-size:1.2rem;color:var(--violet-light)">audio_file</span>
+            <span>Select Your MP3 File (.mp3, .m4a, .wav)</span>
+          </button>
+          <span id="selected-file-label" style="font-size:0.84rem;color:var(--text-muted)">No file chosen yet</span>
+          <input type="file" id="quick-audio-picker" accept=".mp3,.m4a,.wav,.flac,.aac,audio/*" style="display:none">
+        </div>
+
+        <!-- 3. AUTO-DETECTED METADATA PREVIEW & EDIT -->
+        <div style="display:flex;gap:1.2rem;align-items:flex-start;margin:1rem 0;flex-wrap:wrap;background:var(--surface-card);border:1px solid var(--border);border-radius:var(--radius-md);padding:1rem">
+          <!-- Artwork Thumbnail Preview -->
+          <div style="position:relative;width:90px;height:90px;border-radius:var(--radius-sm);overflow:hidden;background:var(--surface-raised);border:1px solid var(--border-strong);flex-shrink:0">
+            <img id="creator-cover-preview" src="assets/logo.png" alt="Cover Preview" style="width:100%;height:100%;object-fit:cover">
+          </div>
+
+          <div style="flex:1;min-width:240px">
+            <div class="form-grid">
+              <div class="input-group" style="margin-bottom:0.5rem">
+                <label for="creator-title">Song Title *</label>
+                <div style="display:flex;gap:0.4rem">
+                  <input type="text" id="creator-title" class="form-input" placeholder="Title auto-fills from link..." required style="flex:1">
+                  <button type="button" id="btn-manual-fetch" class="genre-pill" title="Search metadata & cover" style="padding:0.4rem 0.8rem">
+                    <span class="material-icons" style="font-size:1.1rem;vertical-align:middle">auto_awesome</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="input-group" style="margin-bottom:0.5rem">
+                <label for="creator-artist">Artist(s)</label>
+                <input type="text" id="creator-artist" class="form-input" placeholder="Artist auto-fills...">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. COVER ART URL & CONTRIBUTOR -->
+        <div class="form-grid">
+          <div class="input-group">
+            <label for="creator-cover-url">Cover Art URL (Auto-filled with HD Artwork)</label>
+            <input type="url" id="creator-cover-url" class="form-input" placeholder="https://... (auto-filled)">
+          </div>
+
+          <div class="input-group">
+            <label for="creator-uploader-name">Your Name (Contributor Tag)</label>
+            <input type="text" id="creator-uploader-name" class="form-input" placeholder="e.g. Aryan / Friend">
+          </div>
+        </div>
+
+        <div style="margin-top:1.2rem">
+          <button type="submit" id="btn-creator-submit" class="btn-primary" style="width:100%;padding:0.9rem;font-size:1rem">
+            <span class="material-icons" style="font-size:1.2rem;vertical-align:middle;margin-right:6px">rocket_launch</span>
+            Publish Song to MusicsAura
+          </button>
+        </div>
+      </form>
+
+      <!-- BULK MULTI-LINK IMPORTER -->
+      <div id="bulk-importer-wrap" style="display:none;margin-top:1.5rem;padding-top:1.5rem;border-top:1px dashed var(--border-strong)">
+        <h4 style="font-family:'Syne',sans-serif;margin-bottom:0.5rem">📥 Bulk Import Multiple File Garden Links</h4>
+        <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem">
+          Paste multiple File Garden links (one URL per line). The studio will automatically extract titles and fetch HD album covers for all of them!
+        </p>
+
+        <div class="input-group">
+          <label for="bulk-genre">Select Genre for All Pasted Links</label>
+          <select id="bulk-genre" class="form-select" style="max-width:300px">
+            <option value="hindi">Hindi Hits</option>
+            <option value="punjabi">Punjabi Vibes</option>
+            <option value="haryanvi">Haryanvi Swag</option>
+          </select>
+        </div>
+
+        <div class="input-group">
+          <label for="bulk-urls">Paste File Garden Links (One per line)</label>
+          <textarea id="bulk-urls" class="form-input" rows="6" placeholder="https://file.garden/aRgAQiYidD0tulQV/Hindi/Song1.mp3&#10;https://file.garden/aRgAQiYidD0tulQV/Hindi/Song2.mp3&#10;https://file.garden/aRgAQiYidD0tulQV/Hindi/Song3.mp3"></textarea>
+        </div>
+
+        <button type="button" id="btn-submit-bulk" class="btn-primary">
+          <span class="material-icons" style="font-size:1.1rem;vertical-align:middle;margin-right:4px">playlist_add</span>
+          Import & Auto-Fetch All Tracks
+        </button>
+      </div>
+    </section>
+
+    <!-- RECENTLY CONTRIBUTED TRACKS -->
+    <section class="section-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+        <h3>🎉 Community Published Library</h3>
+        <span id="contrib-count" class="genre-tag">0 tracks</span>
+      </div>
+      <div id="contrib-list" style="display:flex;flex-direction:column;gap:0.5rem">
+        <div class="state-msg">Loading shared songs...</div>
+      </div>
+    </section>
+
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="scripts/sw-manager.js" defer></script>
+  <script type="module" src="scripts/upload.js"></script>
+</body>
+</html>

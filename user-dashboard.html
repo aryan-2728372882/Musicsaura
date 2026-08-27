@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#080810">
+  <title>My Profile — MusicsAura</title>
+  <link rel="icon" href="assets/favicon.ico">
+  <link rel="stylesheet" href="styles/styles.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="page-scroll">
+<div class="dashboard-page">
+
+  <!-- HEADER -->
+  <header class="dash-header">
+    <div style="display:flex;align-items:center;gap:0.8rem">
+      <a href="index.html" class="back-link">
+        <span class="material-icons">arrow_back</span>
+        Music
+      </a>
+      <h1>My Account</h1>
+    </div>
+    <button class="btn-logout" id="logout">
+      <span class="material-icons" style="font-size:1rem">logout</span>
+      Sign Out
+    </button>
+  </header>
+
+  <!-- PROFILE HERO -->
+  <section class="section-card" style="display:flex;align-items:center;gap:1.2rem;flex-wrap:wrap">
+    <img id="avatar" class="user-avatar" src="" alt="Profile" style="width:64px;height:64px;border-radius:var(--radius-full);border:2px solid var(--violet)">
+    <div style="flex:1;min-width:200px">
+      <h2 id="display-name" style="font-family:'Syne',sans-serif;font-size:1.3rem;font-weight:700">Loading...</h2>
+      <p id="email" style="font-size:0.85rem;color:var(--text-secondary)"></p>
+    </div>
+  </section>
+
+  <!-- STATS -->
+  <section class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-num" id="minutes">0</div>
+      <div class="stat-label">Minutes Listened</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="songs">0</div>
+      <div class="stat-label">Songs Played</div>
+    </div>
+  </section>
+
+  <!-- FAVORITE SONGS -->
+  <section class="section-card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+      <h3>❤️ Liked Songs</h3>
+      <span id="fav-count" class="genre-tag">0 songs</span>
+    </div>
+    <div id="favorites-list">
+      <div class="state-msg">Loading favorite tracks...</div>
+    </div>
+  </section>
+
+  <!-- EDIT PROFILE -->
+  <section class="section-card">
+    <h3>Edit Profile</h3>
+    <div class="input-group" style="max-width:400px">
+      <label for="new-name">Display Name</label>
+      <input type="text" class="form-input" id="new-name" placeholder="Your name">
+    </div>
+    <button class="btn-primary" id="save-name" style="padding:0.6rem 1.2rem;font-size:0.88rem">Save Changes</button>
+  </section>
+
+  <!-- DANGER ZONE -->
+  <section class="section-card" style="border-color:rgba(244,63,94,0.3)">
+    <h3 style="color:var(--rose)">Account Zone</h3>
+    <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1rem">
+      Permanently delete your profile and listening history. This action cannot be undone.
+    </p>
+    <button class="btn-danger" id="delete-account">Delete Account</button>
+  </section>
+
+</div>
+
+<script src="scripts/sw-manager.js" defer></script>
+<script type="module" src="scripts/user.js"></script>
+</body>
+</html>

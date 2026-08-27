@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#080810">
+  <title>MusicsAura Studio — Track Publisher</title>
+  <link rel="icon" href="assets/favicon.ico">
+  <link rel="stylesheet" href="styles/styles.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="page-scroll">
+<div class="admin-page">
+
+  <!-- HEADER -->
+  <header class="admin-header">
+    <div style="display:flex;align-items:center;gap:0.8rem">
+      <a href="index.html" class="back-link">
+        <span class="material-icons">arrow_back</span>
+        App
+      </a>
+      <h1>MusicsAura Studio</h1>
+    </div>
+    <div style="display:flex;align-items:center;gap:0.6rem">
+      <a href="user-dashboard.html" class="btn-logout" style="text-decoration:none" title="User Profile">
+        <span class="material-icons" style="font-size:1.1rem;color:var(--violet)">person</span>
+        Profile
+      </a>
+      <button class="btn-logout" id="logout" title="Sign Out">
+        <span class="material-icons" style="font-size:1.1rem">logout</span>
+        Logout
+      </button>
+    </div>
+  </header>
+
+  <!-- STATS OVERVIEW -->
+  <section class="admin-stats">
+    <div class="admin-stat">
+      <div class="admin-stat-num" id="total-users">—</div>
+      <div class="admin-stat-label">Registered Listeners</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-num" id="total-songs">—</div>
+      <div class="admin-stat-label">Total Songs Played</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-num" id="total-minutes">—</div>
+      <div class="admin-stat-label">Minutes Streamed</div>
+    </div>
+    <div class="admin-stat">
+      <div class="admin-stat-num" id="uploaded-songs-count">—</div>
+      <div class="admin-stat-label">Published in Studio</div>
+    </div>
+  </section>
+
+  <!-- QUICK LINK ADDER (OPTIMIZED FOR FILEGARDEN / DROPBOX / FREE CDNs) -->
+  <section class="section-card">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:1.2rem">
+      <div>
+        <h3>⚡ Auto-Magic Track Publisher</h3>
+        <p style="font-size:0.82rem;color:var(--text-secondary);margin-top:2px">
+          Paste your <strong>File Garden</strong> or <strong>Dropbox</strong> link — <strong>Title, Artist, and HD Cover Artwork auto-fetch automatically!</strong>
+        </p>
+      </div>
+      <button id="toggle-bulk-btn" class="genre-pill" style="font-size:0.8rem">
+        <span class="material-icons" style="font-size:0.95rem;vertical-align:middle;margin-right:3px">format_list_bulleted</span>
+        Bulk Multi-Link Adder
+      </button>
+    </div>
+
+    <div id="upload-alert" class="alert-box"></div>
+
+    <!-- SINGLE SONG FORM -->
+    <form id="upload-song-form">
+      <div class="input-group">
+        <label for="custom-audio-url" style="color:var(--violet-light);display:flex;justify-content:space-between">
+          <span>🎵 Audio Stream URL (File Garden / Dropbox / Direct MP3 link) *</span>
+          <span id="fetch-status-tag" style="font-size:0.75rem;color:var(--cyan);display:none">✨ Auto-fetching metadata...</span>
+        </label>
+        <input type="url" id="custom-audio-url" class="form-input" placeholder="https://file.garden/.../Song_Name.mp3" required autofocus>
+      </div>
+
+      <!-- Live Artwork Preview & Info Grid -->
+      <div style="display:flex;gap:1.2rem;align-items:flex-start;margin:0.8rem 0;flex-wrap:wrap">
+        <!-- Live Cover Thumbnail -->
+        <div style="width:80px;height:80px;border-radius:var(--radius-md);overflow:hidden;background:var(--surface-raised);border:1px solid var(--border);flex-shrink:0">
+          <img id="cover-preview-img" src="assets/logo.png" alt="Cover Preview" style="width:100%;height:100%;object-fit:cover">
+        </div>
+
+        <div style="flex:1;min-width:260px">
+          <div class="form-grid">
+            <!-- Track Title -->
+            <div class="input-group" style="margin-bottom:0.6rem">
+              <label for="song-title">Song Title *</label>
+              <div style="display:flex;gap:0.4rem">
+                <input type="text" id="song-title" class="form-input" placeholder="Auto-filled from link..." required style="flex:1">
+                <button type="button" id="btn-manual-fetch" class="genre-pill" title="Search metadata & cover" style="padding:0.4rem 0.8rem">
+                  <span class="material-icons" style="font-size:1.1rem;vertical-align:middle">auto_awesome</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Artist -->
+            <div class="input-group" style="margin-bottom:0.6rem">
+              <label for="song-artist">Artist(s)</label>
+              <input type="text" id="song-artist" class="form-input" placeholder="Auto-filled artist...">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <!-- Cover Art URL -->
+        <div class="input-group">
+          <label for="custom-cover-url">Cover Art Thumbnail URL</label>
+          <input type="url" id="custom-cover-url" class="form-input" placeholder="https://... (auto-filled with HD artwork)">
+        </div>
+
+        <!-- Genre Selector -->
+        <div class="input-group">
+          <label for="song-genre">Genre Category *</label>
+          <select id="song-genre" class="form-select">
+            <option value="hindi">Hindi</option>
+            <option value="punjabi">Punjabi</option>
+            <option value="haryanvi">Haryanvi</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="input-group">
+        <label for="song-tags">Search Tags (comma separated)</label>
+        <input type="text" id="song-tags" class="form-input" placeholder="e.g. romantic, party, hit, 2026">
+      </div>
+
+      <div style="display:flex;gap:0.8rem;align-items:center;margin-top:0.8rem">
+        <button type="submit" id="btn-submit-upload" class="btn-primary">
+          <span class="material-icons" style="font-size:1.1rem;vertical-align:middle;margin-right:4px">add_circle</span>
+          Add Song to MusicsAura
+        </button>
+      </div>
+    </form>
+
+    <!-- BULK MULTI-LINK IMPORTER (HIDDEN BY DEFAULT) -->
+    <div id="bulk-importer-wrap" style="display:none;margin-top:1.5rem;padding-top:1.5rem;border-top:1px dashed var(--border-strong)">
+      <h4 style="font-family:'Syne',sans-serif;margin-bottom:0.5rem">📥 Bulk Import Multiple Links at Once</h4>
+      <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem">
+        Paste multiple File Garden or Dropbox links (one URL per line). The studio will automatically extract titles and fetch HD album covers for all of them!
+      </p>
+
+      <div class="input-group">
+        <label for="bulk-genre">Select Genre for All Pasted Links</label>
+        <select id="bulk-genre" class="form-select" style="max-width:300px">
+          <option value="hindi">Hindi</option>
+          <option value="punjabi">Punjabi</option>
+          <option value="haryanvi">Haryanvi</option>
+        </select>
+      </div>
+
+      <div class="input-group">
+        <label for="bulk-urls">Paste Links (One per line)</label>
+        <textarea id="bulk-urls" class="form-input" rows="6" placeholder="https://file.garden/.../Song1.mp3&#10;https://file.garden/.../Song2.mp3&#10;https://file.garden/.../Song3.mp3"></textarea>
+      </div>
+
+      <button id="btn-submit-bulk" class="btn-primary">
+        <span class="material-icons" style="font-size:1.1rem;vertical-align:middle;margin-right:4px">playlist_add</span>
+        Import & Auto-Fetch All Tracks
+      </button>
+    </div>
+  </section>
+
+  <!-- PUBLISHED SONGS MANAGER -->
+  <section class="section-card">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-bottom:1.2rem">
+      <div>
+        <h3>📁 Studio Catalog <span id="songs-count-badge" class="genre-tag">0 tracks</span></h3>
+        <p style="font-size:0.8rem;color:var(--text-secondary)">All songs published via studio stored in Firestore</p>
+      </div>
+      <div style="display:flex;gap:0.5rem;align-items:center">
+        <input type="search" id="songs-search" class="form-input" placeholder="Filter songs..." style="width:200px;padding:0.45rem 0.8rem">
+        <button id="export-json-btn" class="genre-pill" title="Export songs to JSON backup">
+          <span class="material-icons" style="font-size:1rem;vertical-align:middle;margin-right:2px">file_download</span>
+          Export JSON
+        </button>
+      </div>
+    </div>
+
+    <div id="songs-loading" class="state-msg" style="padding:1.5rem">Loading catalog...</div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Track</th>
+            <th>Genre</th>
+            <th>Uploaded</th>
+            <th>Stream</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="songs-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- USERS ACTIVITY TABLE -->
+  <section class="section-card">
+    <h3 style="margin-bottom:1rem">👥 Listener Activity</h3>
+    <div id="users-loading" class="state-msg" style="padding:1.5rem">Loading users...</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Minutes Listened</th>
+            <th>Songs Played</th>
+            <th class="hide-mobile">Last Active</th>
+            <th class="hide-mobile">Joined</th>
+          </tr>
+        </thead>
+        <tbody id="users-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<script src="scripts/sw-manager.js" defer></script>
+<script type="module" src="scripts/admin.js"></script>
+</body>
+</html>
