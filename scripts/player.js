@@ -228,12 +228,10 @@ function applyPresetGains(presetName) {
   }
 }
 
-async function unlockAudioContext() {
+function unlockAudioContext() {
   if (!audioCtx) initAudioContext();
   if (audioCtx && audioCtx.state === "suspended") {
-    try {
-      await audioCtx.resume();
-    } catch {}
+    audioCtx.resume().catch(() => {});
   }
 }
 
@@ -392,9 +390,35 @@ function startCrossfadeTransition() {
   standbyAudio.volume = 0;
   standbyAudio.playbackRate = playbackRate;
 
+  // Immediately update track state so Android lockscreen, notifications & in-app UI switch title/avatar with 0ms lag!
+  currentIndex = nextIdx;
+  currentSong = nextSong;
+  updateMediaSession(currentSong);
+  updateUI();
+
+  const finalizeCrossfade = () => {
+    if (!isCrossfading) return;
+    isCrossfading = false;
+
+    activeAudio.pause();
+    activeAudio.currentTime = 0;
+    activeAudio.volume = masterVolume;
+
+    const temp = activeAudio;
+    activeAudio = standbyAudio;
+    standbyAudio = temp;
+    window._musicsaura_audio = activeAudio;
+
+    wireAudioEvents(activeAudio);
+    updateMediaSession(currentSong);
+    updateUI();
+
+    warmupStandbyNextTrack();
+  };
+
   standbyAudio.play().then(() => {
-    const fadeSteps = 20;
-    const stepTime = (crossfadeSeconds * 1000) / fadeSteps;
+    const fadeSteps = 15;
+    const stepTime = Math.max(50, (crossfadeSeconds * 1000) / fadeSteps);
     let step = 0;
 
     const fadeTimer = setInterval(() => {
@@ -406,30 +430,20 @@ function startCrossfadeTransition() {
 
       if (step >= fadeSteps) {
         clearInterval(fadeTimer);
-
-        activeAudio.pause();
-        activeAudio.currentTime = 0;
-        activeAudio.volume = masterVolume;
-
-        const temp = activeAudio;
-        activeAudio = standbyAudio;
-        standbyAudio = temp;
-        window._musicsaura_audio = activeAudio;
-
-        currentIndex = nextIdx;
-        currentSong = nextSong;
-        isCrossfading = false;
-
-        wireAudioEvents(activeAudio);
-        updateMediaSession(currentSong);
-        updateUI();
-
-        warmupStandbyNextTrack();
+        finalizeCrossfade();
       }
     }, stepTime);
+
+    // Fail-safe timeout for Android background where timers are throttled by OS
+    setTimeout(() => {
+      clearInterval(fadeTimer);
+      finalizeCrossfade();
+    }, (crossfadeSeconds * 1000) + 200);
+
   }).catch((e) => {
-    console.warn("Crossfade playback:", e);
+    console.warn("Crossfade playback error:", e);
     isCrossfading = false;
+    finalizeCrossfade();
   });
 }
 
@@ -611,17 +625,11 @@ export const player = {
     // Kept for backward compatibility
   },
 
-  async playSong(song, playlistContext = null, index = null) {
+  playSong(song, playlistContext = null, index = null) {
     if (!song || !song.link) return;
 
-    await flushStatsToFirebase();
-    hasRecordedStat    = false;
-    accumulatedPlaySec = 0;
-    playSessionStart   = 0;
-    isCrossfading      = false;
-
+    // 1. Instantly update UI & Media Session (0ms visual latency)
     currentSong = song;
-
     if (playlistContext) {
       if (index !== null) {
         player.setPlaylist(playlistContext, index);
@@ -630,43 +638,29 @@ export const player = {
         player.setPlaylist(playlistContext, found >= 0 ? found : 0);
       }
     }
+    updateMediaSession(song);
+    updateUI();
 
+    // 2. Non-blocking background stats flush
+    flushStatsToFirebase().catch(() => {});
+    hasRecordedStat    = false;
+    accumulatedPlaySec = 0;
+    playSessionStart   = 0;
+    isCrossfading      = false;
+
+    // 3. Normalize link & assign source immediately
     const cleanUrl = normalizeUrl(song.link);
     if (!cleanUrl) return;
 
     let streamUrl = cleanUrl;
-
-    // Check offline Cache Storage for downloaded tracks
-    try {
-      if ("caches" in window) {
-        const cache = await caches.open("musicsaura-pwa-storage-v2");
-        const cachedRes = await cache.match(cleanUrl);
-        if (cachedRes && (cachedRes.ok || cachedRes.status === 200)) {
-          const blob = await cachedRes.blob();
-          if (blob && blob.size > 10240) {
-            streamUrl = URL.createObjectURL(blob);
-          } else {
-            await cache.delete(cleanUrl);
-          }
-        } else if (cachedRes) {
-          await cache.delete(cleanUrl);
-        }
-      }
-    } catch (e) {
-      console.warn("Offline check:", e);
-    }
-
-    // Assign source directly
     if (activeAudio.src !== streamUrl) {
       activeAudio.src = streamUrl;
     }
     activeAudio.playbackRate = playbackRate;
     activeAudio.volume = masterVolume;
 
-    await unlockAudioContext();
-    updateMediaSession(song);
-    updateUI();
-
+    // 4. Synchronous immediate play in current user gesture tick
+    unlockAudioContext();
     try {
       const playPromise = activeAudio.play();
       if (playPromise !== undefined) {
@@ -681,16 +675,31 @@ export const player = {
     }
 
     warmupStandbyNextTrack();
+
+    // 5. Offline PWA check in background without delaying stream start
+    if ("caches" in window) {
+      caches.open("musicsaura-pwa-storage-v2").then(async (cache) => {
+        const cachedRes = await cache.match(cleanUrl);
+        if (cachedRes && (cachedRes.ok || cachedRes.status === 200)) {
+          const blob = await cachedRes.blob();
+          if (blob && blob.size > 10240 && currentSong === song && activeAudio.paused) {
+            activeAudio.src = URL.createObjectURL(blob);
+            activeAudio.play().catch(() => {});
+          }
+        }
+      }).catch(() => {});
+    }
   },
 
-  async play() {
+  play() {
     if (!currentSong && playlist.length > 0) {
       return player.playSong(playlist[currentIndex]);
     }
     userPaused = false;
-    await unlockAudioContext();
+    unlockAudioContext();
     try {
-      await activeAudio.play();
+      const p = activeAudio.play();
+      if (p !== undefined) p.catch(() => {});
     } catch (err) {
       console.warn("Play error:", err);
     }
