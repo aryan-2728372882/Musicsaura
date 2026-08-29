@@ -742,6 +742,66 @@ if (btnScanDuplicates) {
   });
 }
 
+// ─── 1-CLICK FIX .WEBM / FILE GARDEN STREAM URLS ───────────────────
+const btnFixWebmUrls = document.getElementById("btn-fix-webm-urls");
+if (btnFixWebmUrls) {
+  btnFixWebmUrls.addEventListener("click", async () => {
+    if (!confirm("This will scan all songs in Firestore and remove '.webm' from stream links to match your updated File Garden audio files. Proceed?")) {
+      return;
+    }
+
+    btnFixWebmUrls.disabled = true;
+    btnFixWebmUrls.innerHTML = `<span class="material-icons" style="font-size:1rem;animation:spin 1s linear infinite">refresh</span> Fixing...`;
+
+    try {
+      const snap = await getDocs(collection(db, "songs"));
+      let fixedCount = 0;
+
+      for (const docSnap of snap.docs) {
+        const data = docSnap.data();
+        let link = data.link || "";
+
+        if (link.includes(".webm") || link.includes("%2Ewebm")) {
+          const newLink = link
+            .replace(/\.webm(?=[\?&#]|$)/gi, "")
+            .replace(/%2Ewebm(?=[\?&#]|$)/gi, "");
+
+          if (newLink !== link) {
+            await updateDoc(doc(db, "songs", docSnap.id), { link: newLink });
+            fixedCount++;
+          }
+        }
+      }
+
+      // Also clean in localStorage
+      try {
+        const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
+        let localChanged = false;
+        local.forEach((s) => {
+          if (s.link && (s.link.includes(".webm") || s.link.includes("%2Ewebm"))) {
+            s.link = s.link
+              .replace(/\.webm(?=[\?&#]|$)/gi, "")
+              .replace(/%2Ewebm(?=[\?&#]|$)/gi, "");
+            localChanged = true;
+          }
+        });
+        if (localChanged) {
+          localStorage.setItem("musicsaura_local_uploads", JSON.stringify(local));
+        }
+      } catch {}
+
+      showAlert(`🎉 Fixed ${fixedCount} songs! All .webm extensions removed from Firestore.`);
+      loadUploadedSongs();
+
+    } catch (err) {
+      alert("Error fixing URLs: " + err.message);
+    } finally {
+      btnFixWebmUrls.disabled = false;
+      btnFixWebmUrls.innerHTML = `<span class="material-icons" style="font-size:1rem;vertical-align:middle;margin-right:2px">build</span> Fix .webm URLs`;
+    }
+  });
+}
+
 // ─── SYNC JSONS TO FIRESTORE (WITH DUPLICATE REPORT) ──────────────
 const syncJsonBtn = document.getElementById("sync-json-btn");
 if (syncJsonBtn) {

@@ -100,6 +100,10 @@ export function normalizeUrl(url) {
   if (!url) return "";
   let clean = url.trim();
   if (clean.startsWith("http://")) clean = "https://" + clean.slice(7);
+
+  // Auto-clean .webm extension if present in File Garden / web links
+  clean = clean.replace(/\.webm(?=[\?&#]|$)/gi, "").replace(/%2Ewebm(?=[\?&#]|$)/gi, "");
+
   try {
     const u = new URL(clean);
     const host = u.hostname.toLowerCase();
@@ -112,9 +116,6 @@ export function normalizeUrl(url) {
     if (host.includes("file.garden") || host.includes("supabase.co")) {
       u.searchParams.delete("download");
       u.searchParams.delete("dl");
-      if (!u.searchParams.has("t")) {
-        u.searchParams.set("t", Date.now().toString(36));
-      }
       return u.toString();
     }
     return u.toString();
@@ -587,20 +588,37 @@ audio.addEventListener("error", (e) => {
       return;
     }
 
-    // 2. Slow rainy network retry mechanism
-    if (navigator.onLine && (!audio._retryCount || audio._retryCount < 3)) {
-      audio._retryCount = (audio._retryCount || 0) + 1;
-      player.showToast(`🌧️ Slow connection retry (${audio._retryCount}/3)...`, 2500);
-      setTimeout(() => {
-        const separator = audio.src.includes("?") ? "&" : "?";
-        audio.src = audio.src.split("?")[0] + separator + "t=" + Date.now();
+    // 2. Extension / Format Fallback (e.g. .webm -> without .webm)
+    const rawSrc = audio.src || currentSong?.link || "";
+    if (rawSrc && (rawSrc.includes(".webm") || rawSrc.includes("%2Ewebm"))) {
+      const cleanSrc = rawSrc.replace(/\.webm(?=[\?&#]|$)/gi, "").replace(/%2Ewebm(?=[\?&#]|$)/gi, "");
+      if (cleanSrc && cleanSrc !== rawSrc) {
+        console.log("[Player] Auto-recovering from .webm 404 to clean URL:", cleanSrc);
+        audio.src = cleanSrc;
+        if (currentSong) currentSong.link = cleanSrc;
         audio.load();
         audio.play().catch(() => {});
-      }, 1200);
+        return;
+      }
+    }
+
+    // 3. Slow rainy network retry mechanism
+    if (navigator.onLine && (!audio._retryCount || audio._retryCount < 3)) {
+      audio._retryCount = (audio._retryCount || 0) + 1;
+      player.showToast(`🌧️ Reconnecting stream (${audio._retryCount}/3)...`, 2500);
+      setTimeout(() => {
+        const cleanBase = (audio.src || currentSong?.link || "")
+          .replace(/\.webm(?=[\?&#]|$)/gi, "")
+          .replace(/%2Ewebm(?=[\?&#]|$)/gi, "");
+        const separator = cleanBase.includes("?") ? "&" : "?";
+        audio.src = cleanBase.split("?")[0] + separator + "t=" + Date.now();
+        audio.load();
+        audio.play().catch(() => {});
+      }, 1000);
       return;
     }
 
-    // 3. If offline, alert user and stop
+    // 4. If offline, alert user and stop
     if (!navigator.onLine) {
       player.showToast("⚠️ Offline: Connect to Wi-Fi/Data or play downloaded tracks.");
       return;
