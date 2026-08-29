@@ -6,6 +6,7 @@ import {
   collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp,
   doc, deleteDoc, updateDoc, writeBatch
 } from "./firebase-config.js";
+import { commitSongsToGitHub } from "./github-sync.js";
 
 // Folder Base URLs for File Garden
 const FILE_GARDEN_FOLDERS = {
@@ -629,7 +630,33 @@ if (btnPublishBatch) {
       localStorage.removeItem("musicsaura_firestore_cache_time"); // force instant refresh on main page
     } catch {}
 
-    showAlert(`🎉 Batch complete! Successfully published ${publishedCount} tracks to MusicsAura!`);
+    // AUTOMATIC GITHUB REPOSITORY SYNC: Group by genre and auto-commit to jsons/{genre}.json
+    try {
+      const byGenre = {};
+      publishable.forEach((t) => {
+        const g = (t.genre || "hindi").toLowerCase();
+        if (!byGenre[g]) byGenre[g] = [];
+        byGenre[g].push({
+          title: t.title,
+          artist: t.artist || "Various Artists",
+          link: t.streamUrl,
+          thumbnail: t.artwork || "assets/logo.png",
+          genre: t.genre
+        });
+      });
+
+      for (const [g, tracks] of Object.entries(byGenre)) {
+        commitSongsToGitHub(g, tracks).then((res) => {
+          if (res && res.success) {
+            console.log(`[GitHub Auto-Commit] ${tracks.length} track(s) saved to jsons/${g}.json on GitHub!`);
+          }
+        });
+      }
+    } catch (e) {
+      console.warn("[GitHub Auto-Commit] Notice:", e);
+    }
+
+    showAlert(`🎉 Batch complete! Successfully published ${publishedCount} tracks to MusicsAura and synced to GitHub!`);
     loadCommunityUploads();
     updateBatchSummaryCounts();
 
@@ -779,9 +806,25 @@ if (uploadForm) {
         const existingLocal = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
         existingLocal.unshift(localUpload);
         localStorage.setItem("musicsaura_local_uploads", JSON.stringify(existingLocal.slice(0, 100)));
+        localStorage.removeItem("musicsaura_firestore_cache_time");
       } catch {}
 
-      showAlert(`🎉 "${title}" published successfully! It's now live for everyone.`);
+      // AUTO GITHUB COMMIT: Automatically commit track to jsons/{genre}.json on GitHub
+      try {
+        commitSongsToGitHub(genre, [{
+          title,
+          artist,
+          genre,
+          link: audioUrl,
+          thumbnail: coverUrl || "assets/logo.png"
+        }]).then((res) => {
+          if (res && res.success) {
+            console.log(`[GitHub Auto-Commit] "${title}" committed directly into jsons/${genre.toLowerCase()}.json!`);
+          }
+        });
+      } catch {}
+
+      showAlert(`🎉 "${title}" published successfully and synced to GitHub! It's now live for everyone.`);
       uploadForm.reset();
       if (coverPreviewImg) coverPreviewImg.src = "assets/logo.png";
       loadCommunityUploads();

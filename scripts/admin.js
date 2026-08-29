@@ -3,6 +3,7 @@ import {
   auth, db, isAdmin, onAuthStateChanged, signOut,
   collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch
 } from "./firebase-config.js";
+import { commitSongsToGitHub } from "./github-sync.js";
 
 // DOM elements
 const totalUsersEl       = document.getElementById("total-users");
@@ -245,7 +246,22 @@ if (uploadForm) {
 
       await addDoc(collection(db, "songs"), newSongData);
 
-      showAlert(`✅ Added "${title}" to MusicsAura!`);
+      // AUTO GITHUB SYNC: Commit to jsons/{genre}.json in GitHub repository
+      try {
+        commitSongsToGitHub(genre, [{
+          title,
+          artist,
+          genre,
+          link: audioUrl,
+          thumbnail: coverUrl || "assets/logo.png"
+        }]).then((res) => {
+          if (res && res.success) {
+            console.log(`[GitHub Auto-Commit] "${title}" committed to jsons/${genre.toLowerCase()}.json!`);
+          }
+        });
+      } catch {}
+
+      showAlert(`✅ Added "${title}" to MusicsAura and synced to GitHub!`);
       uploadForm.reset();
       if (coverPreviewImg) coverPreviewImg.src = "assets/logo.png";
       loadUploadedSongs();

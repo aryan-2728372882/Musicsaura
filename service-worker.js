@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine
-const APP_SHELL_CACHE = "musicsaura-shell-v41";
+const APP_SHELL_CACHE = "musicsaura-shell-v42";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -12,6 +12,7 @@ const PRECACHE_ASSETS = [
   "/scripts/firebase-config.js",
   "/scripts/sw-manager.js",
   "/scripts/upload.js",
+  "/scripts/github-sync.js",
   "/manifest.json",
   "/assets/logo.png",
   "/assets/favicon.ico",
