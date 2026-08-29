@@ -1,7 +1,7 @@
 // scripts/admin.js — MusicsAura 3.0 Studio Controller
 import {
   auth, db, isAdmin, onAuthStateChanged, signOut,
-  collection, query, orderBy, getDocs, addDoc, deleteDoc, doc, serverTimestamp
+  collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp
 } from "./firebase-config.js";
 
 // DOM elements
