@@ -84,7 +84,7 @@ const GENRE_FILES = {
 const DEFAULT_GENRE        = "hindi";
 const FAVORITES_KEY        = "musicsaura_favorites";
 const OFFLINE_STORAGE_KEY  = "musicsaura_offline_songs";
-const OFFLINE_CACHE_NAME   = "musicsaura-pwa-storage-v1";
+const OFFLINE_CACHE_NAME   = "musicsaura-pwa-storage-v2";
 const LOCAL_UPLOADS_KEY    = "musicsaura_local_uploads";
 
 let allSongs = [];
@@ -125,6 +125,7 @@ export async function toggleOfflineStorage(song) {
   const id = song.id || song.link;
   let offlineList = getOfflineSongs();
   const existsIndex = offlineList.findIndex((s) => (s.id || s.link) === id);
+  const baseLink = song.link.split("?")[0];
 
   try {
     const cache = await caches.open(OFFLINE_CACHE_NAME);
@@ -134,6 +135,7 @@ export async function toggleOfflineStorage(song) {
       offlineList.splice(existsIndex, 1);
       localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(offlineList));
       await cache.delete(song.link);
+      await cache.delete(baseLink);
       player.showToast(`Removed from In-App Downloads`);
       updateOfflineIcons(song, false);
       updateDownloadBadge();
@@ -141,22 +143,43 @@ export async function toggleOfflineStorage(song) {
     } else {
       // Save inside in-app storage sandbox (NOT to phone download folder)
       player.showToast(`📥 Saving "${song.title}" into In-App Storage...`);
-      const res = await fetch(song.link, { mode: "cors" });
+      const res = await fetch(song.link);
       if (res.ok) {
-        await cache.put(song.link, res);
-        offlineList.unshift(song);
-        localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(offlineList));
-        player.showToast(`⚡ Saved in PWA Storage! Ready for offline play.`);
-        updateOfflineIcons(song, true);
-        updateDownloadBadge();
-        if (activeGenre === "offline") renderGenre("offline");
+        const blob = await res.blob();
+        if (blob && blob.size > 10240) {
+          const audioResponse = new Response(blob, {
+            headers: {
+              "content-type": "audio/mpeg",
+              "content-length": blob.size.toString()
+            }
+          });
+          await cache.put(song.link, audioResponse.clone());
+          await cache.put(baseLink, audioResponse);
+
+          // Also cache thumbnail image for offline UI display
+          if (song.thumbnail && !song.thumbnail.startsWith("assets/")) {
+            try {
+              const tRes = await fetch(song.thumbnail);
+              if (tRes.ok) await cache.put(song.thumbnail, tRes);
+            } catch {}
+          }
+
+          offlineList.unshift(song);
+          localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(offlineList));
+          player.showToast(`⚡ Saved in PWA Storage! Ready for offline play.`);
+          updateOfflineIcons(song, true);
+          updateDownloadBadge();
+          if (activeGenre === "offline") renderGenre("offline");
+        } else {
+          player.showToast("Could not download audio stream (empty payload)", 3000);
+        }
       } else {
         player.showToast("Could not download audio stream for offline cache", 3000);
       }
     }
   } catch (err) {
     console.warn("Offline cache error:", err);
-    player.showToast("Saved offline metadata to App Storage");
+    player.showToast("Could not save track offline: " + err.message, 3000);
   }
 }
 

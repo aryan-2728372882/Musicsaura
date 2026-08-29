@@ -432,6 +432,64 @@ audio.ontimeupdate = () => {
   }
 };
 
+export async function getOfflineAudioBlobUrl(link) {
+  if (!link || !("caches" in window)) return null;
+  try {
+    const cache = await caches.open("musicsaura-pwa-storage-v2");
+    const rawLink = link.split("?")[0];
+    const cachedRes = (await cache.match(link, { ignoreSearch: true })) ||
+                      (await cache.match(rawLink, { ignoreSearch: true }));
+    if (cachedRes && (cachedRes.ok || cachedRes.status === 200)) {
+      const blob = await cachedRes.blob();
+      if (blob && blob.size > 10240) {
+        return URL.createObjectURL(blob);
+      }
+    }
+  } catch (e) {
+    console.warn("Offline blob check:", e);
+  }
+  return null;
+}
+
+function isSongStoredOffline(song) {
+  if (!song) return false;
+  try {
+    const list = JSON.parse(localStorage.getItem("musicsaura_offline_songs") || "[]");
+    const id = song.id || song.link;
+    return list.some((s) => (s.id || s.link) === id);
+  } catch {
+    return false;
+  }
+}
+
+// ─── PERSISTENT AUDIO EVENT HANDLING ──────────────────────────────
+audio.onplay = () => {
+  userPaused = false;
+  playSessionStart = Date.now();
+  acquireWakeLock();
+  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
+  updateUI();
+};
+
+audio.onpause = () => {
+  capturePlaySeconds();
+  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
+  updateUI();
+  if (userPaused) releaseWakeLock();
+};
+
+audio.ontimeupdate = () => {
+  updateProgress();
+  updatePositionState();
+
+  if (playSessionStart > 0 && !hasRecordedStat) {
+    const currentSessionSec = (Date.now() - playSessionStart) / 1000;
+    if (accumulatedPlaySec + currentSessionSec >= STATS_MIN_PLAY_SECONDS) {
+      flushStatsToFirebase();
+    }
+  }
+};
+
 audio.onended = () => {
   flushStatsToFirebase();
 
@@ -446,16 +504,34 @@ audio.onended = () => {
 
 audio.onerror = (e) => {
   console.warn("Audio node playback error:", e, audio.error);
-  if (!audio._cacheRetried && audio.src && (audio.src.includes("file.garden") || audio.src.startsWith("http"))) {
-    audio._cacheRetried = true;
-    const separator = audio.src.includes("?") ? "&" : "?";
-    audio.src = audio.src + separator + "t=" + Date.now();
-    audio.play().catch(() => {});
-    return;
-  }
-  if (!userPaused && playlist.length > 1) {
-    setTimeout(() => player.next(true), 1500);
-  }
+  
+  // 1. Check if offline cached blob exists before failing
+  getOfflineAudioBlobUrl(currentSong?.link || audio.src).then((blobUrl) => {
+    if (blobUrl && audio.src !== blobUrl) {
+      audio.src = blobUrl;
+      audio.play().catch(() => {});
+      return;
+    }
+
+    // 2. If online and not retried with fresh timestamp, retry once
+    if (navigator.onLine && !audio._cacheRetried && audio.src && (audio.src.includes("file.garden") || audio.src.startsWith("http"))) {
+      audio._cacheRetried = true;
+      const separator = audio.src.includes("?") ? "&" : "?";
+      audio.src = audio.src + separator + "t=" + Date.now();
+      audio.play().catch(() => {});
+      return;
+    }
+
+    // 3. If offline, alert user and STOP (do not endlessly skip through un-downloaded tracks)
+    if (!navigator.onLine) {
+      player.showToast("⚠️ Offline: Connect to Wi-Fi/Data or play downloaded tracks.");
+      return;
+    }
+
+    if (!userPaused && playlist.length > 1) {
+      setTimeout(() => player.next(true), 1500);
+    }
+  });
 };
 
 // Volume initialization
@@ -501,7 +577,7 @@ export const player = {
     // Kept for backward compatibility
   },
 
-  playSong(song, playlistContext = null, index = null) {
+  async playSong(song, playlistContext = null, index = null) {
     if (!song || !song.link) return;
 
     // 1. Immediately update UI & Media Session (0ms visual latency)
@@ -523,44 +599,42 @@ export const player = {
     accumulatedPlaySec = 0;
     playSessionStart   = 0;
 
-    // 3. Normalize link & assign source immediately
-    const cleanUrl = normalizeUrl(song.link);
-    if (!cleanUrl) return;
-
-    let streamUrl = cleanUrl;
-    if (audio.src !== streamUrl) {
-      audio.src = streamUrl;
+    // 3. Check if stored offline in PWA Cache or device is offline
+    const isOfflineMode = !navigator.onLine || isSongStoredOffline(song);
+    let blobUrl = null;
+    if (isOfflineMode) {
+      blobUrl = await getOfflineAudioBlobUrl(song.link);
     }
+
+    if (blobUrl) {
+      audio.src = blobUrl;
+    } else if (navigator.onLine) {
+      const cleanUrl = normalizeUrl(song.link);
+      if (!cleanUrl) return;
+      if (audio.src !== cleanUrl) {
+        audio.src = cleanUrl;
+      }
+    } else {
+      player.showToast("⚠️ Offline: This track is not downloaded for offline play.");
+      return;
+    }
+
     audio.playbackRate = playbackRate;
     audio.volume = masterVolume;
 
-    // 4. Synchronous immediate play in current user gesture tick
+    // 4. Synchronous immediate play
     unlockAudioContext();
     try {
       const playPromise = audio.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
-          console.warn("Gesture required:", err);
+          console.warn("Playback gesture required:", err);
           updateUI();
         });
       }
     } catch (err) {
       console.warn("Playback gesture:", err);
       updateUI();
-    }
-
-    // 5. Offline PWA check in background without delaying stream start
-    if ("caches" in window) {
-      caches.open("musicsaura-pwa-storage-v2").then(async (cache) => {
-        const cachedRes = await cache.match(cleanUrl);
-        if (cachedRes && (cachedRes.ok || cachedRes.status === 200)) {
-          const blob = await cachedRes.blob();
-          if (blob && blob.size > 10240 && currentSong === song && audio.paused) {
-            audio.src = URL.createObjectURL(blob);
-            audio.play().catch(() => {});
-          }
-        }
-      }).catch(() => {});
     }
   },
 
