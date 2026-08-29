@@ -99,24 +99,79 @@
         <!-- Select MP3 File Button & Dynamic Folder Link -->
         <div style="margin:0.6rem 0 1.2rem;display:flex;flex-direction:column;gap:0.6rem">
           <div style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap">
-            <button type="button" id="btn-select-audio-file" class="btn-primary" style="background:var(--surface-raised);border:1px solid var(--border-strong);color:var(--text-primary);box-shadow:none;display:inline-flex;align-items:center;gap:8px;padding:0.7rem 1.25rem;font-size:0.9rem;border-radius:var(--radius-full);cursor:pointer">
-              <span class="material-icons" style="font-size:1.2rem;color:var(--violet-light)">audio_file</span>
-              <span>Select Your MP3 File (.mp3, .m4a, .wav)</span>
+            <button type="button" id="btn-select-audio-file" class="btn-primary" style="background:var(--surface-raised);border:1px solid var(--border-strong);color:var(--text-primary);box-shadow:none;display:inline-flex;align-items:center;gap:8px;padding:0.75rem 1.35rem;font-size:0.92rem;border-radius:var(--radius-full);cursor:pointer">
+              <span class="material-icons" style="font-size:1.25rem;color:var(--cyan)">library_music</span>
+              <span style="font-weight:700">Select MP3 Files (Upload 1 to 40+ at once)</span>
             </button>
-            <span id="selected-file-label" style="font-size:0.84rem;color:var(--text-muted)">No file chosen yet</span>
-            <input type="file" id="quick-audio-picker" accept=".mp3,.m4a,.wav,.flac,.aac,audio/*" style="display:none">
+            <span id="selected-file-label" style="font-size:0.84rem;color:var(--text-muted)">No files chosen yet</span>
+            <input type="file" id="quick-audio-picker" multiple accept=".mp3,.m4a,.wav,.flac,.aac,audio/*" style="display:none">
           </div>
 
           <div id="filegarden-guide-box" style="padding:0.8rem 1rem;background:rgba(34,211,238,0.08);border:1px solid rgba(34,211,238,0.25);border-radius:var(--radius-md);font-size:0.82rem;color:var(--text-secondary);line-height:1.5">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem">
               <div>
-                <strong style="color:var(--cyan)">📌 File Garden Upload Reminder:</strong> Drag & drop your MP3 into your File Garden folder so it's live on the internet!
+                <strong style="color:var(--cyan)">📌 File Garden Upload Reminder:</strong> Upload your MP3 files into your File Garden folder to make them streamable worldwide.
               </div>
               <a id="dynamic-folder-link" href="https://file.garden/aRgAQiYidD0tulQV/Hindi" target="_blank" rel="noopener" class="genre-pill" style="background:var(--cyan);color:#07070e;font-weight:700;font-size:0.78rem;border:none">
                 <span class="material-icons" style="font-size:0.95rem">open_in_new</span>
                 Open Hindi File Garden Folder
               </a>
             </div>
+          </div>
+        </div>
+
+        <!-- BATCH MULTI-TRACK QUEUE CONTAINER (SHOWN WHEN MULTIPLE FILES PICKED) -->
+        <div id="batch-queue-container" style="display:none;margin:1.5rem 0;padding:1.2rem;background:var(--surface-raised);border:1px solid var(--border-strong);border-radius:var(--radius-lg)">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.8rem;margin-bottom:1rem">
+            <div>
+              <h3 style="font-family:'Syne',sans-serif;font-size:1.15rem;display:flex;align-items:center;gap:6px">
+                <span class="material-icons" style="color:var(--cyan)">queue_music</span>
+                <span id="batch-queue-title">Multi-Track Batch Queue</span>
+              </h3>
+              <p id="batch-queue-subtitle" style="font-size:0.82rem;color:var(--text-secondary);margin-top:2px">
+                Auto-fetching metadata & cover art for all tracks...
+              </p>
+            </div>
+            <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+              <label style="font-size:0.8rem;color:var(--text-muted);display:flex;align-items:center;gap:4px">
+                Set All To:
+                <select id="batch-set-all-genre" class="form-select" style="padding:0.3rem 0.6rem;font-size:0.8rem;min-width:110px">
+                  <option value="">(Keep individual)</option>
+                  <option value="hindi">Hindi</option>
+                  <option value="punjabi">Punjabi</option>
+                  <option value="haryanvi">Haryanvi</option>
+                </select>
+              </label>
+              <button type="button" id="btn-clear-batch" class="action-btn" title="Clear batch queue" style="color:var(--rose)">
+                <span class="material-icons">delete_sweep</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Progress Bar during auto-fetching or uploading -->
+          <div id="batch-progress-wrap" style="display:none;margin-bottom:1rem">
+            <div style="display:flex;justify-content:space-between;font-size:0.78rem;margin-bottom:4px;color:var(--cyan)">
+              <span id="batch-progress-text">Processing tracks...</span>
+              <span id="batch-progress-pct">0%</span>
+            </div>
+            <div style="height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden">
+              <div id="batch-progress-fill" style="height:100%;width:0%;background:linear-gradient(90deg,var(--violet),var(--cyan));transition:width 0.2s ease"></div>
+            </div>
+          </div>
+
+          <!-- Scrollable Track List -->
+          <div id="batch-track-list" style="display:flex;flex-direction:column;gap:0.75rem;max-height:500px;overflow-y:auto;padding-right:4px"></div>
+
+          <!-- Batch Action Button -->
+          <div style="margin-top:1.2rem;display:flex;gap:0.8rem;align-items:center;justify-content:space-between;flex-wrap:wrap">
+            <div style="font-size:0.82rem;color:var(--text-muted)">
+              <span id="batch-ready-count" style="color:var(--cyan);font-weight:700">0</span> ready to publish &bull;
+              <span id="batch-dup-count" style="color:var(--rose)">0</span> duplicates blocked
+            </div>
+            <button type="button" id="btn-publish-batch" class="btn-primary" style="padding:0.75rem 1.5rem;font-size:0.95rem">
+              <span class="material-icons" style="font-size:1.1rem;vertical-align:middle;margin-right:4px">rocket_launch</span>
+              <span id="btn-publish-batch-text">Publish All Tracks to MusicsAura</span>
+            </button>
           </div>
         </div>
 
