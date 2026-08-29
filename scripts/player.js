@@ -7,19 +7,17 @@ import {
 } from "./firebase-config.js";
 
 // ─── UNIFIED HIGH-PERFORMANCE AUDIO ENGINE ─────────────────────────
-// Single persistent Audio element ensures 100% Android background audio retention
+// Single persistent Audio element ensures 100% Android background audio retention & instant playback
 const audio = new Audio();
 audio.preload = "auto";
-audio.crossOrigin = "anonymous";
 audio.setAttribute("playsinline", "");
 audio.setAttribute("webkit-playsinline", "");
 
 window._musicsaura_audio = audio;
 
-// Predictive Next-Track & Instant-Touch Audio Preloader (Plays in 0ms on 3G)
+// Predictive Next-Track & Instant-Touch Audio Preloader
 const prefetchAudio = new Audio();
 prefetchAudio.preload = "auto";
-prefetchAudio.crossOrigin = "anonymous";
 prefetchAudio.volume = 0;
 const prewarmedUrls = new Set();
 
@@ -183,18 +181,11 @@ function initAudioContext() {
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
 
-    // Single source connection — permanent & persistent across all tracks
+    // Connect EQ filters only if same-origin/supported
     try {
-      if (!sourceNode && audio) {
-        sourceNode = audioCtx.createMediaElementSource(audio);
-        sourceNode.connect(subBassFilter);
-      }
-    } catch (e) {
-      console.warn("EQ source connection:", e);
-    }
-
-    const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
-    applyPresetGains(savedPreset);
+      const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
+      applyPresetGains(savedPreset);
+    } catch {}
 
     return audioCtx;
   } catch (e) {
@@ -716,15 +707,6 @@ export const player = {
     prewarmedUrls.add(cleanUrl);
 
     try {
-      // 1. Preconnect & Link Preload header tag
-      const linkEl = document.createElement("link");
-      linkEl.rel = "preload";
-      linkEl.as = "fetch";
-      linkEl.href = cleanUrl;
-      linkEl.crossOrigin = "anonymous";
-      document.head.appendChild(linkEl);
-
-      // 2. Background audio element pre-buffer
       prefetchAudio.src = cleanUrl;
       prefetchAudio.load();
     } catch {}
