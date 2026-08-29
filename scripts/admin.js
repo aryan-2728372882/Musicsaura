@@ -362,18 +362,64 @@ async function loadUploadedSongs() {
   }
 }
 
+let songDisplayLimit      = 10;
+let userDisplayLimit      = 10;
+let currentDisplayedSongs = [];
+let allLoadedUsers        = [];
+
+const songsPaginationBar  = document.getElementById("songs-pagination-bar");
+const songsPaginationInfo = document.getElementById("songs-pagination-info");
+const btnMoreSongs        = document.getElementById("btn-more-songs");
+const btnAllSongs         = document.getElementById("btn-all-songs");
+
+const usersPaginationBar  = document.getElementById("users-pagination-bar");
+const usersPaginationInfo = document.getElementById("users-pagination-info");
+const btnMoreUsers        = document.getElementById("btn-more-users");
+const btnAllUsers         = document.getElementById("btn-all-users");
+
+if (btnMoreSongs) {
+  btnMoreSongs.addEventListener("click", () => {
+    songDisplayLimit += 10;
+    renderSongsTable(currentDisplayedSongs);
+  });
+}
+
+if (btnAllSongs) {
+  btnAllSongs.addEventListener("click", () => {
+    songDisplayLimit = Math.max(allUploadedSongs.length, 10);
+    renderSongsTable(currentDisplayedSongs);
+  });
+}
+
+if (btnMoreUsers) {
+  btnMoreUsers.addEventListener("click", () => {
+    userDisplayLimit += 10;
+    renderUsersTable();
+  });
+}
+
+if (btnAllUsers) {
+  btnAllUsers.addEventListener("click", () => {
+    userDisplayLimit = Math.max(allLoadedUsers.length, 10);
+    renderUsersTable();
+  });
+}
+
 function renderSongsTable(songs) {
   if (!songsTbody) return;
   if (songsLoading) songsLoading.style.display = "none";
+  currentDisplayedSongs = songs || [];
 
   if (!songs.length) {
     songsTbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">No studio songs found. Paste a link above to add one!</td></tr>`;
+    if (songsPaginationBar) songsPaginationBar.style.display = "none";
     return;
   }
 
+  const visibleSongs = songs.slice(0, songDisplayLimit);
   const frag = document.createDocumentFragment();
 
-  songs.forEach((song) => {
+  visibleSongs.forEach((song) => {
     const tr = document.createElement("tr");
     const thumbUrl = song.thumbnail || "assets/logo.png";
     const dateStr = song.createdAt?.toDate ? song.createdAt.toDate().toLocaleDateString() : "Recent";
@@ -405,6 +451,20 @@ function renderSongsTable(songs) {
   });
 
   songsTbody.replaceChildren(frag);
+
+  // Update pagination info & controls
+  if (songsPaginationBar) {
+    songsPaginationBar.style.display = "flex";
+  }
+  if (songsPaginationInfo) {
+    songsPaginationInfo.textContent = `Showing top ${Math.min(songDisplayLimit, songs.length)} of ${songs.length} releases`;
+  }
+  if (btnMoreSongs) {
+    btnMoreSongs.style.display = songDisplayLimit >= songs.length ? "none" : "inline-flex";
+  }
+  if (btnAllSongs) {
+    btnAllSongs.style.display = songDisplayLimit >= songs.length ? "none" : "inline-flex";
+  }
 
   // Bind delete handlers
   songsTbody.querySelectorAll(".delete-btn").forEach((btn) => {
@@ -506,47 +566,78 @@ async function loadUsersAndMetrics() {
     let totalSongs = 0;
     let totalMins = 0;
 
-    const frag = document.createDocumentFragment();
+    allLoadedUsers = [];
 
     snap.forEach((docSnap) => {
       const u = docSnap.data();
       totalUsers++;
       totalSongs += u.songsPlayed || 0;
       totalMins  += u.minutesListened || 0;
-
-      const lastPlayed = u.lastPlayed?.toDate ? u.lastPlayed.toDate().toLocaleString() : "Never";
-      const joinedDate = u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : "—";
-      const avatarUrl  = u.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.displayName || "U")}&background=8a5cf6&color=fff&size=80`;
-
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>
-          <div class="user-row">
-            <img class="user-avatar" src="${avatarUrl}" alt="" onerror="this.src='assets/logo.png'">
-            <div>
-              <div class="user-name-cell">${escapeHtml(u.displayName || "User")}</div>
-              <div class="user-email-cell">${escapeHtml(u.email || "")}</div>
-            </div>
-          </div>
-        </td>
-        <td><strong>${Math.round(u.minutesListened || 0).toLocaleString()} min</strong></td>
-        <td>${(u.songsPlayed || 0).toLocaleString()}</td>
-        <td class="hide-mobile">${lastPlayed}</td>
-        <td class="hide-mobile">${joinedDate}</td>
-      `;
-      frag.appendChild(tr);
+      allLoadedUsers.push(u);
     });
-
-    if (usersLoading) usersLoading.style.display = "none";
-    usersTbody.replaceChildren(frag);
 
     if (totalUsersEl) totalUsersEl.textContent = totalUsers.toLocaleString();
     if (totalSongsEl) totalSongsEl.textContent = totalSongs.toLocaleString();
     if (totalMinutesEl) totalMinutesEl.textContent = Math.round(totalMins).toLocaleString();
 
+    renderUsersTable();
+
   } catch (err) {
     console.error("Failed to load users:", err);
     if (usersLoading) usersLoading.textContent = "Error loading users: " + err.message;
+  }
+}
+
+function renderUsersTable() {
+  if (!usersTbody) return;
+  if (usersLoading) usersLoading.style.display = "none";
+
+  if (!allLoadedUsers.length) {
+    usersTbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">No registered listeners found.</td></tr>`;
+    if (usersPaginationBar) usersPaginationBar.style.display = "none";
+    return;
+  }
+
+  const visibleUsers = allLoadedUsers.slice(0, userDisplayLimit);
+  const frag = document.createDocumentFragment();
+
+  visibleUsers.forEach((u) => {
+    const lastPlayed = u.lastPlayed?.toDate ? u.lastPlayed.toDate().toLocaleString() : "Never";
+    const joinedDate = u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : "—";
+    const avatarUrl  = u.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.displayName || "U")}&background=8a5cf6&color=fff&size=80`;
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>
+        <div class="user-row">
+          <img class="user-avatar" src="${avatarUrl}" alt="" onerror="this.src='assets/logo.png'">
+          <div>
+            <div class="user-name-cell">${escapeHtml(u.displayName || "User")}</div>
+            <div class="user-email-cell">${escapeHtml(u.email || "")}</div>
+          </div>
+        </div>
+      </td>
+      <td><strong>${Math.round(u.minutesListened || 0).toLocaleString()} min</strong></td>
+      <td>${(u.songsPlayed || 0).toLocaleString()}</td>
+      <td class="hide-mobile">${lastPlayed}</td>
+      <td class="hide-mobile">${joinedDate}</td>
+    `;
+    frag.appendChild(tr);
+  });
+
+  usersTbody.replaceChildren(frag);
+
+  if (usersPaginationBar) {
+    usersPaginationBar.style.display = "flex";
+  }
+  if (usersPaginationInfo) {
+    usersPaginationInfo.textContent = `Showing top ${Math.min(userDisplayLimit, allLoadedUsers.length)} of ${allLoadedUsers.length} listeners`;
+  }
+  if (btnMoreUsers) {
+    btnMoreUsers.style.display = userDisplayLimit >= allLoadedUsers.length ? "none" : "inline-flex";
+  }
+  if (btnAllUsers) {
+    btnAllUsers.style.display = userDisplayLimit >= allLoadedUsers.length ? "none" : "inline-flex";
   }
 }
 

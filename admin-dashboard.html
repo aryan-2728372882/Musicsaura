@@ -215,6 +215,20 @@
         <tbody id="songs-tbody"></tbody>
       </table>
     </div>
+
+    <!-- SONGS VIEW MORE / PAGINATION BAR -->
+    <div id="songs-pagination-bar" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.8rem;margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)">
+      <span id="songs-pagination-info" style="font-size:0.82rem;color:var(--text-secondary)">Showing top 10 releases</span>
+      <div style="display:flex;gap:0.5rem">
+        <button type="button" id="btn-more-songs" class="genre-pill" style="padding:0.4rem 0.9rem;color:var(--cyan);border-color:rgba(34,211,238,0.4)">
+          <span class="material-icons" style="font-size:1rem;vertical-align:middle;margin-right:2px">expand_more</span>
+          View More (Load 10 More)
+        </button>
+        <button type="button" id="btn-all-songs" class="genre-pill" style="padding:0.4rem 0.9rem">
+          Show All
+        </button>
+      </div>
+    </div>
   </section>
 
   <!-- USERS ACTIVITY TABLE -->
@@ -234,6 +248,20 @@
         </thead>
         <tbody id="users-tbody"></tbody>
       </table>
+    </div>
+
+    <!-- USERS VIEW MORE / PAGINATION BAR -->
+    <div id="users-pagination-bar" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.8rem;margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)">
+      <span id="users-pagination-info" style="font-size:0.82rem;color:var(--text-secondary)">Showing top 10 listeners</span>
+      <div style="display:flex;gap:0.5rem">
+        <button type="button" id="btn-more-users" class="genre-pill" style="padding:0.4rem 0.9rem;color:var(--cyan);border-color:rgba(34,211,238,0.4)">
+          <span class="material-icons" style="font-size:1rem;vertical-align:middle;margin-right:2px">expand_more</span>
+          View More (Load 10 More)
+        </button>
+        <button type="button" id="btn-all-users" class="genre-pill" style="padding:0.4rem 0.9rem">
+          Show All
+        </button>
+      </div>
     </div>
   </section>
 
