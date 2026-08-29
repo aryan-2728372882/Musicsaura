@@ -379,30 +379,58 @@ function rebuildAllCatalogues() {
     return getSongTimestamp(b) - getSongTimestamp(a);
   });
 
-  // Build each genre with NEWEST published uploads at the top!
+  // Build each genre with NEWEST published uploads at the top & strict deduplication
   Object.keys(GENRE_FILES).forEach((genre) => {
     const raw = (rawJsonSongs[genre] || []).filter((s) => s && s.link && !deletedSongLinks.has(s.link));
     const genreUploads = uniqueCustom.filter((s) => s && (s.genre || "").toLowerCase() === genre.toLowerCase());
-    songsByGenre[genre] = [...genreUploads, ...raw];
+    
+    // Combine custom uploads (newest first) + static JSON songs
+    const combined = [...genreUploads, ...raw];
+    const seenLinks = new Set();
+    const seenTitles = new Set();
+    const deduplicated = [];
+
+    combined.forEach((s) => {
+      if (!s || !s.link) return;
+      const cleanLink = s.link.split("?")[0].toLowerCase().trim();
+      const cleanTitle = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+
+      if (!seenLinks.has(cleanLink) && (!cleanTitle || !seenTitles.has(cleanTitle))) {
+        seenLinks.add(cleanLink);
+        if (cleanTitle) seenTitles.add(cleanTitle);
+        deduplicated.push(s);
+      }
+    });
+
+    songsByGenre[genre] = deduplicated;
   });
 
-  // Rebuild global search index containing ALL songs
+  // Rebuild global search index containing ALL songs (strictly unique)
   allSongs = [];
-  const globalSeen = new Set();
+  const globalSeenLinks = new Set();
+  const globalSeenTitles = new Set();
 
   // 1. Add all custom uploads first (newest on top)
   uniqueCustom.forEach((s) => {
-    if (s && s.link && !globalSeen.has(s.link)) {
-      globalSeen.add(s.link);
+    if (!s || !s.link) return;
+    const cleanLink = s.link.split("?")[0].toLowerCase().trim();
+    const cleanTitle = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+    if (!globalSeenLinks.has(cleanLink) && (!cleanTitle || !globalSeenTitles.has(cleanTitle))) {
+      globalSeenLinks.add(cleanLink);
+      if (cleanTitle) globalSeenTitles.add(cleanTitle);
       allSongs.push(s);
     }
   });
 
-  // 2. Add all songs from all 3 JSONs (excluding deleted songs)
+  // 2. Add all songs from all JSONs (excluding deleted songs)
   Object.values(rawJsonSongs).forEach((list) => {
     list.forEach((s) => {
-      if (s && s.link && !globalSeen.has(s.link) && !deletedSongLinks.has(s.link)) {
-        globalSeen.add(s.link);
+      if (!s || !s.link || deletedSongLinks.has(s.link)) return;
+      const cleanLink = s.link.split("?")[0].toLowerCase().trim();
+      const cleanTitle = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+      if (!globalSeenLinks.has(cleanLink) && (!cleanTitle || !globalSeenTitles.has(cleanTitle))) {
+        globalSeenLinks.add(cleanLink);
+        if (cleanTitle) globalSeenTitles.add(cleanTitle);
         allSongs.push(s);
       }
     });
