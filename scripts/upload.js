@@ -870,7 +870,7 @@ async function loadCommunityUploads() {
   if (!contribList) return;
 
   try {
-    const q = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(20));
+    const q = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(40));
     const snap = await getDocs(q);
 
     if (contribCount) contribCount.textContent = `${snap.size} tracks`;
@@ -897,7 +897,10 @@ async function loadCommunityUploads() {
           <div class="fav-artist">${escapeHtml(song.artist || "Unknown")} • <span class="genre-badge" style="color:var(--cyan);font-weight:600">${escapeHtml(song.genre?.toUpperCase())}</span> • <span style="color:var(--text-muted)">by ${escapeHtml(song.uploadedBy || "Community")}</span></div>
         </div>
         <div style="display:flex;align-items:center;gap:4px">
-          <button class="action-btn btn-change-genre" title="Change Genre" style="color:var(--cyan)">
+          <button class="action-btn btn-edit-song" title="Edit Metadata & Artwork" style="color:var(--cyan)">
+            <span class="material-icons" style="font-size:1.1rem">edit</span>
+          </button>
+          <button class="action-btn btn-change-genre" title="Change Genre" style="color:var(--violet-light)">
             <span class="material-icons" style="font-size:1.1rem">swap_horiz</span>
           </button>
           <a href="${song.link}" target="_blank" rel="noopener" class="action-btn" title="Stream link">
@@ -909,7 +912,15 @@ async function loadCommunityUploads() {
         </div>
       `;
 
-      // Change Genre Action
+      // ── Edit Track Action ──
+      const editBtn = item.querySelector(".btn-edit-song");
+      if (editBtn) {
+        editBtn.addEventListener("click", () => {
+          openEditModal(songId, song);
+        });
+      }
+
+      // ── Change Genre Action ──
       const genreBtn = item.querySelector(".btn-change-genre");
       if (genreBtn) {
         genreBtn.addEventListener("click", async () => {
@@ -927,7 +938,7 @@ async function loadCommunityUploads() {
         });
       }
 
-      // Delete Song Action
+      // ── Delete Song Action ──
       const delBtn = item.querySelector(".btn-delete-song");
       if (delBtn) {
         delBtn.addEventListener("click", async () => {
@@ -960,6 +971,163 @@ async function loadCommunityUploads() {
     console.error("Community loads:", err);
     if (contribList) contribList.innerHTML = `<div class="state-msg">Could not load list: ${err.message}</div>`;
   }
+}
+
+// ─── EDIT MODAL CONTROLLER ─────────────────────────────────────────
+const editSongModal       = document.getElementById("edit-song-modal");
+const editSongForm        = document.getElementById("edit-song-form");
+const editSongId          = document.getElementById("edit-song-id");
+const editCoverPreview    = document.getElementById("edit-cover-preview");
+const editCoverUrl        = document.getElementById("edit-cover-url");
+const btnEditAutoFetch    = document.getElementById("btn-edit-autofetch");
+const editTitle           = document.getElementById("edit-title");
+const editArtist          = document.getElementById("edit-artist");
+const editGenre           = document.getElementById("edit-genre");
+const closeEditModalBtn   = document.getElementById("close-edit-modal-btn");
+const btnCancelEdit       = document.getElementById("btn-cancel-edit");
+
+let activeEditingSong     = null;
+
+function openEditModal(songId, song) {
+  if (!editSongModal) return;
+  activeEditingSong = song;
+
+  if (editSongId) editSongId.value = songId;
+  if (editTitle) editTitle.value = song.title || "";
+  if (editArtist) editArtist.value = song.artist || "";
+  if (editGenre) editGenre.value = (song.genre || "hindi").toLowerCase();
+  if (editCoverUrl) editCoverUrl.value = song.thumbnail || "";
+  if (editCoverPreview) editCoverPreview.src = song.thumbnail || "assets/logo.png";
+
+  editSongModal.classList.add("open");
+}
+
+function closeEditModal() {
+  if (editSongModal) editSongModal.classList.remove("open");
+  activeEditingSong = null;
+}
+
+if (closeEditModalBtn) closeEditModalBtn.addEventListener("click", closeEditModal);
+if (btnCancelEdit) btnCancelEdit.addEventListener("click", closeEditModal);
+
+if (editSongModal) {
+  editSongModal.addEventListener("click", (e) => {
+    if (e.target === editSongModal) closeEditModal();
+  });
+}
+
+// Live preview when typing/pasting custom cover URL
+if (editCoverUrl && editCoverPreview) {
+  editCoverUrl.addEventListener("input", () => {
+    const val = editCoverUrl.value.trim();
+    editCoverPreview.src = val || "assets/logo.png";
+  });
+}
+
+// 1-Click Auto-fetch artwork inside edit modal
+if (btnEditAutoFetch) {
+  btnEditAutoFetch.addEventListener("click", async () => {
+    const queryTerm = editTitle.value.trim();
+    if (!queryTerm) {
+      alert("Please enter a song title first to search artwork");
+      return;
+    }
+
+    btnEditAutoFetch.innerHTML = `<span class="material-icons" style="font-size:1rem;animation:spin 1s linear infinite">refresh</span>`;
+
+    try {
+      const meta = await fetchOnlineMetadata(queryTerm);
+      if (meta) {
+        if (meta.artwork) {
+          editCoverUrl.value = meta.artwork;
+          editCoverPreview.src = meta.artwork;
+        }
+        if (meta.artist && (!editArtist.value || editArtist.value === "Various Artists")) {
+          editArtist.value = meta.artist;
+        }
+        showAlert("✨ Artwork auto-found from Apple Music/iTunes!");
+      } else {
+        alert("No artwork found online for this title. You can paste any image link directly into the box!");
+      }
+    } catch {
+      alert("Error searching artwork. Paste any image URL directly!");
+    } finally {
+      btnEditAutoFetch.innerHTML = `<span class="material-icons" style="font-size:1rem">auto_awesome</span>`;
+    }
+  });
+}
+
+// Submit edited changes
+if (editSongForm) {
+  editSongForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const songId = editSongId.value;
+    const title = editTitle.value.trim();
+    const artist = editArtist.value.trim() || "Various Artists";
+    const genre = editGenre.value.toLowerCase();
+    const thumbnail = editCoverUrl.value.trim() || "assets/logo.png";
+
+    if (!songId || !title) {
+      alert("Please provide a title");
+      return;
+    }
+
+    const saveBtn = document.getElementById("btn-save-edit");
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving...";
+    }
+
+    try {
+      const keywords = Array.from(
+        new Set([
+          ...title.toLowerCase().split(/\s+/),
+          ...artist.toLowerCase().split(/[,&/ ]+/),
+          genre.toLowerCase()
+        ].filter(Boolean))
+      );
+
+      // Update Firestore document
+      await updateDoc(doc(db, "songs", songId), {
+        title,
+        artist,
+        genre,
+        thumbnail,
+        keywords
+      });
+
+      // Update local storage buffer
+      try {
+        const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
+        const found = local.find((s) => s.id === songId || s.link === activeEditingSong?.link);
+        if (found) {
+          found.title = title;
+          found.artist = artist;
+          found.genre = genre;
+          found.thumbnail = thumbnail;
+          found.keywords = keywords;
+          localStorage.setItem("musicsaura_local_uploads", JSON.stringify(local));
+        }
+      } catch {}
+
+      // Update duplicate registry
+      registerNewSong(title, activeEditingSong?.link);
+
+      showAlert(`🎉 Updated "${title}" details & artwork successfully!`);
+      closeEditModal();
+      loadCommunityUploads();
+
+    } catch (err) {
+      console.error("Update song error:", err);
+      showAlert("Error updating song: " + err.message, true);
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = `<span class="material-icons" style="font-size:1.1rem;vertical-align:middle;margin-right:4px">save</span> Save Changes`;
+      }
+    }
+  });
 }
 
 function escapeHtml(str) {

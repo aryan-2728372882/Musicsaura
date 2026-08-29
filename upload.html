@@ -264,6 +264,72 @@
 
   </div>
 
+  <!-- EDIT PUBLISHED SONG MODAL -->
+  <div id="edit-song-modal" class="modal-overlay">
+    <div class="modal-box" style="max-width:520px">
+      <div class="modal-header-row">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="material-icons" style="color:var(--cyan)">edit</span>
+          <h3 class="modal-title">Edit Track Metadata & Artwork</h3>
+        </div>
+        <button id="close-edit-modal-btn" class="action-btn" type="button">
+          <span class="material-icons">close</span>
+        </button>
+      </div>
+
+      <form id="edit-song-form" style="display:flex;flex-direction:column;gap:1rem;margin-top:1rem">
+        <input type="hidden" id="edit-song-id">
+
+        <!-- Cover Preview & URL Input -->
+        <div style="display:flex;gap:12px;align-items:center;background:var(--surface-raised);padding:0.8rem;border-radius:var(--radius-md);border:1px solid var(--border)">
+          <div style="width:72px;height:72px;border-radius:var(--radius-sm);overflow:hidden;background:var(--surface-card);flex-shrink:0;border:1px solid var(--border-strong)">
+            <img id="edit-cover-preview" src="assets/logo.png" alt="Cover Preview" style="width:100%;height:100%;object-fit:cover" onerror="this.src='assets/logo.png'">
+          </div>
+          <div style="flex:1;min-width:0">
+            <label for="edit-cover-url" style="font-size:0.8rem;color:var(--text-muted);margin-bottom:4px;display:block">
+              Music Cover / Artwork Image URL
+            </label>
+            <div style="display:flex;gap:4px">
+              <input type="url" id="edit-cover-url" class="form-input" placeholder="Paste image link from Spotify, Saavn, Imgur, etc." style="padding:0.45rem 0.6rem;font-size:0.82rem;flex:1">
+              <button type="button" id="btn-edit-autofetch" class="genre-pill" title="Search artwork online" style="padding:0.4rem 0.7rem">
+                <span class="material-icons" style="font-size:1rem">auto_awesome</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label for="edit-title">Song Title</label>
+          <input type="text" id="edit-title" class="form-input" required>
+        </div>
+
+        <div class="input-group">
+          <label for="edit-artist">Artist(s)</label>
+          <input type="text" id="edit-artist" class="form-input" placeholder="e.g. Arijit Singh / AP Dhillon">
+        </div>
+
+        <div class="input-group">
+          <label for="edit-genre">Category / Genre</label>
+          <select id="edit-genre" class="form-select">
+            <option value="hindi">Hindi Hits</option>
+            <option value="punjabi">Punjabi Vibes</option>
+            <option value="haryanvi">Haryanvi Swag</option>
+          </select>
+        </div>
+
+        <div style="display:flex;gap:0.8rem;justify-content:flex-end;margin-top:0.5rem">
+          <button type="button" id="btn-cancel-edit" class="btn-primary" style="background:var(--surface-card);border:1px solid var(--border-strong);color:var(--text-secondary);box-shadow:none">
+            Cancel
+          </button>
+          <button type="submit" id="btn-save-edit" class="btn-primary" style="background:linear-gradient(135deg,var(--violet),var(--cyan));color:#07070e;font-weight:700">
+            <span class="material-icons" style="font-size:1.1rem;vertical-align:middle;margin-right:4px">save</span>
+            Save Changes
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 
   <script src="scripts/sw-manager.js" defer></script>
