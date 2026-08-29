@@ -180,6 +180,10 @@
       </div>
       <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
         <input type="search" id="songs-search" class="form-input" placeholder="Filter songs..." style="width:180px;padding:0.45rem 0.8rem">
+        <button id="btn-scan-duplicates" class="genre-pill" style="color:var(--gold);border-color:rgba(234,179,8,0.4);background:rgba(234,179,8,0.08)" title="Scan and manage duplicate songs">
+          <span class="material-icons" style="font-size:1rem;vertical-align:middle;margin-right:2px">find_replace</span>
+          Duplicate Finder
+        </button>
         <button id="sync-json-btn" class="btn-primary" style="padding:0.45rem 0.9rem;font-size:0.8rem;background:linear-gradient(135deg,var(--cyan),var(--violet))" title="Populate Firestore songs database from cleaned local JSONs">
           <span class="material-icons" style="font-size:1rem;vertical-align:middle;margin-right:2px">cloud_upload</span>
           Sync JSONs &rarr; Firestore
@@ -230,6 +234,41 @@
   </section>
 
 </div>
+
+<!-- DUPLICATE SONGS AUDIT MODAL -->
+<div id="duplicates-modal" class="modal-overlay">
+  <div class="modal-box" style="max-width:620px">
+    <div class="modal-header-row">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="material-icons" style="color:var(--gold)">warning</span>
+        <h3 class="modal-title" id="dup-modal-title">Duplicate Songs Report</h3>
+      </div>
+      <button id="close-dup-modal-btn" class="action-btn" type="button">
+        <span class="material-icons">close</span>
+      </button>
+    </div>
+
+    <div style="margin:1rem 0">
+      <div id="dup-summary-banner" style="padding:0.8rem 1rem;background:rgba(234,179,8,0.1);border:1px solid rgba(234,179,8,0.3);border-radius:var(--radius-md);font-size:0.85rem;color:var(--text-secondary);line-height:1.5;margin-bottom:1rem">
+        <span id="dup-summary-text">Scanning for duplicate tracks...</span>
+      </div>
+
+      <div id="dup-list-container" style="display:flex;flex-direction:column;gap:0.6rem;max-height:380px;overflow-y:auto;padding-right:4px"></div>
+    </div>
+
+    <div style="display:flex;gap:0.8rem;justify-content:flex-end;margin-top:1rem;flex-wrap:wrap">
+      <button type="button" id="btn-purge-all-dups" class="btn-primary" style="background:var(--rose);color:white;display:none">
+        <span class="material-icons" style="font-size:1.1rem;vertical-align:middle;margin-right:4px">delete_forever</span>
+        Remove All Duplicate Copies
+      </button>
+      <button type="button" id="btn-close-dup-modal" class="btn-primary" style="background:var(--surface-card);border:1px solid var(--border-strong);color:var(--text-secondary);box-shadow:none">
+        Close
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
 
 <script src="scripts/sw-manager.js" defer></script>
 <script type="module" src="scripts/admin.js"></script>

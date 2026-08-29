@@ -561,11 +561,192 @@ function initAdminDashboard() {
   loadUsersAndMetrics();
 }
 
-// ─── SYNC JSONS TO FIRESTORE ───
+// ─── DUPLICATES AUDIT MODAL CONTROLLER ─────────────────────────────
+const duplicatesModal     = document.getElementById("duplicates-modal");
+const dupModalTitle       = document.getElementById("dup-modal-title");
+const closeDupModalBtn     = document.getElementById("close-dup-modal-btn");
+const btnCloseDupModal    = document.getElementById("btn-close-dup-modal");
+const dupSummaryText      = document.getElementById("dup-summary-text");
+const dupListContainer    = document.getElementById("dup-list-container");
+const btnPurgeAllDups     = document.getElementById("btn-purge-all-dups");
+const btnScanDuplicates   = document.getElementById("btn-scan-duplicates");
+
+let currentDuplicateDocs  = []; // Array of Firestore docs flagged as duplicate copies
+
+function openDuplicatesReport(title, summaryHtml, listItems, allowPurge = false) {
+  if (!duplicatesModal) return;
+
+  if (dupModalTitle) dupModalTitle.textContent = title;
+  if (dupSummaryText) dupSummaryText.innerHTML = summaryHtml;
+
+  if (dupListContainer) {
+    dupListContainer.innerHTML = "";
+
+    if (!listItems.length) {
+      dupListContainer.innerHTML = `<div class="state-msg">✅ No duplicate tracks found in this scan! Your catalogue is 100% clean.</div>`;
+    } else {
+      const frag = document.createDocumentFragment();
+
+      listItems.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "fav-item";
+        row.style.cssText = "display:flex;gap:10px;align-items:center;background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--radius-md);padding:0.6rem 0.8rem";
+
+        const thumb = item.thumbnail || "assets/logo.png";
+
+        row.innerHTML = `
+          <img src="${thumb}" alt="" style="width:44px;height:44px;border-radius:var(--radius-sm);object-fit:cover;flex-shrink:0" onerror="this.src='assets/logo.png'">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:0.88rem;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(item.title)}</div>
+            <div style="font-size:0.78rem;color:var(--text-secondary)">
+              ${escapeHtml(item.artist || "Unknown")} &bull; <span style="color:var(--cyan);font-weight:600">${escapeHtml((item.genre || "").toUpperCase())}</span>
+              &bull; <span style="color:var(--rose);font-weight:600">${escapeHtml(item.reason || "Duplicate copy")}</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            ${item.docId ? `
+              <button class="action-btn btn-delete-dup" style="color:var(--rose)" title="Delete this duplicate copy from Firestore">
+                <span class="material-icons" style="font-size:1.1rem">delete</span>
+              </button>
+            ` : `
+              <span class="genre-tag" style="background:rgba(234,179,8,0.15);color:var(--gold);border-color:rgba(234,179,8,0.3);font-size:0.72rem">Skipped</span>
+            `}
+          </div>
+        `;
+
+        if (item.docId) {
+          const delBtn = row.querySelector(".btn-delete-dup");
+          delBtn.addEventListener("click", async () => {
+            if (!confirm(`Delete duplicate copy of "${item.title}" from database?`)) return;
+            try {
+              await deleteDoc(doc(db, "songs", item.docId));
+              row.remove();
+              showAlert(`🗑️ Deleted duplicate "${item.title}"`);
+              loadUploadedSongs();
+            } catch (err) {
+              alert("Could not delete: " + err.message);
+            }
+          });
+        }
+
+        frag.appendChild(row);
+      });
+
+      dupListContainer.appendChild(frag);
+    }
+  }
+
+  if (btnPurgeAllDups) {
+    btnPurgeAllDups.style.display = (allowPurge && currentDuplicateDocs.length > 0) ? "inline-flex" : "none";
+  }
+
+  duplicatesModal.classList.add("open");
+}
+
+function closeDuplicatesModal() {
+  if (duplicatesModal) duplicatesModal.classList.remove("open");
+  currentDuplicateDocs = [];
+}
+
+if (closeDupModalBtn) closeDupModalBtn.addEventListener("click", closeDuplicatesModal);
+if (btnCloseDupModal) btnCloseDupModal.addEventListener("click", closeDuplicatesModal);
+
+if (duplicatesModal) {
+  duplicatesModal.addEventListener("click", (e) => {
+    if (e.target === duplicatesModal) closeDuplicatesModal();
+  });
+}
+
+// Purge all duplicate copies in 1 click
+if (btnPurgeAllDups) {
+  btnPurgeAllDups.addEventListener("click", async () => {
+    if (!currentDuplicateDocs.length) return;
+    if (!confirm(`Are you sure you want to permanently delete all ${currentDuplicateDocs.length} duplicate copies from Firestore? (1 original copy of each song will remain)`)) return;
+
+    btnPurgeAllDups.disabled = true;
+    btnPurgeAllDups.textContent = "Purging duplicates...";
+
+    let deleted = 0;
+    try {
+      for (const item of currentDuplicateDocs) {
+        if (item.docId) {
+          await deleteDoc(doc(db, "songs", item.docId));
+          deleted++;
+        }
+      }
+      showAlert(`🎉 Successfully purged ${deleted} duplicate songs from Firestore!`);
+      closeDuplicatesModal();
+      loadUploadedSongs();
+    } catch (err) {
+      alert("Purge error: " + err.message);
+    } finally {
+      btnPurgeAllDups.disabled = false;
+      btnPurgeAllDups.innerHTML = `<span class="material-icons" style="font-size:1.1rem;vertical-align:middle;margin-right:4px">delete_forever</span> Remove All Duplicate Copies`;
+    }
+  });
+}
+
+// ─── 1-CLICK DUPLICATE SCANNER (SCANS DATABASE FOR DUPLICATES) ─────
+if (btnScanDuplicates) {
+  btnScanDuplicates.addEventListener("click", async () => {
+    btnScanDuplicates.disabled = true;
+    btnScanDuplicates.innerHTML = `<span class="material-icons" style="font-size:1rem;animation:spin 1s linear infinite">refresh</span> Scanning...`;
+
+    try {
+      const snap = await getDocs(collection(db, "songs"));
+      const songs = [];
+      snap.forEach((d) => songs.push({ docId: d.id, ...d.data() }));
+
+      const seenLinks = new Map();
+      const seenTitles = new Map();
+      const duplicateList = [];
+      currentDuplicateDocs = [];
+
+      songs.forEach((s) => {
+        const cleanLink = (s.link || "").split("?")[0].toLowerCase().trim();
+        const cleanTitle = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+
+        let isDup = false;
+        let reason = "";
+
+        if (cleanLink && seenLinks.has(cleanLink)) {
+          isDup = true;
+          reason = `Identical stream URL with "${seenLinks.get(cleanLink).title}"`;
+        } else if (cleanTitle && seenTitles.has(cleanTitle)) {
+          isDup = true;
+          reason = `Matching title with "${seenTitles.get(cleanTitle).title}"`;
+        }
+
+        if (isDup) {
+          const item = { ...s, reason };
+          duplicateList.push(item);
+          currentDuplicateDocs.push(item);
+        } else {
+          if (cleanLink) seenLinks.set(cleanLink, s);
+          if (cleanTitle) seenTitles.set(cleanTitle, s);
+        }
+      });
+
+      const summary = duplicateList.length > 0
+        ? `Found <strong>${duplicateList.length} duplicate songs</strong> in Firestore. You can review them below and remove duplicates individually or purge all duplicate copies.`
+        : `All <strong>${songs.length} tracks</strong> in the Firestore database are unique. Zero duplicates found!`;
+
+      openDuplicatesReport("🔍 Database Duplicate Audit", summary, duplicateList, true);
+
+    } catch (err) {
+      alert("Error scanning duplicates: " + err.message);
+    } finally {
+      btnScanDuplicates.disabled = false;
+      btnScanDuplicates.innerHTML = `<span class="material-icons" style="font-size:1rem;vertical-align:middle;margin-right:2px">find_replace</span> Duplicate Finder`;
+    }
+  });
+}
+
+// ─── SYNC JSONS TO FIRESTORE (WITH DUPLICATE REPORT) ──────────────
 const syncJsonBtn = document.getElementById("sync-json-btn");
 if (syncJsonBtn) {
   syncJsonBtn.addEventListener("click", async () => {
-    if (!confirm("Do you want to sync all cleaned songs from hindi.json, punjabi.json, and haryanvi.json into Firestore? (Existing duplicate links will be skipped)")) {
+    if (!confirm("Do you want to sync all cleaned songs from hindi.json, punjabi.json, and haryanvi.json into Firestore? (Any duplicate songs will be identified and reported)")) {
       return;
     }
 
@@ -581,14 +762,19 @@ if (syncJsonBtn) {
 
       // Fetch existing songs from Firestore to avoid duplicate links
       const existingSnap = await getDocs(collection(db, "songs"));
-      const existingLinks = new Set();
-      existingSnap.forEach(d => {
-        const link = d.data().link;
-        if (link) existingLinks.add(link);
+      const existingLinks = new Map();
+      const existingTitles = new Map();
+
+      existingSnap.forEach((d) => {
+        const data = d.data();
+        const cleanLink = (data.link || "").split("?")[0].toLowerCase().trim();
+        const cleanTitle = (data.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+        if (cleanLink) existingLinks.set(cleanLink, data.title);
+        if (cleanTitle) existingTitles.set(cleanTitle, data.title);
       });
 
       let addedCount = 0;
-      let skippedCount = 0;
+      const skippedDuplicates = [];
 
       for (const item of genres) {
         try {
@@ -598,8 +784,29 @@ if (syncJsonBtn) {
 
           for (const s of songs) {
             if (!s.title || !s.link) continue;
-            if (existingLinks.has(s.link)) {
-              skippedCount++;
+
+            const cleanLink = s.link.split("?")[0].toLowerCase().trim();
+            const cleanTitle = s.title.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+
+            if (existingLinks.has(cleanLink)) {
+              skippedDuplicates.push({
+                title: s.title,
+                artist: s.artist || "Unknown",
+                genre: item.genre,
+                thumbnail: s.thumbnail || "assets/logo.png",
+                reason: `Link already exists in Firestore (as "${existingLinks.get(cleanLink)}")`
+              });
+              continue;
+            }
+
+            if (existingTitles.has(cleanTitle)) {
+              skippedDuplicates.push({
+                title: s.title,
+                artist: s.artist || "Unknown",
+                genre: item.genre,
+                thumbnail: s.thumbnail || "assets/logo.png",
+                reason: `Title already exists in Firestore (as "${existingTitles.get(cleanTitle)}")`
+              });
               continue;
             }
 
@@ -622,7 +829,8 @@ if (syncJsonBtn) {
               plays: 0
             });
 
-            existingLinks.add(s.link);
+            existingLinks.set(cleanLink, s.title);
+            existingTitles.set(cleanTitle, s.title);
             addedCount++;
             syncJsonBtn.textContent = `Syncing... (${addedCount} added)`;
           }
@@ -631,8 +839,16 @@ if (syncJsonBtn) {
         }
       }
 
-      alert(`✅ Sync Complete!\n${addedCount} songs added to Firestore database.\n${skippedCount} duplicate songs skipped.`);
+      const summaryHtml = `
+        <strong>Sync Finished!</strong> Added <strong>${addedCount} new songs</strong> to Firestore.<br>
+        ${skippedDuplicates.length > 0
+          ? `Detected and skipped <strong>${skippedDuplicates.length} duplicate tracks</strong>. See below for the exact track names:`
+          : `All songs were unique. Zero duplicates encountered.`}
+      `;
+
+      openDuplicatesReport("📥 Sync & Duplicate Report", summaryHtml, skippedDuplicates, false);
       loadUploadedSongs();
+
     } catch (err) {
       alert("Sync failed: " + err.message);
     } finally {
