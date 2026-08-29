@@ -587,7 +587,10 @@ function selectGenre(genre) {
   });
 
   grid.hidden = false;
+  grid.style.display = "";
   searchGrid.hidden = true;
+  searchGrid.style.display = "none";
+  if (heroBanner) heroBanner.style.display = "";
   if (searchInp) searchInp.value = "";
   if (mobileSearchInp) mobileSearchInp.value = "";
   if (searchClearBtn) searchClearBtn.style.display = "none";
@@ -618,6 +621,31 @@ function renderGenre(genre) {
 }
 
 /* ── SEARCH ENGINE ── */
+function getAllSearchableSongs() {
+  if (allSongs && allSongs.length > 0) return allSongs;
+  const list = [];
+  const seen = new Set();
+
+  getOfflineSongs().forEach((s) => {
+    if (s && s.link && !seen.has(s.link)) {
+      seen.add(s.link);
+      const norm = normalizeSong(s, s.genre || "offline", "offline");
+      if (norm) list.push(norm);
+    }
+  });
+
+  Object.values(songsByGenre).forEach((genreList) => {
+    (genreList || []).forEach((s) => {
+      if (s && s.link && !seen.has(s.link)) {
+        seen.add(s.link);
+        list.push(s);
+      }
+    });
+  });
+
+  return list;
+}
+
 function searchSongs(query) {
   const q = (query || "").trim().toLowerCase();
 
@@ -626,18 +654,32 @@ function searchSongs(query) {
 
   if (!q) {
     searchGrid.hidden = true;
+    searchGrid.style.display = "none";
     grid.hidden = false;
+    grid.style.display = "";
+    if (heroBanner) heroBanner.style.display = "";
     return;
   }
 
+  const pool = getAllSearchableSongs();
   const terms = q.split(/\s+/).filter(Boolean);
-  const matches = allSongs.filter((song) => {
-    return terms.every((term) => (song._search || "").includes(term));
+
+  const matches = pool.filter((song) => {
+    if (!song) return false;
+    const title = (song.title || "").toLowerCase();
+    const artist = (song.artist || "").toLowerCase();
+    const genre = (song.genre || "").toLowerCase();
+    const kw = Array.isArray(song.keywords) ? song.keywords.join(" ").toLowerCase() : "";
+    const searchTarget = `${title} ${artist} ${genre} ${kw} ${song._search || ""}`.toLowerCase();
+    return terms.every((term) => searchTarget.includes(term));
   });
 
-  renderSongList(searchGrid, matches, `No songs matching "${escapeHtml(query)}"`);
+  renderSongList(searchGrid, matches, `No songs found matching "${escapeHtml(query)}". Try another track title, artist, or genre.`);
   grid.hidden = true;
+  grid.style.display = "none";
   searchGrid.hidden = false;
+  searchGrid.style.display = "grid";
+  if (heroBanner) heroBanner.style.display = "none";
 }
 
 /* ── CARD CLICK DELEGATION ── */
