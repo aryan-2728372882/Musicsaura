@@ -334,22 +334,69 @@ if (submitBulkBtn && bulkUrlsInput) {
   });
 }
 
-// ─── LOAD & MANAGE SONGS TABLE ─────────────────────────────────────
+// ─── LOAD & MANAGE COMPLETE STUDIO CATALOG (JSONs + FIRESTORE + LOCAL) ─
 async function loadUploadedSongs() {
   if (!songsTbody) return;
   if (songsLoading) songsLoading.style.display = "block";
 
   try {
-    const q = query(collection(db, "songs"), orderBy("createdAt", "desc"));
-    const snap = await getDocs(q);
+    const songMap = new Map();
 
-    allUploadedSongs = [];
-    snap.forEach((docSnap) => {
-      allUploadedSongs.push({
-        id: docSnap.id,
-        ...docSnap.data()
+    // 1. Load static JSON catalogs
+    const genres = [
+      { file: "jsons/hindi.json", genre: "Hindi" },
+      { file: "jsons/punjabi.json", genre: "Punjabi" },
+      { file: "jsons/haryanvi.json", genre: "Haryanvi" },
+      { file: "jsons/rap.json", genre: "Rap" },
+      { file: "jsons/bhojpuri.json", genre: "Bhojpuri" }
+    ];
+
+    await Promise.all(
+      genres.map(async (g) => {
+        try {
+          const res = await fetch(g.file);
+          if (res.ok) {
+            const list = await res.json();
+            list.forEach((s) => {
+              if (s && s.link) {
+                const key = s.link.split("?")[0].toLowerCase().trim();
+                songMap.set(key, { ...s, genre: s.genre || g.genre, source: "json" });
+              }
+            });
+          }
+        } catch {}
+      })
+    );
+
+    // 2. Load Firestore songs
+    try {
+      const q = query(collection(db, "songs"), orderBy("createdAt", "desc"));
+      const snap = await getDocs(q);
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data && data.link) {
+          const key = data.link.split("?")[0].toLowerCase().trim();
+          songMap.set(key, { id: docSnap.id, ...data, source: "firestore" });
+        }
       });
-    });
+    } catch (e) {
+      console.warn("Firestore fetch notice:", e);
+    }
+
+    // 3. Load local uploads buffer
+    try {
+      const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
+      local.forEach((s) => {
+        if (s && s.link) {
+          const key = s.link.split("?")[0].toLowerCase().trim();
+          if (!songMap.has(key)) {
+            songMap.set(key, { ...s, source: "local" });
+          }
+        }
+      });
+    } catch {}
+
+    allUploadedSongs = Array.from(songMap.values());
 
     if (uploadedCountEl) uploadedCountEl.textContent = allUploadedSongs.length;
     if (songsCountBadge) songsCountBadge.textContent = `${allUploadedSongs.length} tracks`;
@@ -357,8 +404,8 @@ async function loadUploadedSongs() {
     renderSongsTable(allUploadedSongs);
 
   } catch (err) {
-    console.error("Failed to load songs:", err);
-    if (songsLoading) songsLoading.textContent = "Error loading songs: " + err.message;
+    console.error("Failed to load studio catalogue:", err);
+    if (songsLoading) songsLoading.textContent = "Error loading catalogue: " + err.message;
   }
 }
 
@@ -1004,6 +1051,40 @@ if (syncJsonBtn) {
         } catch (e) {
           console.warn("Sync error for", item.genre, e);
         }
+      }
+
+      // Also sync any locally uploaded songs from creator studio
+      try {
+        const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
+        for (const s of local) {
+          if (!s.title || !s.link) continue;
+          const cleanLink = s.link.split("?")[0].toLowerCase().trim();
+          const cleanTitle = s.title.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+
+          if (existingLinks.has(cleanLink) || existingTitles.has(cleanTitle)) continue;
+
+          await addDoc(collection(db, "songs"), {
+            title: s.title,
+            artist: s.artist || "MusicsAura",
+            genre: (s.genre || "Hindi").toLowerCase(),
+            link: s.link,
+            thumbnail: s.thumbnail || "assets/logo.png",
+            keywords: Array.from(new Set([
+              ...s.title.toLowerCase().split(/\s+/),
+              ...(s.artist ? s.artist.toLowerCase().split(/[,&/ ]+/) : [])
+            ].filter(Boolean))),
+            uploadedBy: currentAdminUser?.email || "admin@musicsaura.com",
+            createdAt: serverTimestamp(),
+            plays: 0
+          });
+
+          existingLinks.set(cleanLink, s.title);
+          existingTitles.set(cleanTitle, s.title);
+          addedCount++;
+          syncJsonBtn.textContent = `Syncing... (${addedCount} added)`;
+        }
+      } catch (e) {
+        console.warn("Local uploads sync notice:", e);
       }
 
       const summaryHtml = `
