@@ -4,7 +4,7 @@
 import {
   db,
   collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp,
-  doc, deleteDoc, updateDoc
+  doc, deleteDoc, updateDoc, writeBatch
 } from "./firebase-config.js";
 
 // Folder Base URLs for File Garden
@@ -560,16 +560,21 @@ if (btnPublishBatch) {
 
     let publishedCount = 0;
     const uploaderName = (uploaderNameInput ? uploaderNameInput.value.trim() : "") || "Community Member";
+    const localSavedSongs = [];
 
-    for (let i = 0; i < publishable.length; i++) {
-      const track = publishable[i];
+    // Process in atomic batches of 100
+    const BATCH_SIZE = 100;
+    for (let b = 0; b < publishable.length; b += BATCH_SIZE) {
+      const chunk = publishable.slice(b, b + BATCH_SIZE);
+      const batch = writeBatch(db);
 
-      const pct = Math.round(((i + 1) / publishable.length) * 100);
-      if (batchProgressPct) batchProgressPct.textContent = `${pct}%`;
-      if (batchProgressFill) batchProgressFill.style.width = `${pct}%`;
-      if (batchProgressText) batchProgressText.textContent = `🚀 Publishing "${track.title}" (${i + 1}/${publishable.length})...`;
+      chunk.forEach((track, idx) => {
+        const i = b + idx;
+        const pct = Math.round(((i + 1) / publishable.length) * 100);
+        if (batchProgressPct) batchProgressPct.textContent = `${pct}%`;
+        if (batchProgressFill) batchProgressFill.style.width = `${pct}%`;
+        if (batchProgressText) batchProgressText.textContent = `🚀 Publishing "${track.title}" (${i + 1}/${publishable.length})...`;
 
-      try {
         const keywords = Array.from(
           new Set([
             ...track.title.toLowerCase().split(/\s+/),
@@ -579,7 +584,7 @@ if (btnPublishBatch) {
           ].filter(Boolean))
         );
 
-        await addDoc(collection(db, "songs"), {
+        const songData = {
           title: track.title,
           artist: track.artist || "Various Artists",
           genre: track.genre.toLowerCase(),
@@ -589,18 +594,37 @@ if (btnPublishBatch) {
           uploadedBy: uploaderName,
           createdAt: serverTimestamp(),
           plays: 0
+        };
+
+        const docRef = doc(collection(db, "songs"));
+        batch.set(docRef, songData);
+
+        localSavedSongs.push({
+          id: docRef.id,
+          ...songData,
+          _timestamp: Date.now()
         });
 
-        // Register in local sets
         registerNewSong(track.title, track.streamUrl);
         track.status = "uploaded";
         renderBatchTrackItemStatus(track);
-        publishedCount++;
+      });
 
+      try {
+        await batch.commit();
+        publishedCount += chunk.length;
       } catch (err) {
-        console.error("Batch publish track error:", err);
+        console.error("Batch commit error:", err);
       }
     }
+
+    // Save to local storage buffer & invalidate cache so index.html immediately displays all songs
+    try {
+      const existingLocal = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
+      const combined = [...localSavedSongs, ...existingLocal];
+      localStorage.setItem("musicsaura_local_uploads", JSON.stringify(combined.slice(0, 150)));
+      localStorage.removeItem("musicsaura_firestore_cache_time"); // force instant refresh on main page
+    } catch {}
 
     showAlert(`🎉 Batch complete! Successfully published ${publishedCount} tracks to MusicsAura!`);
     loadCommunityUploads();

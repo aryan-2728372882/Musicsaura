@@ -464,22 +464,21 @@ function saveCachedFirestoreSongs(songs) {
 }
 
 async function subscribeToFirestoreSongs() {
-  // 0. Load cached songs immediately for 0ms startup & 0 quota usage
+  // 0. Load cached songs immediately
   loadCachedFirestoreSongs();
 
-  // 1. Check if cached data is still fresh (< 30 minutes old) -> ZERO READS!
-  const lastSyncTime = parseInt(localStorage.getItem(FIRESTORE_CACHE_TIME_KEY) || "0", 10);
-  const isFresh = (Date.now() - lastSyncTime) < CACHE_VALIDITY_MS;
-  if (isFresh && firestoreSongs.length > 0) {
-    return; // ZERO FIRESTORE READS!
-  }
-
   try {
-    // 2. One-shot fetch (limited to top 50 recent releases to avoid read spikes)
-    const songsQuery = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(50));
-    const snap = await getDocs(songsQuery);
-    const newSongs = [];
+    // 1. Fetch recent releases from Firestore
+    let snap;
+    try {
+      const songsQuery = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(100));
+      snap = await getDocs(songsQuery);
+    } catch (e) {
+      // Direct collection fallback in case index is pending
+      snap = await getDocs(collection(db, "songs"));
+    }
 
+    const newSongs = [];
     snap.forEach((docSnap) => {
       const data = docSnap.data();
       if (data && data.link && !deletedSongLinks.has(data.link)) {
@@ -494,9 +493,10 @@ async function subscribeToFirestoreSongs() {
       firestoreSongs = newSongs;
       saveCachedFirestoreSongs(firestoreSongs);
       rebuildAllCatalogues();
+      renderGenre(activeGenre);
     }
   } catch (err) {
-    console.warn("Firestore sync notice (using cache):", err);
+    console.warn("Firestore sync notice (using local catalogue):", err);
   }
 }
 
@@ -1187,19 +1187,21 @@ window.addEventListener("online", () => {
       return;
     }
 
-    // 2. Load all 3 JSON catalogues immediately
+    // 2. Load all 5 JSON catalogues immediately
     await Promise.allSettled([
       loadRawJson("hindi"),
       loadRawJson("punjabi"),
-      loadRawJson("haryanvi")
+      loadRawJson("haryanvi"),
+      loadRawJson("rap"),
+      loadRawJson("bhojpuri")
     ]);
 
-    // 3. Build initial catalogue & render immediately in < 30ms
+    // 3. Connect Firestore sync and load cached/custom songs
+    await subscribeToFirestoreSongs();
+
+    // 4. Build initial catalogue & render immediately
     rebuildAllCatalogues();
     renderGenre(DEFAULT_GENRE);
-
-    // 4. Connect real-time Firestore sync for instant live uploads
-    subscribeToFirestoreSongs();
 
   } catch (err) {
     console.warn("App init fallback:", err);
