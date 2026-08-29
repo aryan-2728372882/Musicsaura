@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine
-const APP_SHELL_CACHE = "musicsaura-shell-v26";
+const APP_SHELL_CACHE = "musicsaura-shell-v27";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -17,7 +17,9 @@ const PRECACHE_ASSETS = [
   "/assets/favicon.ico",
   "/jsons/hindi.json",
   "/jsons/punjabi.json",
-  "/jsons/haryanvi.json"
+  "/jsons/haryanvi.json",
+  "/jsons/rap.json",
+  "/jsons/bhojpuri.json"
 ];
 
 // ─── INSTALL: PRE-CACHE COMPLETE APP SHELL ─────────────────────────

@@ -897,7 +897,7 @@ if (btnFixWebmUrls) {
 const syncJsonBtn = document.getElementById("sync-json-btn");
 if (syncJsonBtn) {
   syncJsonBtn.addEventListener("click", async () => {
-    if (!confirm("Do you want to sync all cleaned songs from hindi.json, punjabi.json, and haryanvi.json into Firestore? (Any duplicate songs will be identified and reported)")) {
+    if (!confirm("Do you want to sync all cleaned songs from hindi.json, punjabi.json, haryanvi.json, rap.json, and bhojpuri.json into Firestore? (Any duplicate songs will be identified and reported)")) {
       return;
     }
 
@@ -908,7 +908,9 @@ if (syncJsonBtn) {
       const genres = [
         { file: "jsons/hindi.json", genre: "Hindi" },
         { file: "jsons/punjabi.json", genre: "Punjabi" },
-        { file: "jsons/haryanvi.json", genre: "Haryanvi" }
+        { file: "jsons/haryanvi.json", genre: "Haryanvi" },
+        { file: "jsons/rap.json", genre: "Rap" },
+        { file: "jsons/bhojpuri.json", genre: "Bhojpuri" }
       ];
 
       // Fetch existing songs from Firestore to avoid duplicate links

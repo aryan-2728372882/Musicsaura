@@ -79,7 +79,9 @@ const fsOfflineText        = document.getElementById("fs-offline-text");
 const GENRE_FILES = {
   hindi:    "jsons/hindi.json",
   punjabi:  "jsons/punjabi.json",
-  haryanvi: "jsons/haryanvi.json"
+  haryanvi: "jsons/haryanvi.json",
+  rap:      "jsons/rap.json",
+  bhojpuri: "jsons/bhojpuri.json"
 };
 const DEFAULT_GENRE        = "hindi";
 const FAVORITES_KEY        = "musicsaura_favorites";

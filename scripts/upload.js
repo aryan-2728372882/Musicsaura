@@ -11,13 +11,17 @@ import {
 const FILE_GARDEN_FOLDERS = {
   hindi:    "https://file.garden/aRgAQiYidD0tulQV/Hindi/",
   punjabi:  "https://file.garden/aRgAQiYidD0tulQV/Punjabi/",
-  haryanvi: "https://file.garden/aRgAQiYidD0tulQV/Haryanvi/"
+  haryanvi: "https://file.garden/aRgAQiYidD0tulQV/Haryanvi/",
+  rap:      "https://file.garden/aRgAQiYidD0tulQV/Rap/",
+  bhojpuri: "https://file.garden/aRgAQiYidD0tulQV/Bhojpuri/"
 };
 
 const GENRE_JSON_FILES = {
   hindi:    "jsons/hindi.json",
   punjabi:  "jsons/punjabi.json",
-  haryanvi: "jsons/haryanvi.json"
+  haryanvi: "jsons/haryanvi.json",
+  rap:      "jsons/rap.json",
+  bhojpuri: "jsons/bhojpuri.json"
 };
 
 // DOM Elements
@@ -173,6 +177,8 @@ function cleanFilenameToTitle(urlOrFilename) {
 function detectGenreFromUrl(url) {
   if (!url) return null;
   const lower = url.toLowerCase();
+  if (lower.includes("/rap/") || lower.includes("rap")) return "rap";
+  if (lower.includes("/bhojpuri/") || lower.includes("bhojpuri")) return "bhojpuri";
   if (lower.includes("/haryanvi/") || lower.includes("haryanvi")) return "haryanvi";
   if (lower.includes("/punjabi/") || lower.includes("punjabi")) return "punjabi";
   if (lower.includes("/hindi/") || lower.includes("hindi")) return "hindi";
@@ -403,6 +409,8 @@ function renderBatchTrackList() {
           <option value="hindi" ${track.genre === "hindi" ? "selected" : ""}>Hindi</option>
           <option value="punjabi" ${track.genre === "punjabi" ? "selected" : ""}>Punjabi</option>
           <option value="haryanvi" ${track.genre === "haryanvi" ? "selected" : ""}>Haryanvi</option>
+          <option value="rap" ${track.genre === "rap" ? "selected" : ""}>Rap</option>
+          <option value="bhojpuri" ${track.genre === "bhojpuri" ? "selected" : ""}>Bhojpuri</option>
         </select>
 
         <span id="badge-${track.id}" class="genre-tag" style="${track.isDuplicate ? "background:rgba(244,63,94,0.15);color:var(--rose);border-color:rgba(244,63,94,0.3)" : "background:rgba(16,185,129,0.15);color:var(--emerald);border-color:rgba(16,185,129,0.3)"}">
@@ -925,7 +933,9 @@ async function loadCommunityUploads() {
       if (genreBtn) {
         genreBtn.addEventListener("click", async () => {
           const currentG = (song.genre || "hindi").toLowerCase();
-          const targetG = currentG === "hindi" ? "punjabi" : currentG === "punjabi" ? "haryanvi" : "hindi";
+          const genreOrder = ["hindi", "punjabi", "haryanvi", "rap", "bhojpuri"];
+          const currentIdx = genreOrder.indexOf(currentG);
+          const targetG = genreOrder[(currentIdx + 1) % genreOrder.length];
           if (!confirm(`Change genre of "${song.title}" from ${currentG.toUpperCase()} to ${targetG.toUpperCase()}?`)) return;
 
           try {
