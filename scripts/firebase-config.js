@@ -28,18 +28,18 @@ import {
   orderBy,
   limit,
   getDocs,
-  addDoc
+  addDoc,
+  writeBatch
 } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyClIhXAaTVmlqhEPxU49C9w9fDkUag-1eQ",
   authDomain: "vibe-tunes.firebaseapp.com",
-  databaseURL: "https://vibe-tunes-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "vibe-tunes",
-  storageBucket: "vibe-tunes.firebasestorage.app",
-  messagingSenderId: "792892627539",
-  appId: "1:792892627539:web:69817da08d2d4741a404a6",
-  measurementId: "G-7RQD85KP8Z"
+  storageBucket: "vibe-tunes.appspot.com",
+  messagingSenderId: "367351659914",
+  appId: "1:367351659914:web:0ba054f0a2ca7b686d0b67",
+  measurementId: "G-GZ0L6GNDCP"
 };
 
 // Admin emails — single source of truth
@@ -58,5 +58,5 @@ export {
   sendPasswordResetEmail, updateProfile,
   // Firestore (Metadata only: song names, links, artists, genres, users)
   doc, getDoc, setDoc, onSnapshot, updateDoc, deleteDoc,
-  increment, serverTimestamp, collection, query, where, orderBy, limit, getDocs, addDoc
+  increment, serverTimestamp, collection, query, where, orderBy, limit, getDocs, addDoc, writeBatch
 };

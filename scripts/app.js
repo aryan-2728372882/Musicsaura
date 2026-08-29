@@ -438,8 +438,10 @@ async function loadRawJson(genre) {
   return [];
 }
 
-/* ── REAL-TIME FIRESTORE SYNCHRONIZATION WITH LOCAL STORAGE CACHE ── */
-const FIRESTORE_CACHE_KEY = "musicsaura_firestore_songs_cache";
+/* ── ULTRA LOW-QUOTA FIRESTORE SYNCHRONIZATION WITH 30-MIN CACHE ── */
+const FIRESTORE_CACHE_KEY      = "musicsaura_firestore_songs_cache";
+const FIRESTORE_CACHE_TIME_KEY = "musicsaura_firestore_cache_time";
+const CACHE_VALIDITY_MS        = 30 * 60 * 1000; // 30 minutes cache validity (0 reads for 30 mins)
 
 function loadCachedFirestoreSongs() {
   try {
@@ -457,47 +459,44 @@ function loadCachedFirestoreSongs() {
 function saveCachedFirestoreSongs(songs) {
   try {
     localStorage.setItem(FIRESTORE_CACHE_KEY, JSON.stringify(songs.slice(0, 300)));
+    localStorage.setItem(FIRESTORE_CACHE_TIME_KEY, Date.now().toString());
   } catch {}
 }
 
-function subscribeToFirestoreSongs() {
+async function subscribeToFirestoreSongs() {
   // 0. Load cached songs immediately for 0ms startup & 0 quota usage
   loadCachedFirestoreSongs();
 
-  try {
-    // 1. Subscribe to published songs (limited to recent 150 tracks to prevent quota spikes)
-    const songsQuery = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(150));
-    onSnapshot(songsQuery, (snap) => {
-      firestoreSongs = [];
-      snap.forEach((docSnap) => {
-        const data = docSnap.data();
-        if (data && data.link && !deletedSongLinks.has(data.link)) {
-          const norm = normalizeSong({ id: docSnap.id, ...data }, data.genre, "firestore");
-          if (norm && norm.link) {
-            firestoreSongs.push(norm);
-          }
-        }
-      });
+  // 1. Check if cached data is still fresh (< 30 minutes old) -> ZERO READS!
+  const lastSyncTime = parseInt(localStorage.getItem(FIRESTORE_CACHE_TIME_KEY) || "0", 10);
+  const isFresh = (Date.now() - lastSyncTime) < CACHE_VALIDITY_MS;
+  if (isFresh && firestoreSongs.length > 0) {
+    return; // ZERO FIRESTORE READS!
+  }
 
-      // Save to local cache
-      saveCachedFirestoreSongs(firestoreSongs);
-      rebuildAllCatalogues();
-    }, async (err) => {
-      console.warn("Firestore onSnapshot error, using local cache:", err);
+  try {
+    // 2. One-shot fetch (limited to top 50 recent releases to avoid read spikes)
+    const songsQuery = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(50));
+    const snap = await getDocs(songsQuery);
+    const newSongs = [];
+
+    snap.forEach((docSnap) => {
+      const data = docSnap.data();
+      if (data && data.link && !deletedSongLinks.has(data.link)) {
+        const norm = normalizeSong({ id: docSnap.id, ...data }, data.genre, "firestore");
+        if (norm && norm.link) {
+          newSongs.push(norm);
+        }
+      }
     });
 
-    // 2. Subscribe to deleted songs blacklist
-    onSnapshot(collection(db, "deleted_songs"), (delSnap) => {
-      deletedSongLinks.clear();
-      delSnap.forEach((d) => {
-        const link = d.data()?.link;
-        if (link) deletedSongLinks.add(link);
-      });
+    if (newSongs.length > 0) {
+      firestoreSongs = newSongs;
+      saveCachedFirestoreSongs(firestoreSongs);
       rebuildAllCatalogues();
-    }, () => {});
-
+    }
   } catch (err) {
-    console.warn("Firestore subscription error:", err);
+    console.warn("Firestore sync notice (using cache):", err);
   }
 }
 

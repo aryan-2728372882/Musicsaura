@@ -1,7 +1,7 @@
 // scripts/admin.js — MusicsAura 3.0 Studio Controller
 import {
   auth, db, isAdmin, onAuthStateChanged, signOut,
-  collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp
+  collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch
 } from "./firebase-config.js";
 
 // DOM elements
@@ -989,6 +989,7 @@ if (syncJsonBtn) {
 
       let addedCount = 0;
       const skippedDuplicates = [];
+      const pendingToAdd = [];
 
       for (const item of genres) {
         try {
@@ -1031,10 +1032,10 @@ if (syncJsonBtn) {
               item.genre.toLowerCase()
             ].filter(Boolean)));
 
-            await addDoc(collection(db, "songs"), {
+            pendingToAdd.push({
               title: s.title,
               artist: s.artist || "MusicsAura",
-              genre: s.genre || item.genre,
+              genre: (s.genre || item.genre).toLowerCase(),
               link: s.link,
               thumbnail: s.thumbnail || "",
               keywords,
@@ -1045,15 +1046,13 @@ if (syncJsonBtn) {
 
             existingLinks.set(cleanLink, s.title);
             existingTitles.set(cleanTitle, s.title);
-            addedCount++;
-            syncJsonBtn.textContent = `Syncing... (${addedCount} added)`;
           }
         } catch (e) {
           console.warn("Sync error for", item.genre, e);
         }
       }
 
-      // Also sync any locally uploaded songs from creator studio
+      // Also gather any local uploads
       try {
         const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
         for (const s of local) {
@@ -1063,7 +1062,7 @@ if (syncJsonBtn) {
 
           if (existingLinks.has(cleanLink) || existingTitles.has(cleanTitle)) continue;
 
-          await addDoc(collection(db, "songs"), {
+          pendingToAdd.push({
             title: s.title,
             artist: s.artist || "MusicsAura",
             genre: (s.genre || "Hindi").toLowerCase(),
@@ -1080,11 +1079,23 @@ if (syncJsonBtn) {
 
           existingLinks.set(cleanLink, s.title);
           existingTitles.set(cleanTitle, s.title);
-          addedCount++;
-          syncJsonBtn.textContent = `Syncing... (${addedCount} added)`;
         }
       } catch (e) {
         console.warn("Local uploads sync notice:", e);
+      }
+
+      // Commit pending additions in atomic batches of 100 to prevent quota spikes
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < pendingToAdd.length; i += BATCH_SIZE) {
+        const chunk = pendingToAdd.slice(i, i + BATCH_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach((songData) => {
+          const docRef = doc(collection(db, "songs"));
+          batch.set(docRef, songData);
+        });
+        await batch.commit();
+        addedCount += chunk.length;
+        syncJsonBtn.textContent = `Syncing... (${addedCount}/${pendingToAdd.length})`;
       }
 
       const summaryHtml = `
