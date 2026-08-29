@@ -12,8 +12,8 @@ const FILE_GARDEN_FOLDERS = {
   hindi:    "https://file.garden/aRgAQiYidD0tulQV/Hindi/",
   punjabi:  "https://file.garden/aRgAQiYidD0tulQV/Punjabi/",
   haryanvi: "https://file.garden/aRgAQiYidD0tulQV/Haryanvi/",
-  rap:      "https://file.garden/aRgAQiYidD0tulQV/Rap/",
-  bhojpuri: "https://file.garden/aRgAQiYidD0tulQV/Bhojpuri/"
+  rap:      "https://file.garden/apMS6Fbun9GoGp1g/Rap/",
+  bhojpuri: "https://file.garden/apMS6Fbun9GoGp1g/Bhojpuri/"
 };
 
 const GENRE_JSON_FILES = {

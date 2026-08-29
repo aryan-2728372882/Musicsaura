@@ -528,7 +528,7 @@ if (songsSearchInp) {
   });
 }
 
-// ─── EXPORT ALL SONGS TO JSON ──────────────────────────────────────
+// ─── EXPORT ALL SONGS TO JSON (PER-GENRE + MASTER) ─────────────────
 if (exportJsonBtn) {
   exportJsonBtn.addEventListener("click", () => {
     if (!allUploadedSongs.length) {
@@ -536,20 +536,34 @@ if (exportJsonBtn) {
       return;
     }
 
-    const cleanList = allUploadedSongs.map((s) => ({
-      title: s.title || "",
-      artist: s.artist || "",
-      link: s.link || "",
-      thumbnail: s.thumbnail || "",
-      keywords: s.keywords || [],
-      genre: s.genre || "Hindi"
-    }));
+    const genres = ["hindi", "punjabi", "haryanvi", "rap", "bhojpuri"];
+    let exportedTotal = 0;
 
-    const blob = new Blob([JSON.stringify(cleanList, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `musicsaura_studio_export_${Date.now()}.json`;
-    a.click();
+    genres.forEach((g, idx) => {
+      const list = allUploadedSongs
+        .filter((s) => (s.genre || "hindi").toLowerCase() === g)
+        .map((s) => ({
+          title: s.title || "",
+          artist: s.artist || "Various Artists",
+          link: s.link || "",
+          thumbnail: s.thumbnail || "assets/logo.png",
+          genre: g.charAt(0).toUpperCase() + g.slice(1),
+          keywords: Array.isArray(s.keywords) ? s.keywords : []
+        }));
+
+      if (list.length > 0) {
+        setTimeout(() => {
+          const blob = new Blob([JSON.stringify(list, null, 2)], { type: "application/json" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `${g}.json`;
+          a.click();
+        }, idx * 250);
+        exportedTotal++;
+      }
+    });
+
+    showAlert(`💾 Exporting updated JSON files for your jsons/ folder!`);
   });
 }
 
