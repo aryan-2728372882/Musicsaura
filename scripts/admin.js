@@ -384,9 +384,9 @@ async function loadUploadedSongs() {
       })
     );
 
-    // 2. Load Firestore songs
+    // 2. Load Firestore songs (only recent 25 to save read quota)
     try {
-      const q = query(collection(db, "songs"), orderBy("createdAt", "desc"));
+      const q = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(25));
       const snap = await getDocs(q);
       snap.forEach((docSnap) => {
         const data = docSnap.data();

@@ -27,15 +27,25 @@ function stopSync() {
   }
 }
 
-function startSync(uid) {
+async function startSync(uid) {
   stopSync();
   currentUid = uid;
-  unsubSnapshot = onSnapshot(doc(db, "users", uid), (snap) => {
-    if (!snap.exists()) return;
-    const d = snap.data();
-    if (minutesEl) minutesEl.textContent = Math.round(d.minutesListened || 0).toLocaleString();
-    if (songsEl) songsEl.textContent = (d.songsPlayed || 0).toLocaleString();
-  }, (err) => console.error("Snapshot error:", err));
+  try {
+    // 0ms visual rendering from local cache
+    const localStats = JSON.parse(localStorage.getItem("musicsaura_local_stats") || "{}");
+    if (minutesEl && localStats.minutesListened) minutesEl.textContent = Math.round(localStats.minutesListened).toLocaleString();
+    if (songsEl && localStats.songsPlayed) songsEl.textContent = (localStats.songsPlayed).toLocaleString();
+
+    // One-shot fetch (1 read total on profile open instead of continuous streaming)
+    const snap = await getDoc(doc(db, "users", uid));
+    if (snap.exists()) {
+      const d = snap.data();
+      if (minutesEl) minutesEl.textContent = Math.round(d.minutesListened || 0).toLocaleString();
+      if (songsEl) songsEl.textContent = (d.songsPlayed || 0).toLocaleString();
+    }
+  } catch (err) {
+    console.warn("User stats load:", err);
+  }
 }
 
 // ─── FAVORITES MANAGEMENT ──────────────────────────────────────────
