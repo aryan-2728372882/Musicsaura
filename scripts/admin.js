@@ -481,7 +481,26 @@ function renderSongsTable(songs) {
           </div>
         </div>
       </td>
-      <td><span class="genre-tag">${escapeHtml(song.genre || "Hindi")}</span></td>
+    const genreLower = (song.genre || "hindi").toLowerCase();
+    tr.innerHTML = `
+      <td>
+        <div class="table-song-cell">
+          <img src="${thumbUrl}" alt="" class="table-song-thumb" onerror="this.src='assets/logo.png'">
+          <div class="table-song-meta">
+            <div class="table-song-title">${escapeHtml(song.title)}</div>
+            <div class="table-song-artist">${escapeHtml(song.artist || "Unknown")}</div>
+          </div>
+        </div>
+      </td>
+      <td>
+        <select class="admin-genre-select" data-id="${song.id || ""}" data-link="${escapeHtml(song.link || "")}" title="Change Music Section">
+          <option value="Hindi" ${genreLower === "hindi" ? "selected" : ""}>Hindi Hits</option>
+          <option value="Punjabi" ${genreLower === "punjabi" ? "selected" : ""}>Punjabi Vibes</option>
+          <option value="Haryanvi" ${genreLower === "haryanvi" ? "selected" : ""}>Haryanvi Swag</option>
+          <option value="Rap" ${genreLower === "rap" ? "selected" : ""}>Desi Rap</option>
+          <option value="Bhojpuri" ${genreLower === "bhojpuri" ? "selected" : ""}>Bhojpuri Hits</option>
+        </select>
+      </td>
       <td>${dateStr}</td>
       <td>
         <a href="${song.link}" target="_blank" rel="noopener" class="action-btn" title="Direct Audio Stream">
@@ -513,10 +532,50 @@ function renderSongsTable(songs) {
     btnAllSongs.style.display = songDisplayLimit >= songs.length ? "none" : "inline-flex";
   }
 
+  // Bind genre changer handlers
+  songsTbody.querySelectorAll(".admin-genre-select").forEach((select) => {
+    select.addEventListener("change", (e) => {
+      const newGenre = e.target.value;
+      const songId = select.dataset.id;
+      const songLink = select.dataset.link;
+      updateSongGenre(songId, songLink, newGenre);
+    });
+  });
+
   // Bind delete handlers
   songsTbody.querySelectorAll(".delete-btn").forEach((btn) => {
     btn.addEventListener("click", () => deleteSong(btn.dataset.id));
   });
+}
+
+async function updateSongGenre(songId, songLink, newGenre) {
+  try {
+    if (songId && !songId.startsWith("json_") && !songId.startsWith("local_")) {
+      await updateDoc(doc(db, "songs", songId), {
+        genre: newGenre.toLowerCase()
+      });
+    }
+
+    const target = allUploadedSongs.find((s) => s.id === songId || s.link === songLink);
+    if (target) {
+      target.genre = newGenre;
+    }
+
+    // Also update in local storage uploads buffer if present
+    try {
+      const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
+      const match = local.find((s) => s.link === songLink || s.id === songId);
+      if (match) {
+        match.genre = newGenre.toLowerCase();
+        localStorage.setItem("musicsaura_local_uploads", JSON.stringify(local));
+      }
+    } catch {}
+
+    alert(`✅ Changed section to "${newGenre}" for song.`);
+  } catch (err) {
+    console.error("Genre update error:", err);
+    alert(`Failed to update section: ${err.message}`);
+  }
 }
 
 async function deleteSong(songId) {

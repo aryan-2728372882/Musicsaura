@@ -1743,6 +1743,24 @@ body.page-scroll {
   border-color: var(--rose);
 }
 
+.admin-genre-select {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  color: var(--violet-light);
+  border-radius: var(--radius-full);
+  padding: 0.25rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--ease-fast);
+}
+
+.admin-genre-select:hover,
+.admin-genre-select:focus {
+  border-color: var(--violet);
+}
+
 /* Data Tables */
 .table-wrap {
   overflow-x: auto;

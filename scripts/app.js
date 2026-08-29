@@ -1,7 +1,7 @@
 // scripts/app.js — MusicsAura 3.0 Core App Controller
 import {
   auth, db, isAdmin, onAuthStateChanged,
-  collection, getDocs, query, orderBy, onSnapshot
+  collection, getDocs, query, orderBy, limit, onSnapshot
 } from "./firebase-config.js";
 import { player, formatTime } from "./player.js";
 
