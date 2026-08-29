@@ -470,18 +470,8 @@ function renderSongsTable(songs) {
     const tr = document.createElement("tr");
     const thumbUrl = song.thumbnail || "assets/logo.png";
     const dateStr = song.createdAt?.toDate ? song.createdAt.toDate().toLocaleDateString() : "Recent";
-
-    tr.innerHTML = `
-      <td>
-        <div class="table-song-cell">
-          <img src="${thumbUrl}" alt="" class="table-song-thumb" onerror="this.src='assets/logo.png'">
-          <div class="table-song-meta">
-            <div class="table-song-title">${escapeHtml(song.title)}</div>
-            <div class="table-song-artist">${escapeHtml(song.artist || "Unknown")}</div>
-          </div>
-        </div>
-      </td>
     const genreLower = (song.genre || "hindi").toLowerCase();
+
     tr.innerHTML = `
       <td>
         <div class="table-song-cell">
@@ -914,8 +904,10 @@ if (btnScanDuplicates) {
       currentDuplicateDocs = [];
 
       songs.forEach((s) => {
-        const cleanLink = (s.link || "").split("?")[0].toLowerCase().trim();
-        const cleanTitle = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+        const cleanLink = decodeURIComponent((s.link || "").split("?")[0].toLowerCase().trim())
+          .replace(/\.(mp3|webm|m4a|wav|ogg)$/i, "")
+          .replace(/[^a-z0-9]/g, "");
+        const cleanTitle = (s.title || "").toLowerCase().replace(/\.(mp3|webm|m4a)$/i, "").replace(/[^a-z0-9]/g, "").trim();
 
         let isDup = false;
         let reason = "";

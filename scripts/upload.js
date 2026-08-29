@@ -81,6 +81,7 @@ const existingTitles        = new Set();
 function normalizeKey(str) {
   return (str || "")
     .toLowerCase()
+    .replace(/\.(mp3|webm|m4a|wav|ogg)$/i, "")
     .replace(/[^a-z0-9]/g, "")
     .trim();
 }
@@ -88,10 +89,12 @@ function normalizeKey(str) {
 function normalizeUrlKey(url) {
   if (!url) return "";
   try {
-    const clean = url.split("?")[0].toLowerCase().trim();
-    return clean.replace(/^https?:\/\//, "");
+    const clean = decodeURIComponent(url.split("?")[0].toLowerCase().trim())
+      .replace(/\.(mp3|webm|m4a|wav|ogg)$/i, "")
+      .replace(/[^a-z0-9]/g, "");
+    return clean;
   } catch {
-    return (url || "").toLowerCase().trim();
+    return (url || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
   }
 }
 
