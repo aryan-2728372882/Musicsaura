@@ -646,11 +646,14 @@ if (btnPublishBatch) {
       });
 
       for (const [g, tracks] of Object.entries(byGenre)) {
-        commitSongsToGitHub(g, tracks).then((res) => {
+        try {
+          const res = await commitSongsToGitHub(g, tracks);
           if (res && res.success) {
             console.log(`[GitHub Auto-Commit] ${tracks.length} track(s) saved to jsons/${g}.json on GitHub!`);
           }
-        });
+        } catch (e) {
+          console.warn("[GitHub Auto-Commit] Notice:", e);
+        }
       }
     } catch (e) {
       console.warn("[GitHub Auto-Commit] Notice:", e);
@@ -864,6 +867,7 @@ if (submitBulkBtn && bulkUrlsInput) {
 
     let successCount = 0;
     let skippedDuplicates = 0;
+    const importedTracks = [];
 
     try {
       for (const url of urls) {
@@ -892,23 +896,41 @@ if (submitBulkBtn && bulkUrlsInput) {
           new Set([...title.toLowerCase().split(/\s+/), ...artist.toLowerCase().split(/[,&/ ]+/), genre.toLowerCase()].filter(Boolean))
         );
 
-        await addDoc(collection(db, "songs"), {
+        const songData = {
           title,
           artist,
-          genre,
+          genre: genre.toLowerCase(),
           link: url,
           thumbnail: artwork,
           keywords,
           uploadedBy: "Community",
           createdAt: serverTimestamp(),
           plays: 0
-        });
+        };
 
+        await addDoc(collection(db, "songs"), songData);
+
+        importedTracks.push(songData);
         registerNewSong(title, url);
         successCount++;
       }
 
-      showAlert(`🎉 Successfully imported ${successCount} tracks! (${skippedDuplicates} duplicates skipped).`);
+      // AUTO GITHUB SYNC: Commit to jsons/{genre}.json in GitHub repository
+      try {
+        const byGenre = {};
+        importedTracks.forEach((t) => {
+          const g = (t.genre || "hindi").toLowerCase();
+          if (!byGenre[g]) byGenre[g] = [];
+          byGenre[g].push(t);
+        });
+        for (const [g, tracks] of Object.entries(byGenre)) {
+          await commitSongsToGitHub(g, tracks);
+        }
+      } catch (e) {
+        console.warn("[GitHub Auto-Commit] Bulk notice:", e);
+      }
+
+      showAlert(`🎉 Successfully imported ${successCount} tracks and synced to GitHub! (${skippedDuplicates} duplicates skipped).`);
       bulkUrlsInput.value = "";
       loadCommunityUploads();
 
