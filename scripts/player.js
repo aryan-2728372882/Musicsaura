@@ -1,26 +1,20 @@
-// scripts/player.js — MusicsAura 3.0 Ultra Pro Audio Engine
-// High-Speed Streaming, Seamless Crossfade (0-15s), 5-Band Studio Equalizer & Offline PWA Integration
+// scripts/player.js — MusicsAura 3.0 Pro Audio Engine
+// Unified Single-Engine Architecture for Flawless Android Background/Lockscreen Playback & Spotify-Grade MediaSession
 
 import {
   auth, db,
   doc, updateDoc, increment, serverTimestamp
 } from "./firebase-config.js";
 
-// ─── DUAL AUDIO ENGINE FOR SEAMLESS STREAMING & CROSSFADE ───────────
-let activeAudio  = new Audio();
-let standbyAudio = new Audio();
+// ─── UNIFIED HIGH-PERFORMANCE AUDIO ENGINE ─────────────────────────
+// Single persistent Audio element ensures 100% Android background audio retention
+const audio = new Audio();
+audio.preload = "auto";
+audio.crossOrigin = "anonymous";
+audio.setAttribute("playsinline", "");
+audio.setAttribute("webkit-playsinline", "");
 
-activeAudio.preload = "auto";
-activeAudio.crossOrigin = "anonymous";
-activeAudio.setAttribute("playsinline", "");
-activeAudio.setAttribute("webkit-playsinline", "");
-
-standbyAudio.preload = "auto";
-standbyAudio.crossOrigin = "anonymous";
-standbyAudio.setAttribute("playsinline", "");
-standbyAudio.setAttribute("webkit-playsinline", "");
-
-window._musicsaura_audio = activeAudio;
+window._musicsaura_audio = audio;
 
 // ─── DOM ELEMENT BINDINGS ──────────────────────────────────────────
 const titleEl         = document.getElementById("player-title");
@@ -57,7 +51,6 @@ let repeatMode        = "off"; // 'off' | 'one' | 'all'
 let isShuffle         = false;
 let isSeeking         = false;
 let userPaused        = false;
-let isCrossfading     = false;
 
 // Audio Configuration
 let crossfadeSeconds  = parseFloat(localStorage.getItem(CROSSFADE_STORAGE_KEY)) || 4;
@@ -72,8 +65,7 @@ let midFilter         = null; // 1000Hz Peaking
 let presenceFilter    = null; // 3500Hz Peaking
 let trebleFilter      = null; // 10000Hz Highshelf
 let analyserNode      = null;
-let sourceA           = null;
-let sourceB           = null;
+let sourceNode        = null;
 let wakeLock          = null;
 
 // Stats Tracking
@@ -120,7 +112,6 @@ export function normalizeUrl(url) {
     if (host.includes("file.garden") || host.includes("supabase.co")) {
       u.searchParams.delete("download");
       u.searchParams.delete("dl");
-      // Add stream timestamp to prevent browser negative 404 disk caching
       if (!u.searchParams.has("t")) {
         u.searchParams.set("t", Date.now().toString(36));
       }
@@ -129,6 +120,15 @@ export function normalizeUrl(url) {
     return u.toString();
   } catch {
     return clean;
+  }
+}
+
+function toAbsoluteUrl(url) {
+  if (!url) return new URL("assets/logo.png", location.href).href;
+  try {
+    return new URL(url, location.href).href;
+  } catch {
+    return url;
   }
 }
 
@@ -175,23 +175,14 @@ function initAudioContext() {
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
 
-    // Route active and standby audio through the EQ chain
+    // Single source connection — permanent & persistent across all tracks
     try {
-      if (!sourceA && activeAudio) {
-        sourceA = audioCtx.createMediaElementSource(activeAudio);
-        sourceA.connect(subBassFilter);
+      if (!sourceNode && audio) {
+        sourceNode = audioCtx.createMediaElementSource(audio);
+        sourceNode.connect(subBassFilter);
       }
     } catch (e) {
-      console.warn("sourceA connect:", e);
-    }
-
-    try {
-      if (!sourceB && standbyAudio) {
-        sourceB = audioCtx.createMediaElementSource(standbyAudio);
-        sourceB.connect(subBassFilter);
-      }
-    } catch (e) {
-      console.warn("sourceB connect:", e);
+      console.warn("EQ source connection:", e);
     }
 
     const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
@@ -254,7 +245,7 @@ function releaseWakeLock() {
   }
 }
 
-// ─── MEDIA SESSION API (LOCKSCREEN / NOTIFICATIONS) ────────────────
+// ─── MEDIA SESSION API (SPOTIFY-GRADE LOCKSCREEN & NOTIFICATIONS) ──
 function initMediaSession() {
   if (!("mediaSession" in navigator)) return;
 
@@ -267,8 +258,8 @@ function initMediaSession() {
     navigator.mediaSession.setActionHandler("seekto", (d) => {
       if (d.seekTime !== undefined && d.seekTime !== null) player.seek(d.seekTime);
     });
-    navigator.mediaSession.setActionHandler("seekforward", () => player.seek((activeAudio.currentTime || 0) + 10));
-    navigator.mediaSession.setActionHandler("seekbackward", () => player.seek((activeAudio.currentTime || 0) - 10));
+    navigator.mediaSession.setActionHandler("seekforward", () => player.seek((audio.currentTime || 0) + 10));
+    navigator.mediaSession.setActionHandler("seekbackward", () => player.seek((audio.currentTime || 0) - 10));
     navigator.mediaSession.setActionHandler("stop", () => player.pause());
   } catch {}
 }
@@ -276,16 +267,15 @@ function initMediaSession() {
 function updateMediaSession(song) {
   if (!("mediaSession" in navigator) || !song) return;
 
-  const artworkList = [];
-  if (song.thumbnail) {
-    [96, 128, 192, 256, 384, 512].forEach((size) => {
-      artworkList.push({
-        src: song.thumbnail,
-        sizes: `${size}x${size}`,
-        type: "image/jpeg"
-      });
-    });
-  }
+  const artworkUrl = toAbsoluteUrl(song.thumbnail);
+  const artworkList = [
+    { src: artworkUrl, sizes: "96x96",   type: "image/png" },
+    { src: artworkUrl, sizes: "128x128", type: "image/png" },
+    { src: artworkUrl, sizes: "192x192", type: "image/png" },
+    { src: artworkUrl, sizes: "256x256", type: "image/png" },
+    { src: artworkUrl, sizes: "384x384", type: "image/png" },
+    { src: artworkUrl, sizes: "512x512", type: "image/png" }
+  ];
 
   navigator.mediaSession.metadata = new MediaMetadata({
     title: song.title || "MusicsAura Track",
@@ -294,17 +284,18 @@ function updateMediaSession(song) {
     artwork: artworkList
   });
 
-  navigator.mediaSession.playbackState = !activeAudio.paused ? "playing" : "paused";
+  navigator.mediaSession.playbackState = !audio.paused ? "playing" : "paused";
+  updatePositionState();
 }
 
 function updatePositionState() {
   if (!("mediaSession" in navigator) || !("setPositionState" in navigator.mediaSession)) return;
   try {
-    if (Number.isFinite(activeAudio.duration) && activeAudio.duration > 0) {
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
       navigator.mediaSession.setPositionState({
-        duration: activeAudio.duration,
-        playbackRate: activeAudio.playbackRate || 1,
-        position: clamp(activeAudio.currentTime, 0, activeAudio.duration)
+        duration: audio.duration,
+        playbackRate: audio.playbackRate || 1,
+        position: clamp(audio.currentTime, 0, audio.duration)
       });
     }
   } catch {}
@@ -347,106 +338,6 @@ async function flushStatsToFirebase() {
   }
 }
 
-// ─── NEXT TRACK PRE-WARMING ────────────────────────────────────────
-function warmupStandbyNextTrack() {
-  if (playlist.length <= 1) return;
-
-  const conn = navigator.connection;
-  if (conn && (conn.saveData || conn.effectiveType === "2g" || conn.effectiveType === "slow-2g")) {
-    standbyAudio.preload = "none";
-    return;
-  }
-
-  const nextIdx = (currentIndex + 1) % playlist.length;
-  const nextSong = playlist[nextIdx];
-  if (!nextSong?.link) return;
-
-  const url = normalizeUrl(nextSong.link);
-  if (standbyAudio.src !== url) {
-    standbyAudio.src = url;
-    standbyAudio.preload = "metadata";
-    standbyAudio.volume = 0;
-  }
-}
-
-// ─── ADVANCED CROSSFADE TRANSITION ────────────────────────────────
-function startCrossfadeTransition() {
-  if (isCrossfading || playlist.length <= 1 || repeatMode === "one") return;
-  isCrossfading = true;
-
-  const nextIdx = (currentIndex + 1) % playlist.length;
-  const nextSong = playlist[nextIdx];
-  if (!nextSong?.link) {
-    isCrossfading = false;
-    return;
-  }
-
-  const nextUrl = normalizeUrl(nextSong.link);
-  if (standbyAudio.src !== nextUrl) {
-    standbyAudio.src = nextUrl;
-  }
-
-  standbyAudio.currentTime = 0;
-  standbyAudio.volume = 0;
-  standbyAudio.playbackRate = playbackRate;
-
-  // Immediately update track state so Android lockscreen, notifications & in-app UI switch title/avatar with 0ms lag!
-  currentIndex = nextIdx;
-  currentSong = nextSong;
-  updateMediaSession(currentSong);
-  updateUI();
-
-  const finalizeCrossfade = () => {
-    if (!isCrossfading) return;
-    isCrossfading = false;
-
-    activeAudio.pause();
-    activeAudio.currentTime = 0;
-    activeAudio.volume = masterVolume;
-
-    const temp = activeAudio;
-    activeAudio = standbyAudio;
-    standbyAudio = temp;
-    window._musicsaura_audio = activeAudio;
-
-    wireAudioEvents(activeAudio);
-    updateMediaSession(currentSong);
-    updateUI();
-
-    warmupStandbyNextTrack();
-  };
-
-  standbyAudio.play().then(() => {
-    const fadeSteps = 15;
-    const stepTime = Math.max(50, (crossfadeSeconds * 1000) / fadeSteps);
-    let step = 0;
-
-    const fadeTimer = setInterval(() => {
-      step++;
-      const progress = step / fadeSteps;
-
-      activeAudio.volume  = clamp(masterVolume * (1 - progress), 0, 1);
-      standbyAudio.volume = clamp(masterVolume * progress, 0, 1);
-
-      if (step >= fadeSteps) {
-        clearInterval(fadeTimer);
-        finalizeCrossfade();
-      }
-    }, stepTime);
-
-    // Fail-safe timeout for Android background where timers are throttled by OS
-    setTimeout(() => {
-      clearInterval(fadeTimer);
-      finalizeCrossfade();
-    }, (crossfadeSeconds * 1000) + 200);
-
-  }).catch((e) => {
-    console.warn("Crossfade playback error:", e);
-    isCrossfading = false;
-    finalizeCrossfade();
-  });
-}
-
 // ─── UI SYNCHRONIZATION ────────────────────────────────────────────
 function emitStateChange() {
   const state = player.getState();
@@ -475,7 +366,7 @@ function updateUI() {
   }
 
   if (playBtnIcon) {
-    playBtnIcon.textContent = !activeAudio.paused ? "pause" : "play_arrow";
+    playBtnIcon.textContent = !audio.paused ? "pause" : "play_arrow";
   }
 
   if (repeatIcon && repeatBtnEl) {
@@ -497,8 +388,8 @@ function updateUI() {
 
 function updateProgress() {
   if (isSeeking) return;
-  const cur = activeAudio.currentTime || 0;
-  const dur = activeAudio.duration || 0;
+  const cur = audio.currentTime || 0;
+  const dur = audio.duration || 0;
 
   if (currentTimeEl) currentTimeEl.textContent = formatTime(cur);
   if (durationEl)    durationEl.textContent    = formatTime(dur);
@@ -513,76 +404,62 @@ function updateProgress() {
   }
 }
 
-// ─── AUDIO NODE EVENT HANDLING ────────────────────────────────────
-function wireAudioEvents(audioNode) {
-  audioNode.onplay = () => {
-    userPaused = false;
-    playSessionStart = Date.now();
-    acquireWakeLock();
-    if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
-    updateUI();
-  };
+// ─── PERSISTENT AUDIO EVENT HANDLING ──────────────────────────────
+audio.onplay = () => {
+  userPaused = false;
+  playSessionStart = Date.now();
+  acquireWakeLock();
+  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
+  updateUI();
+};
 
-  audioNode.onpause = () => {
-    capturePlaySeconds();
-    if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
-    updateUI();
-    if (userPaused) releaseWakeLock();
-  };
+audio.onpause = () => {
+  capturePlaySeconds();
+  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
+  updateUI();
+  if (userPaused) releaseWakeLock();
+};
 
-  audioNode.ontimeupdate = () => {
-    updateProgress();
-    updatePositionState();
+audio.ontimeupdate = () => {
+  updateProgress();
+  updatePositionState();
 
-    const dur = audioNode.duration;
-    const cur = audioNode.currentTime;
-
-    if (crossfadeSeconds > 0 && dur && (dur - cur <= crossfadeSeconds) && !isCrossfading && playlist.length > 1 && repeatMode !== "one") {
-      startCrossfadeTransition();
-    } else if (dur && (dur - cur <= 10) && !isCrossfading) {
-      warmupStandbyNextTrack();
+  if (playSessionStart > 0 && !hasRecordedStat) {
+    const currentSessionSec = (Date.now() - playSessionStart) / 1000;
+    if (accumulatedPlaySec + currentSessionSec >= STATS_MIN_PLAY_SECONDS) {
+      flushStatsToFirebase();
     }
+  }
+};
 
-    if (playSessionStart > 0 && !hasRecordedStat) {
-      const currentSessionSec = (Date.now() - playSessionStart) / 1000;
-      if (accumulatedPlaySec + currentSessionSec >= STATS_MIN_PLAY_SECONDS) {
-        flushStatsToFirebase();
-      }
-    }
-  };
+audio.onended = () => {
+  flushStatsToFirebase();
 
-  audioNode.onended = () => {
-    if (isCrossfading) return;
-    flushStatsToFirebase();
+  if (repeatMode === "one") {
+    audio.currentTime = 0;
+    audio.play().catch(() => {});
+  } else {
+    // 100% Reliable background track advance on Android lockscreen!
+    player.next(true);
+  }
+};
 
-    if (repeatMode === "one") {
-      audioNode.currentTime = 0;
-      audioNode.play().catch(() => {});
-    } else {
-      player.next(true);
-    }
-  };
-
-  audioNode.onerror = (e) => {
-    console.warn("Audio node playback error:", e, audioNode.error);
-    if (!audioNode._cacheRetried && audioNode.src && (audioNode.src.includes("file.garden") || audioNode.src.startsWith("http"))) {
-      audioNode._cacheRetried = true;
-      const separator = audioNode.src.includes("?") ? "&" : "?";
-      audioNode.src = audioNode.src + separator + "t=" + Date.now();
-      audioNode.play().catch(() => {});
-      return;
-    }
-    if (!userPaused && playlist.length > 1 && !isCrossfading) {
-      setTimeout(() => player.next(true), 1500);
-    }
-  };
-}
-
-wireAudioEvents(activeAudio);
+audio.onerror = (e) => {
+  console.warn("Audio node playback error:", e, audio.error);
+  if (!audio._cacheRetried && audio.src && (audio.src.includes("file.garden") || audio.src.startsWith("http"))) {
+    audio._cacheRetried = true;
+    const separator = audio.src.includes("?") ? "&" : "?";
+    audio.src = audio.src + separator + "t=" + Date.now();
+    audio.play().catch(() => {});
+    return;
+  }
+  if (!userPaused && playlist.length > 1) {
+    setTimeout(() => player.next(true), 1500);
+  }
+};
 
 // Volume initialization
-activeAudio.volume  = masterVolume;
-standbyAudio.volume = 0;
+audio.volume = masterVolume;
 if (volumeSlider) volumeSlider.value = Math.round(masterVolume * 100);
 
 // ─── EXPORTED PLAYER API ──────────────────────────────────────────
@@ -595,9 +472,9 @@ export const player = {
   getState() {
     return {
       currentSong,
-      isPlaying: !activeAudio.paused,
-      currentTime: activeAudio.currentTime || 0,
-      duration: activeAudio.duration || 0,
+      isPlaying: !audio.paused,
+      currentTime: audio.currentTime || 0,
+      duration: audio.duration || 0,
       playlist,
       currentIndex,
       repeatMode,
@@ -618,7 +495,6 @@ export const player = {
       playlist = [...songs];
       currentIndex = startIndex;
     }
-    warmupStandbyNextTrack();
   },
 
   prefetchAudioStream(link) {
@@ -628,7 +504,7 @@ export const player = {
   playSong(song, playlistContext = null, index = null) {
     if (!song || !song.link) return;
 
-    // 1. Instantly update UI & Media Session (0ms visual latency)
+    // 1. Immediately update UI & Media Session (0ms visual latency)
     currentSong = song;
     if (playlistContext) {
       if (index !== null) {
@@ -646,23 +522,22 @@ export const player = {
     hasRecordedStat    = false;
     accumulatedPlaySec = 0;
     playSessionStart   = 0;
-    isCrossfading      = false;
 
     // 3. Normalize link & assign source immediately
     const cleanUrl = normalizeUrl(song.link);
     if (!cleanUrl) return;
 
     let streamUrl = cleanUrl;
-    if (activeAudio.src !== streamUrl) {
-      activeAudio.src = streamUrl;
+    if (audio.src !== streamUrl) {
+      audio.src = streamUrl;
     }
-    activeAudio.playbackRate = playbackRate;
-    activeAudio.volume = masterVolume;
+    audio.playbackRate = playbackRate;
+    audio.volume = masterVolume;
 
     // 4. Synchronous immediate play in current user gesture tick
     unlockAudioContext();
     try {
-      const playPromise = activeAudio.play();
+      const playPromise = audio.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
           console.warn("Gesture required:", err);
@@ -674,17 +549,15 @@ export const player = {
       updateUI();
     }
 
-    warmupStandbyNextTrack();
-
     // 5. Offline PWA check in background without delaying stream start
     if ("caches" in window) {
       caches.open("musicsaura-pwa-storage-v2").then(async (cache) => {
         const cachedRes = await cache.match(cleanUrl);
         if (cachedRes && (cachedRes.ok || cachedRes.status === 200)) {
           const blob = await cachedRes.blob();
-          if (blob && blob.size > 10240 && currentSong === song && activeAudio.paused) {
-            activeAudio.src = URL.createObjectURL(blob);
-            activeAudio.play().catch(() => {});
+          if (blob && blob.size > 10240 && currentSong === song && audio.paused) {
+            audio.src = URL.createObjectURL(blob);
+            audio.play().catch(() => {});
           }
         }
       }).catch(() => {});
@@ -698,7 +571,7 @@ export const player = {
     userPaused = false;
     unlockAudioContext();
     try {
-      const p = activeAudio.play();
+      const p = audio.play();
       if (p !== undefined) p.catch(() => {});
     } catch (err) {
       console.warn("Play error:", err);
@@ -708,12 +581,12 @@ export const player = {
 
   pause() {
     userPaused = true;
-    activeAudio.pause();
+    audio.pause();
     updateUI();
   },
 
   togglePlay() {
-    if (activeAudio.paused) {
+    if (audio.paused) {
       player.play();
     } else {
       player.pause();
@@ -735,8 +608,8 @@ export const player = {
 
   prev() {
     userPaused = false;
-    if (activeAudio.currentTime > 3.5) {
-      activeAudio.currentTime = 0;
+    if (audio.currentTime > 3.5) {
+      audio.currentTime = 0;
       updateProgress();
       return;
     }
@@ -746,16 +619,16 @@ export const player = {
   },
 
   seek(seconds) {
-    if (!Number.isFinite(activeAudio.duration) || activeAudio.duration <= 0) return;
-    const clamped = clamp(seconds, 0, activeAudio.duration);
-    activeAudio.currentTime = clamped;
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+    const clamped = clamp(seconds, 0, audio.duration);
+    audio.currentTime = clamped;
     updateProgress();
     updatePositionState();
   },
 
   setVolume(vol) {
     masterVolume = clamp(vol, 0, 1);
-    activeAudio.volume = masterVolume;
+    audio.volume = masterVolume;
     localStorage.setItem(VOLUME_STORAGE_KEY, String(masterVolume));
     if (volumeSlider) volumeSlider.value = Math.round(masterVolume * 100);
     if (volumeBtn) {
@@ -768,23 +641,22 @@ export const player = {
 
   toggleMute() {
     if (masterVolume > 0) {
-      activeAudio._prevVol = masterVolume;
+      audio._prevVol = masterVolume;
       player.setVolume(0);
     } else {
-      player.setVolume(activeAudio._prevVol || 1.0);
+      player.setVolume(audio._prevVol || 1.0);
     }
   },
 
   setCrossfade(sec) {
     crossfadeSeconds = clamp(parseFloat(sec) || 0, 0, 15);
     localStorage.setItem(CROSSFADE_STORAGE_KEY, String(crossfadeSeconds));
-    player.showToast(crossfadeSeconds === 0 ? "⚡ Gapless mode active" : `🎚️ Crossfade set to ${crossfadeSeconds}s`);
+    player.showToast(crossfadeSeconds === 0 ? "⚡ Gapless mode active" : `🎚️ Transition set to ${crossfadeSeconds}s`);
   },
 
   setPlaybackSpeed(speed) {
     playbackRate = clamp(parseFloat(speed) || 1.0, 0.5, 2.0);
-    activeAudio.playbackRate  = playbackRate;
-    standbyAudio.playbackRate = playbackRate;
+    audio.playbackRate = playbackRate;
     localStorage.setItem(SPEED_STORAGE_KEY, String(playbackRate));
     player.showToast(`⏩ Playback speed: ${playbackRate}x`);
   },
@@ -857,7 +729,6 @@ export const player = {
         if (currentIndex < 0) currentIndex = 0;
       }
     }
-    warmupStandbyNextTrack();
     updateUI();
     player.showToast(isShuffle ? "🔀 Shuffle mode on" : "➡️ Normal order");
   },
@@ -927,8 +798,8 @@ if (shuffleBtnEl) shuffleBtnEl.onclick = () => player.toggleShuffle();
 if (seekBar) {
   seekBar.addEventListener("input", () => {
     isSeeking = true;
-    if (Number.isFinite(activeAudio.duration) && activeAudio.duration > 0) {
-      const sec = (seekBar.value / 100) * activeAudio.duration;
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      const sec = (seekBar.value / 100) * audio.duration;
       if (progressFill)  progressFill.style.width = `${seekBar.value}%`;
       if (currentTimeEl) currentTimeEl.textContent = formatTime(sec);
     }
@@ -936,8 +807,8 @@ if (seekBar) {
 
   seekBar.addEventListener("change", () => {
     isSeeking = false;
-    if (Number.isFinite(activeAudio.duration) && activeAudio.duration > 0) {
-      const sec = (seekBar.value / 100) * activeAudio.duration;
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      const sec = (seekBar.value / 100) * audio.duration;
       player.seek(sec);
     }
   });
@@ -954,8 +825,8 @@ if (volumeBtn) {
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
-    if (!activeAudio.paused) acquireWakeLock();
+    if (!audio.paused) acquireWakeLock();
   } else {
-    if (!activeAudio.paused) updateMediaSession(currentSong);
+    if (!audio.paused) updateMediaSession(currentSong);
   }
 });
