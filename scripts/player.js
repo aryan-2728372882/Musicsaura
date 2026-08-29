@@ -432,8 +432,10 @@ function updateUI() {
   emitStateChange();
 }
 
+let isAppHidden = false;
+
 function updateProgress() {
-  if (isSeeking) return;
+  if (isSeeking || isAppHidden) return;
   const cur = audio.currentTime || 0;
   const dur = audio.duration || 0;
 
@@ -1044,9 +1046,17 @@ if (volumeBtn) {
 }
 
 document.addEventListener("visibilitychange", () => {
+  isAppHidden = document.hidden;
   if (document.hidden) {
-    if (!audio.paused) acquireWakeLock();
+    if (!audio.paused && "mediaSession" in navigator) {
+      navigator.mediaSession.playbackState = "playing";
+    }
   } else {
-    if (!audio.paused) updateMediaSession(currentSong);
+    if (!audio.paused) {
+      acquireWakeLock();
+      updateMediaSession(currentSong);
+      updateUI();
+      updateProgress();
+    }
   }
 });

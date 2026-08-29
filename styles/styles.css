@@ -633,6 +633,8 @@ body.page-scroll {
 
 /* ── SONG CARD ── */
 .song-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px;
   background: var(--surface-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
