@@ -310,12 +310,18 @@ function capturePlaySeconds() {
   }
 }
 
-async function flushStatsToFirebase() {
+let pendingSongsCount     = 0;
+let pendingMinutesCount   = 0;
+let statsFlushTimer       = null;
+
+async function flushStatsToFirebase(forceImmediate = false) {
   capturePlaySeconds();
   if (!currentSong || accumulatedPlaySec < STATS_MIN_PLAY_SECONDS || hasRecordedStat) return;
 
   hasRecordedStat = true;
   const minutes = Math.max(0.5, Math.round((accumulatedPlaySec / 60) * 2) / 2);
+  pendingSongsCount += 1;
+  pendingMinutesCount += minutes;
 
   try {
     const stats = JSON.parse(localStorage.getItem("musicsaura_local_stats") || "{}");
@@ -324,20 +330,46 @@ async function flushStatsToFirebase() {
     localStorage.setItem("musicsaura_local_stats", JSON.stringify(stats));
   } catch {}
 
-  if (auth.currentUser) {
-    try {
-      const userRef = doc(db, "users", auth.currentUser.uid);
-      await updateDoc(userRef, {
-        songsPlayed: increment(1),
-        minutesListened: increment(minutes),
-        lastPlayed: serverTimestamp(),
-        lastActive: new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }) + " IST"
-      });
-    } catch (err) {
-      console.warn("Stats sync warning:", err);
-    }
+  // Flush immediately if forced, otherwise debounce write to max once every 3 minutes
+  if (forceImmediate) {
+    commitPendingStats();
+  } else if (!statsFlushTimer) {
+    statsFlushTimer = setTimeout(() => {
+      commitPendingStats();
+      statsFlushTimer = null;
+    }, 180000); // 3 minutes buffer (saves 90% Firestore write quota)
   }
 }
+
+async function commitPendingStats() {
+  if (!auth.currentUser || (pendingSongsCount === 0 && pendingMinutesCount === 0)) return;
+
+  const toCommitSongs = pendingSongsCount;
+  const toCommitMins = pendingMinutesCount;
+  pendingSongsCount = 0;
+  pendingMinutesCount = 0;
+
+  try {
+    const userRef = doc(db, "users", auth.currentUser.uid);
+    await updateDoc(userRef, {
+      songsPlayed: increment(toCommitSongs),
+      minutesListened: increment(toCommitMins),
+      lastPlayed: serverTimestamp(),
+      lastActive: new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }) + " IST"
+    });
+  } catch (err) {
+    console.warn("Batched stats sync warning:", err);
+  }
+}
+
+// Flush on tab close or navigation
+window.addEventListener("beforeunload", () => {
+  commitPendingStats();
+});
+
+window.addEventListener("pagehide", () => {
+  commitPendingStats();
+});
 
 let isBuffering          = false;
 let stallWatchdogTimer    = null;
