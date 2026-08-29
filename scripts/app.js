@@ -379,30 +379,20 @@ function rebuildAllCatalogues() {
     return getSongTimestamp(b) - getSongTimestamp(a);
   });
 
-  // Build each genre with NEWEST published uploads at the top & strict deduplication
+  // Build each genre preserving raw JSON catalog top order + newest community uploads
   Object.keys(GENRE_FILES).forEach((genre) => {
     const raw = (rawJsonSongs[genre] || []).filter((s) => s && s.link && !deletedSongLinks.has(s.link));
-    const genreUploads = uniqueCustom.filter((s) => s && (s.genre || "").toLowerCase() === genre.toLowerCase());
-    
-    // Combine custom uploads (newest first) + static JSON songs
-    const combined = [...genreUploads, ...raw];
-    const seenLinks = new Set();
-    const seenTitles = new Set();
-    const deduplicated = [];
+    const rawLinks = new Set(raw.map((s) => s.link.split("?")[0].toLowerCase().trim()));
+    const rawTitles = new Set(raw.map((s) => (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim()).filter(Boolean));
 
-    combined.forEach((s) => {
-      if (!s || !s.link) return;
+    const genreUploads = uniqueCustom.filter((s) => s && (s.genre || "").toLowerCase() === genre.toLowerCase());
+    const brandNewCommunityUploads = genreUploads.filter((s) => {
       const cleanLink = s.link.split("?")[0].toLowerCase().trim();
       const cleanTitle = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
-
-      if (!seenLinks.has(cleanLink) && (!cleanTitle || !seenTitles.has(cleanTitle))) {
-        seenLinks.add(cleanLink);
-        if (cleanTitle) seenTitles.add(cleanTitle);
-        deduplicated.push(s);
-      }
+      return !rawLinks.has(cleanLink) && (!cleanTitle || !rawTitles.has(cleanTitle));
     });
 
-    songsByGenre[genre] = deduplicated;
+    songsByGenre[genre] = [...brandNewCommunityUploads, ...raw];
   });
 
   // Rebuild global search index containing ALL songs (strictly unique)
@@ -410,20 +400,8 @@ function rebuildAllCatalogues() {
   const globalSeenLinks = new Set();
   const globalSeenTitles = new Set();
 
-  // 1. Add all custom uploads first (newest on top)
-  uniqueCustom.forEach((s) => {
-    if (!s || !s.link) return;
-    const cleanLink = s.link.split("?")[0].toLowerCase().trim();
-    const cleanTitle = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
-    if (!globalSeenLinks.has(cleanLink) && (!cleanTitle || !globalSeenTitles.has(cleanTitle))) {
-      globalSeenLinks.add(cleanLink);
-      if (cleanTitle) globalSeenTitles.add(cleanTitle);
-      allSongs.push(s);
-    }
-  });
-
-  // 2. Add all songs from all JSONs (excluding deleted songs)
-  Object.values(rawJsonSongs).forEach((list) => {
+  // 1. Add all songs from all JSONs (guaranteeing official order)
+  Object.values(songsByGenre).forEach((list) => {
     list.forEach((s) => {
       if (!s || !s.link || deletedSongLinks.has(s.link)) return;
       const cleanLink = s.link.split("?")[0].toLowerCase().trim();
@@ -446,23 +424,22 @@ function rebuildAllCatalogues() {
 
 /* ── LOAD RAW JSON FILES ── */
 async function loadRawJson(genre) {
-  if (rawJsonSongs[genre]) return rawJsonSongs[genre];
   const file = GENRE_FILES[genre];
   if (!file) return [];
 
   try {
-    const res = await fetch(file, { cache: "no-store" });
-    if (res.ok) {
-      const raw = await res.json();
-      rawJsonSongs[genre] = raw
-        .map((s) => normalizeSong(s, genre, "json"))
-        .filter((s) => s && s.link && !deletedSongLinks.has(s.link));
+    const res = await fetch(file);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      rawJsonSongs[genre] = data
+        .map((s, i) => normalizeSong(s, genre, `json_${genre}_${i}`))
+        .filter((s) => s && s.link);
       return rawJsonSongs[genre];
     }
   } catch (err) {
-    console.warn(`Failed loading JSON ${genre}:`, err);
+    console.warn(`Failed loading catalogue for ${genre}:`, err);
   }
-  rawJsonSongs[genre] = [];
   return [];
 }
 
@@ -549,13 +526,21 @@ function createCard(song, index) {
 
   if (isPlayingThis) el.classList.add("is-playing");
 
+  const thumbUrl = song.thumbnail || "assets/logo.png";
+
   el.innerHTML = `
     <div class="card-img-wrap">
-      <img src="${escapeHtml(song.thumbnail)}" loading="lazy" decoding="async" alt="${escapeHtml(song.title)}" onerror="this.src='assets/logo.png'">
+      <img
+        src="${escapeHtml(thumbUrl)}"
+        alt="${escapeHtml(song.title)}"
+        loading="lazy"
+        decoding="async"
+        onerror="this.onerror=null;this.src='assets/logo.png';"
+      >
       <div class="card-play-overlay">
         <span class="material-icons play-icon">${isPlayingThis && playerState.isPlaying ? "pause" : "play_arrow"}</span>
       </div>
-      <button class="card-fav-btn ${isFav ? "active" : ""}" aria-label="Favorite" title="Favorite">
+      <button class="card-fav-btn ${isFav ? "active" : ""}" aria-label="Favorite" title="${isFav ? "Remove Favorite" : "Favorite"}">
         <span class="material-icons">${isFav ? "favorite" : "favorite_border"}</span>
       </button>
       <button class="card-fav-btn card-offline-btn ${isOff ? "active" : ""}" style="top:auto;bottom:8px;right:8px;background:rgba(12,12,22,0.85);color:${isOff ? "var(--cyan)" : "var(--text-muted)"}" aria-label="Offline Storage" title="${isOff ? "Downloaded in App Storage" : "Save in App Storage for Offline Listening"}">
@@ -563,8 +548,8 @@ function createCard(song, index) {
       </button>
     </div>
     <div class="card-info">
-      <div class="card-title">${escapeHtml(song.title)}</div>
-      <div class="card-artist">${escapeHtml(song.artist)}</div>
+      <div class="card-title" title="${escapeHtml(song.title)}">${escapeHtml(song.title)}</div>
+      <div class="card-artist" title="${escapeHtml(song.artist || "MusicsAura")}">${escapeHtml(song.artist || "MusicsAura")}</div>
     </div>
   `;
 
@@ -598,7 +583,7 @@ function createCard(song, index) {
   return el;
 }
 
-/* ── HIGH-SPEED PROGRESSIVE RENDERER ── */
+/* ── GLITCH-FREE SYNCHRONOUS RENDERER ── */
 function renderSongList(container, songs, emptyMsg = "No tracks available.") {
   const cleanSongs = (songs || []).filter((s) => s && s.title && s.link);
   container._songs = cleanSongs;
@@ -611,24 +596,10 @@ function renderSongList(container, songs, emptyMsg = "No tracks available.") {
     return;
   }
 
-  // 1. Render first 16 cards instantly for 0ms initial paint on 3G
-  const INITIAL_BATCH = 16;
+  // Render all cards in one atomic DocumentFragment for completely stable scrolling
   const frag = document.createDocumentFragment();
-  const firstBatch = cleanSongs.slice(0, INITIAL_BATCH);
-  firstBatch.forEach((song, i) => frag.appendChild(createCard(song, i)));
+  cleanSongs.forEach((song, i) => frag.appendChild(createCard(song, i)));
   container.replaceChildren(frag);
-
-  // 2. Append remaining cards smoothly in background chunks
-  if (cleanSongs.length > INITIAL_BATCH) {
-    const remaining = cleanSongs.slice(INITIAL_BATCH);
-    const scheduleNext = (window.requestIdleCallback || window.requestAnimationFrame);
-    scheduleNext(() => {
-      if (container._songs !== cleanSongs) return; // genre switched in between
-      const remFrag = document.createDocumentFragment();
-      remaining.forEach((song, idx) => remFrag.appendChild(createCard(song, INITIAL_BATCH + idx)));
-      container.appendChild(remFrag);
-    });
-  }
 }
 
 /* ── HERO BANNER UPDATE ── */

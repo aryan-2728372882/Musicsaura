@@ -607,6 +607,8 @@ body.page-scroll {
 .main-viewport {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 0.8rem clamp(1rem, 3vw, 2.5rem) calc(var(--player-h) + 2.5rem);
   position: relative;
 }
