@@ -117,9 +117,9 @@ async function loadExistingRegistry() {
       })
     );
 
-    // 2. Load Firestore published songs
+    // 2. Load recent Firestore published songs (only top 15 to minimize read quota)
     try {
-      const snap = await getDocs(collection(db, "songs"));
+      const snap = await getDocs(query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(15)));
       snap.forEach((docSnap) => {
         const s = docSnap.data();
         if (s.link) existingLinks.add(normalizeUrlKey(s.link));
@@ -970,7 +970,7 @@ async function loadCommunityUploads() {
   if (!contribList) return;
 
   try {
-    const q = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(40));
+    const q = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(15));
     const snap = await getDocs(q);
 
     if (contribCount) contribCount.textContent = `${snap.size} tracks`;

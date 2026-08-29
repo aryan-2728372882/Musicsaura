@@ -472,16 +472,17 @@ async function subscribeToFirestoreSongs() {
   // 0. Load cached songs immediately
   loadCachedFirestoreSongs();
 
+  // Check cache freshness: Skip network query completely if refreshed within 3 hours (0 reads!)
+  const lastTime = parseInt(localStorage.getItem(FIRESTORE_CACHE_TIME_KEY) || "0", 10);
+  const isFresh = Date.now() - lastTime < 3 * 60 * 60 * 1000;
+  if (isFresh && firestoreSongs.length > 0) {
+    return;
+  }
+
   try {
-    // 1. Fetch recent releases from Firestore
-    let snap;
-    try {
-      const songsQuery = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(100));
-      snap = await getDocs(songsQuery);
-    } catch (e) {
-      // Direct collection fallback in case index is pending
-      snap = await getDocs(collection(db, "songs"));
-    }
+    // 1. Fetch only recent 15 community uploads to minimize Firestore reads
+    const songsQuery = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(15));
+    const snap = await getDocs(songsQuery);
 
     const newSongs = [];
     snap.forEach((docSnap) => {
