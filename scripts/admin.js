@@ -3,7 +3,7 @@ import {
   auth, db, isAdmin, onAuthStateChanged, signOut,
   collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch
 } from "./firebase-config.js";
-import { commitSongsToGitHub } from "./github-sync.js";
+import { commitSongsToGitHub, deleteSongFromGitHub } from "./github-sync.js";
 
 // DOM elements
 const totalUsersEl       = document.getElementById("total-users");
@@ -596,6 +596,11 @@ async function deleteSong(songId) {
     // 1. Delete from Firestore 'songs' collection
     await deleteDoc(doc(db, "songs", songId));
 
+    // AUTO GITHUB DELETE: Remove from jsons/{genre}.json in GitHub repository
+    try {
+      deleteSongFromGitHub(song.genre, song.link, song.title);
+    } catch {}
+
     // 2. Add to 'deleted_songs' collection so it stays deleted across all users and caches
     if (song.link) {
       try {
@@ -616,7 +621,7 @@ async function deleteSong(songId) {
       localStorage.setItem("musicsaura_local_uploads", JSON.stringify(filtered));
     } catch {}
 
-    showAlert(`🗑️ Deleted "${song.title}" from MusicsAura & Firestore!`);
+    showAlert(`🗑️ Deleted "${song.title}" from MusicsAura, Firestore & GitHub!`);
     loadUploadedSongs();
   } catch (err) {
     console.error("Delete failed:", err);

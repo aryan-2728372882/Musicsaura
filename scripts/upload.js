@@ -6,7 +6,7 @@ import {
   collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp,
   doc, deleteDoc, updateDoc, writeBatch
 } from "./firebase-config.js";
-import { commitSongsToGitHub } from "./github-sync.js";
+import { commitSongsToGitHub, deleteSongFromGitHub } from "./github-sync.js";
 
 // Folder Base URLs for File Garden
 const FILE_GARDEN_FOLDERS = {
@@ -1027,6 +1027,11 @@ async function loadCommunityUploads() {
           try {
             await deleteDoc(doc(db, "songs", songId));
 
+            // AUTO GITHUB DELETE: Remove from jsons/{genre}.json in GitHub repository
+            try {
+              deleteSongFromGitHub(song.genre, song.link, song.title);
+            } catch {}
+
             // Clean from local uploads buffer
             try {
               const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
@@ -1034,7 +1039,7 @@ async function loadCommunityUploads() {
               localStorage.setItem("musicsaura_local_uploads", JSON.stringify(filtered));
             } catch {}
 
-            showAlert(`🗑️ Deleted "${song.title}" from MusicsAura!`);
+            showAlert(`🗑️ Deleted "${song.title}" from MusicsAura and GitHub!`);
             loadCommunityUploads();
           } catch (err) {
             showAlert("Could not delete track: " + err.message, true);

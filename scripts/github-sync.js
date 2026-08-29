@@ -136,3 +136,88 @@ export async function commitSongsToGitHub(genre, newSongs) {
     return { success: false, message: err.message };
   }
 }
+
+/**
+ * Removes a song from jsons/{genre}.json in the GitHub repository
+ * @param {string} genre - e.g. "hindi", "punjabi", "haryanvi", "rap", "bhojpuri"
+ * @param {string} songLink - stream link of track to remove
+ * @param {string} songTitle - title of track to remove
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+export async function deleteSongFromGitHub(genre, songLink, songTitle) {
+  const token = getGitHubToken();
+  if (!token) return { success: false, message: "GitHub Token not configured" };
+
+  const cleanGenre = (genre || "hindi").toLowerCase().trim();
+  const filePath = `jsons/${cleanGenre}.json`;
+  const url = `https://api.github.com/repos/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/contents/${filePath}?ref=${GITHUB_BRANCH}`;
+
+  try {
+    const getRes = await fetch(url, {
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/vnd.github.v3+json"
+      }
+    });
+
+    if (!getRes.ok) return { success: false, message: `GET failed: HTTP ${getRes.status}` };
+    const fileData = await getRes.json();
+    const sha = fileData.sha;
+    const decoded = decodeURIComponent(escape(atob(fileData.content.replace(/\s/g, ""))));
+    let currentSongs = JSON.parse(decoded);
+
+    const targetLinkKey = (songLink || "").split("?")[0].toLowerCase().trim();
+    const targetTitleKey = (songTitle || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+
+    const originalLength = currentSongs.length;
+    const filteredSongs = currentSongs.filter((s) => {
+      if (!s) return false;
+      const lKey = (s.link || "").split("?")[0].toLowerCase().trim();
+      const tKey = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+      if (targetLinkKey && lKey === targetLinkKey) return false;
+      if (targetTitleKey && tKey === targetTitleKey) return false;
+      return true;
+    });
+
+    if (filteredSongs.length === originalLength) {
+      return { success: true, message: "Song was not in JSON file" };
+    }
+
+    const jsonString = JSON.stringify(filteredSongs, null, 2) + "\n";
+    const utf8Bytes = new TextEncoder().encode(jsonString);
+    let binary = "";
+    for (let i = 0; i < utf8Bytes.length; i++) {
+      binary += String.fromCharCode(utf8Bytes[i]);
+    }
+    const base64Content = btoa(binary);
+
+    const putBody = {
+      message: `auto-delete: remove "${songTitle || songLink}" from ${filePath} via MusicsAura Studio`,
+      content: base64Content,
+      branch: GITHUB_BRANCH,
+      sha
+    };
+
+    const putRes = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(putBody)
+    });
+
+    if (!putRes.ok) {
+      const errJson = await putRes.json().catch(() => ({}));
+      throw new Error(errJson.message || `HTTP ${putRes.status}`);
+    }
+
+    console.log(`[GitHub Sync] Successfully removed "${songTitle || songLink}" from ${filePath} on GitHub!`);
+    return { success: true, message: `Deleted from ${filePath} on GitHub!` };
+
+  } catch (err) {
+    console.warn(`[GitHub Sync] Error deleting from ${filePath}:`, err);
+    return { success: false, message: err.message };
+  }
+}
