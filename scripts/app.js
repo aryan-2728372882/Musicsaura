@@ -438,11 +438,36 @@ async function loadRawJson(genre) {
   return [];
 }
 
-/* ── REAL-TIME FIRESTORE SYNCHRONIZATION ── */
-function subscribeToFirestoreSongs() {
+/* ── REAL-TIME FIRESTORE SYNCHRONIZATION WITH LOCAL STORAGE CACHE ── */
+const FIRESTORE_CACHE_KEY = "musicsaura_firestore_songs_cache";
+
+function loadCachedFirestoreSongs() {
   try {
-    // 1. Subscribe to published songs (query whole collection so all uploaded songs are received)
-    onSnapshot(collection(db, "songs"), (snap) => {
+    const raw = localStorage.getItem(FIRESTORE_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        firestoreSongs = parsed.filter((s) => s && s.link && !deletedSongLinks.has(s.link));
+        rebuildAllCatalogues();
+      }
+    }
+  } catch {}
+}
+
+function saveCachedFirestoreSongs(songs) {
+  try {
+    localStorage.setItem(FIRESTORE_CACHE_KEY, JSON.stringify(songs.slice(0, 300)));
+  } catch {}
+}
+
+function subscribeToFirestoreSongs() {
+  // 0. Load cached songs immediately for 0ms startup & 0 quota usage
+  loadCachedFirestoreSongs();
+
+  try {
+    // 1. Subscribe to published songs (limited to recent 150 tracks to prevent quota spikes)
+    const songsQuery = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(150));
+    onSnapshot(songsQuery, (snap) => {
       firestoreSongs = [];
       snap.forEach((docSnap) => {
         const data = docSnap.data();
@@ -454,30 +479,11 @@ function subscribeToFirestoreSongs() {
         }
       });
 
-      // Sort client-side: newest uploads first
-      firestoreSongs.sort((a, b) => {
-        const tA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (typeof a.createdAt === "number" ? a.createdAt : 0);
-        const tB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (typeof b.createdAt === "number" ? b.createdAt : 0);
-        return tB - tA;
-      });
-
+      // Save to local cache
+      saveCachedFirestoreSongs(firestoreSongs);
       rebuildAllCatalogues();
     }, async (err) => {
-      console.warn("Firestore onSnapshot error, falling back to getDocs:", err);
-      try {
-        const snap = await getDocs(collection(db, "songs"));
-        firestoreSongs = [];
-        snap.forEach((docSnap) => {
-          const data = docSnap.data();
-          if (data && data.link && !deletedSongLinks.has(data.link)) {
-            const norm = normalizeSong({ id: docSnap.id, ...data }, data.genre, "firestore");
-            if (norm && norm.link) firestoreSongs.push(norm);
-          }
-        });
-        rebuildAllCatalogues();
-      } catch (e) {
-        console.warn("getDocs fallback failed:", e);
-      }
+      console.warn("Firestore onSnapshot error, using local cache:", err);
     });
 
     // 2. Subscribe to deleted songs blacklist
