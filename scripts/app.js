@@ -314,6 +314,28 @@ function getLocalUploads() {
 
 let deletedSongLinks = new Set();
 
+function getSongTimestamp(song) {
+  if (!song) return 0;
+  const c = song.createdAt;
+  if (!c) {
+    if (typeof song.id === "string" && song.id.startsWith("local_")) {
+      const ts = parseInt(song.id.split("_")[1], 10);
+      if (!isNaN(ts)) return ts;
+    }
+    return song._timestamp || 0;
+  }
+  if (typeof c.toMillis === "function") return c.toMillis();
+  if (typeof c.toDate === "function") return c.toDate().getTime();
+  if (typeof c === "number") return c;
+  if (typeof c.seconds === "number") return c.seconds * 1000 + (c.nanoseconds ? c.nanoseconds / 1000000 : 0);
+  if (c instanceof Date) return c.getTime();
+  if (typeof c === "string") {
+    const parsed = Date.parse(c);
+    if (!isNaN(parsed)) return parsed;
+  }
+  return song._timestamp || 0;
+}
+
 /* ── REBUILD ALL CATALOGUES & GLOBAL SEARCH INDEX ── */
 function rebuildAllCatalogues() {
   // If Firestore songs are loaded, purge stale local buffer
@@ -330,17 +352,29 @@ function rebuildAllCatalogues() {
     .map((s) => normalizeSong(s, s?.genre, "local"))
     .filter((s) => s && s.link && !deletedSongLinks.has(s.link));
 
-  const allCustom = [...localUploads, ...firestoreSongs]
+  // Merge Firestore songs and local uploads
+  const allCustom = [...firestoreSongs, ...localUploads]
     .filter((s) => s && s.link && !deletedSongLinks.has(s.link));
 
-  // Remove duplicate custom songs by link
-  const uniqueCustom = [];
-  const seenLinks = new Set();
+  // Remove duplicate custom songs by link and keep the latest
+  const uniqueMap = new Map();
   allCustom.forEach((s) => {
-    if (s && s.link && !seenLinks.has(s.link)) {
-      seenLinks.add(s.link);
-      uniqueCustom.push(s);
+    if (s && s.link) {
+      const cleanLink = s.link.split("?")[0].toLowerCase();
+      if (!uniqueMap.has(cleanLink)) {
+        uniqueMap.set(cleanLink, s);
+      } else {
+        const existing = uniqueMap.get(cleanLink);
+        if (getSongTimestamp(s) > getSongTimestamp(existing)) {
+          uniqueMap.set(cleanLink, s);
+        }
+      }
     }
+  });
+
+  // STRICTLY SORT ALL UPLOADS: Newest releases / uploads ALWAYS on top!
+  const uniqueCustom = Array.from(uniqueMap.values()).sort((a, b) => {
+    return getSongTimestamp(b) - getSongTimestamp(a);
   });
 
   // Build each genre with NEWEST published uploads at the top!
@@ -354,7 +388,7 @@ function rebuildAllCatalogues() {
   allSongs = [];
   const globalSeen = new Set();
 
-  // 1. Add all custom uploads first
+  // 1. Add all custom uploads first (newest on top)
   uniqueCustom.forEach((s) => {
     if (s && s.link && !globalSeen.has(s.link)) {
       globalSeen.add(s.link);
