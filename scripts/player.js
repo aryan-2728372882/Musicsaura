@@ -338,6 +338,10 @@ async function flushStatsToFirebase() {
   }
 }
 
+let isBuffering          = false;
+let stallWatchdogTimer    = null;
+let stallCount            = 0;
+
 // ─── UI SYNCHRONIZATION ────────────────────────────────────────────
 function emitStateChange() {
   const state = player.getState();
@@ -366,7 +370,18 @@ function updateUI() {
   }
 
   if (playBtnIcon) {
-    playBtnIcon.textContent = !audio.paused ? "pause" : "play_arrow";
+    if (isBuffering && !audio.paused) {
+      playBtnIcon.textContent = "refresh";
+      if (playBtnEl) playBtnEl.classList.add("is-buffering");
+    } else {
+      playBtnIcon.textContent = !audio.paused ? "pause" : "play_arrow";
+      if (playBtnEl) playBtnEl.classList.remove("is-buffering");
+    }
+  }
+
+  const liveWave = document.querySelector(".live-wave-visualizer");
+  if (liveWave) {
+    liveWave.classList.toggle("is-buffering", isBuffering && !audio.paused);
   }
 
   if (repeatIcon && repeatBtnEl) {
@@ -404,34 +419,6 @@ function updateProgress() {
   }
 }
 
-// ─── PERSISTENT AUDIO EVENT HANDLING ──────────────────────────────
-audio.onplay = () => {
-  userPaused = false;
-  playSessionStart = Date.now();
-  acquireWakeLock();
-  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
-  updateUI();
-};
-
-audio.onpause = () => {
-  capturePlaySeconds();
-  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
-  updateUI();
-  if (userPaused) releaseWakeLock();
-};
-
-audio.ontimeupdate = () => {
-  updateProgress();
-  updatePositionState();
-
-  if (playSessionStart > 0 && !hasRecordedStat) {
-    const currentSessionSec = (Date.now() - playSessionStart) / 1000;
-    if (accumulatedPlaySec + currentSessionSec >= STATS_MIN_PLAY_SECONDS) {
-      flushStatsToFirebase();
-    }
-  }
-};
-
 export async function getOfflineAudioBlobUrl(link) {
   if (!link || !("caches" in window)) return null;
   try {
@@ -462,23 +449,107 @@ function isSongStoredOffline(song) {
   }
 }
 
+// ─── SLOW NETWORK WATCHDOG & STALL AUTO-RECOVERY ──────────────────
+function startStallWatchdog() {
+  clearTimeout(stallWatchdogTimer);
+  stallWatchdogTimer = setTimeout(() => {
+    if (isBuffering && !audio.paused && !userPaused) {
+      stallCount++;
+      if (stallCount === 1) {
+        player.showToast("🌧️ Slow network: Buffering audio stream...", 4000);
+      }
+
+      const cur = audio.currentTime || 0;
+      let hasBufferedAhead = false;
+      for (let i = 0; i < audio.buffered.length; i++) {
+        if (audio.buffered.start(i) <= cur && audio.buffered.end(i) > cur + 0.5) {
+          hasBufferedAhead = true;
+          break;
+        }
+      }
+
+      if (!hasBufferedAhead && stallCount >= 2) {
+        // Unfreeze socket stalled by slow rainy network packet loss
+        const savedPos = audio.currentTime;
+        audio.load();
+        if (savedPos > 0) audio.currentTime = savedPos;
+        audio.play().catch(() => {});
+      }
+    }
+  }, 4500);
+}
+
+function clearStallWatchdog() {
+  clearTimeout(stallWatchdogTimer);
+  stallCount = 0;
+}
+
 // ─── PERSISTENT AUDIO EVENT HANDLING ──────────────────────────────
-audio.onplay = () => {
+audio.addEventListener("loadstart", () => {
+  isBuffering = true;
+  updateUI();
+});
+
+audio.addEventListener("waiting", () => {
+  isBuffering = true;
+  updateUI();
+  startStallWatchdog();
+});
+
+audio.addEventListener("stalled", () => {
+  isBuffering = true;
+  updateUI();
+  startStallWatchdog();
+});
+
+audio.addEventListener("canplay", () => {
+  isBuffering = false;
+  clearStallWatchdog();
+  updateUI();
+});
+
+audio.addEventListener("canplaythrough", () => {
+  isBuffering = false;
+  clearStallWatchdog();
+  updateUI();
+});
+
+audio.addEventListener("playing", () => {
+  isBuffering = false;
+  clearStallWatchdog();
   userPaused = false;
   playSessionStart = Date.now();
   acquireWakeLock();
   if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
   updateUI();
-};
+});
 
-audio.onpause = () => {
+audio.addEventListener("pause", () => {
+  isBuffering = false;
+  clearStallWatchdog();
   capturePlaySeconds();
   if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
   updateUI();
   if (userPaused) releaseWakeLock();
-};
+});
 
-audio.ontimeupdate = () => {
+audio.addEventListener("seeking", () => {
+  isBuffering = true;
+  updateUI();
+});
+
+audio.addEventListener("seeked", () => {
+  isBuffering = false;
+  updateUI();
+});
+
+audio.addEventListener("progress", () => {
+  if (audio.buffered.length > 0) {
+    clearStallWatchdog();
+  }
+});
+
+audio.addEventListener("timeupdate", () => {
   updateProgress();
   updatePositionState();
 
@@ -488,23 +559,26 @@ audio.ontimeupdate = () => {
       flushStatsToFirebase();
     }
   }
-};
+});
 
-audio.onended = () => {
+audio.addEventListener("ended", () => {
   flushStatsToFirebase();
+  isBuffering = false;
+  clearStallWatchdog();
 
   if (repeatMode === "one") {
     audio.currentTime = 0;
     audio.play().catch(() => {});
   } else {
-    // 100% Reliable background track advance on Android lockscreen!
     player.next(true);
   }
-};
+});
 
-audio.onerror = (e) => {
+audio.addEventListener("error", (e) => {
   console.warn("Audio node playback error:", e, audio.error);
-  
+  isBuffering = false;
+  clearStallWatchdog();
+
   // 1. Check if offline cached blob exists before failing
   getOfflineAudioBlobUrl(currentSong?.link || audio.src).then((blobUrl) => {
     if (blobUrl && audio.src !== blobUrl) {
@@ -513,26 +587,30 @@ audio.onerror = (e) => {
       return;
     }
 
-    // 2. If online and not retried with fresh timestamp, retry once
-    if (navigator.onLine && !audio._cacheRetried && audio.src && (audio.src.includes("file.garden") || audio.src.startsWith("http"))) {
-      audio._cacheRetried = true;
-      const separator = audio.src.includes("?") ? "&" : "?";
-      audio.src = audio.src + separator + "t=" + Date.now();
-      audio.play().catch(() => {});
+    // 2. Slow rainy network retry mechanism
+    if (navigator.onLine && (!audio._retryCount || audio._retryCount < 3)) {
+      audio._retryCount = (audio._retryCount || 0) + 1;
+      player.showToast(`🌧️ Slow connection retry (${audio._retryCount}/3)...`, 2500);
+      setTimeout(() => {
+        const separator = audio.src.includes("?") ? "&" : "?";
+        audio.src = audio.src.split("?")[0] + separator + "t=" + Date.now();
+        audio.load();
+        audio.play().catch(() => {});
+      }, 1200);
       return;
     }
 
-    // 3. If offline, alert user and STOP (do not endlessly skip through un-downloaded tracks)
+    // 3. If offline, alert user and stop
     if (!navigator.onLine) {
       player.showToast("⚠️ Offline: Connect to Wi-Fi/Data or play downloaded tracks.");
       return;
     }
 
     if (!userPaused && playlist.length > 1) {
-      setTimeout(() => player.next(true), 1500);
+      setTimeout(() => player.next(true), 2000);
     }
   });
-};
+});
 
 // Volume initialization
 audio.volume = masterVolume;
@@ -549,6 +627,7 @@ export const player = {
     return {
       currentSong,
       isPlaying: !audio.paused,
+      isBuffering,
       currentTime: audio.currentTime || 0,
       duration: audio.duration || 0,
       playlist,

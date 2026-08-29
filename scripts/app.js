@@ -1069,7 +1069,13 @@ player.subscribe((state) => {
   }
 
   if (fsPlayIcon) {
-    fsPlayIcon.textContent = state.isPlaying ? "pause" : "play_arrow";
+    if (state.isBuffering && state.isPlaying) {
+      fsPlayIcon.textContent = "refresh";
+      fsPlayIcon.parentElement?.classList.add("is-buffering");
+    } else {
+      fsPlayIcon.textContent = state.isPlaying ? "pause" : "play_arrow";
+      fsPlayIcon.parentElement?.classList.remove("is-buffering");
+    }
   }
   if (fsShuffle) fsShuffle.classList.toggle("active", state.isShuffle);
   if (fsRepeat) {
