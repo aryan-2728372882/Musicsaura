@@ -101,7 +101,7 @@ export async function commitSongsToGitHub(genre, newSongs) {
       const base64Content = btoa(binary);
 
       const putBody = {
-        message: `auto-publish: add ${newSongs.length} track(s) to ${filePath} via MusicsAura Studio`,
+        message: `auto-publish: add ${newSongs.length} track(s) to ${filePath} via MusicsAura Studio [skip ci] [skip vercel]`,
         content: base64Content,
         branch: branch
       };
@@ -178,7 +178,7 @@ export async function deleteSongFromGitHub(genre, songLink, songTitle) {
       const base64Content = btoa(binary);
 
       const putBody = {
-        message: `auto-delete: remove track from ${filePath} via MusicsAura Studio`,
+        message: `auto-delete: remove ${songTitle} from ${filePath} via MusicsAura Studio [skip ci] [skip vercel]`,
         content: base64Content,
         branch: branch,
         sha: sha
