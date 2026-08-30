@@ -78,6 +78,7 @@ let batchTracks             = []; // Array of { file, title, artist, artwork, ge
 // ─── DUPLICATE DETECTION REGISTRY ──────────────────────────────────
 const existingLinks         = new Set();
 const existingTitles        = new Set();
+const existingSongsRegistry = [];
 
 function normalizeKey(str) {
   return (str || "")
@@ -105,13 +106,16 @@ async function loadExistingRegistry() {
     await Promise.all(
       Object.entries(GENRE_JSON_FILES).map(async ([genre, path]) => {
         try {
-          const res = await fetch(path);
+          const res = await fetch(`${path}?v=${Date.now()}`);
           if (res.ok) {
             const data = await res.json();
-            data.forEach((s) => {
-              if (s.link) existingLinks.add(normalizeUrlKey(s.link));
-              if (s.title) existingTitles.add(normalizeKey(s.title));
-            });
+            if (Array.isArray(data)) {
+              existingSongsRegistry.push(...data);
+              data.forEach((s) => {
+                if (s.link) existingLinks.add(normalizeUrlKey(s.link));
+                if (s.title) existingTitles.add(normalizeKey(s.title));
+              });
+            }
           }
         } catch {}
       })
