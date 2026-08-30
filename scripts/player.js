@@ -278,20 +278,24 @@ function updateMediaSession(song) {
 
   const artworkUrl = toAbsoluteUrl(song.thumbnail);
   const artworkList = [
-    { src: artworkUrl, sizes: "96x96",   type: "image/png" },
-    { src: artworkUrl, sizes: "128x128", type: "image/png" },
-    { src: artworkUrl, sizes: "192x192", type: "image/png" },
-    { src: artworkUrl, sizes: "256x256", type: "image/png" },
-    { src: artworkUrl, sizes: "384x384", type: "image/png" },
-    { src: artworkUrl, sizes: "512x512", type: "image/png" }
+    { src: artworkUrl, sizes: "96x96" },
+    { src: artworkUrl, sizes: "128x128" },
+    { src: artworkUrl, sizes: "192x192" },
+    { src: artworkUrl, sizes: "256x256" },
+    { src: artworkUrl, sizes: "384x384" },
+    { src: artworkUrl, sizes: "512x512" }
   ];
 
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: song.title || "MusicsAura Track",
-    artist: song.artist || "MusicsAura Artist",
-    album: song.genre ? `${song.genre.toUpperCase()} Hits` : "MusicsAura",
-    artwork: artworkList
-  });
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: song.title || "MusicsAura Track",
+      artist: song.artist || "MusicsAura Artist",
+      album: song.genre ? `${song.genre.toUpperCase()} Hits` : "MusicsAura",
+      artwork: artworkList
+    });
+  } catch (e) {
+    console.warn("MediaMetadata error:", e);
+  }
 
   navigator.mediaSession.playbackState = !audio.paused ? "playing" : "paused";
   updatePositionState();
@@ -713,21 +717,13 @@ export const player = {
   },
 
   prefetchAudioStream(link) {
-    if (!link || !navigator.onLine) return;
-    const cleanUrl = normalizeUrl(link);
-    if (!cleanUrl || cleanUrl === audio.src || prewarmedUrls.has(cleanUrl)) return;
-    prewarmedUrls.add(cleanUrl);
-
-    try {
-      prefetchAudio.src = cleanUrl;
-      prefetchAudio.load();
-    } catch {}
+    // Disabled concurrent prefetch to prevent socket-throttling on File Garden CDN
   },
 
-  async playSong(song, playlistContext = null, index = null) {
+  playSong(song, playlistContext = null, index = null) {
     if (!song || !song.link) return;
 
-    // 1. Immediately update UI & Media Session (0ms visual latency)
+    // 1. Immediately update playlist state
     currentSong = song;
     if (playlistContext) {
       if (index !== null) {
@@ -737,40 +733,18 @@ export const player = {
         player.setPlaylist(playlistContext, found >= 0 ? found : 0);
       }
     }
-    updateMediaSession(song);
-    updateUI();
 
-    // 2. Non-blocking background stats flush
-    flushStatsToFirebase().catch(() => {});
-    hasRecordedStat    = false;
-    accumulatedPlaySec = 0;
-    playSessionStart   = 0;
-
-    // 3. Check if stored offline in PWA Cache or device is offline
-    const isOfflineMode = !navigator.onLine || isSongStoredOffline(song);
-    let blobUrl = null;
-    if (isOfflineMode) {
-      blobUrl = await getOfflineAudioBlobUrl(song.link);
-    }
-
-    if (blobUrl) {
-      audio.src = blobUrl;
-    } else if (navigator.onLine) {
-      const cleanUrl = normalizeUrl(song.link);
-      if (!cleanUrl) return;
-      if (audio.src !== cleanUrl) {
-        audio.src = cleanUrl;
-      }
-    } else {
-      player.showToast("⚠️ Offline: This track is not downloaded for offline play.");
-      return;
+    // 2. Synchronously set audio.src & play immediately (0ms start delay)
+    const cleanUrl = normalizeUrl(song.link);
+    if (cleanUrl && audio.src !== cleanUrl) {
+      audio.src = cleanUrl;
     }
 
     audio.playbackRate = playbackRate;
     audio.volume = masterVolume;
+    userPaused = false;
 
-    // 4. Synchronous immediate play (0ms click-to-audio latency)
-    unlockAudioContext();
+    // 3. Direct synchronous play call (keeps mobile browser background audio permission active)
     try {
       const playPromise = audio.play();
       if (playPromise !== undefined) {
@@ -780,20 +754,29 @@ export const player = {
         });
       }
     } catch (err) {
-      console.warn("Playback gesture:", err);
+      console.warn("Playback error:", err);
       updateUI();
     }
 
-    // 5. PREDICTIVE PRELOAD: Pre-buffer the next track 1.5s in advance so Next click plays in 0ms
-    if (playlist.length > 1) {
-      const nextIdx = (currentIndex + 1) % playlist.length;
-      const nextSong = playlist[nextIdx];
-      if (nextSong && nextSong.link) {
-        setTimeout(() => {
-          player.prefetchAudioStream(nextSong.link);
-        }, 1500);
-      }
+    // 4. Instant UI & MediaSession updates
+    updateMediaSession(song);
+    updateUI();
+
+    // 5. Offline fallback check (in background without delaying audio.play)
+    if (!navigator.onLine) {
+      getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
+        if (blobUrl && audio.src !== blobUrl) {
+          audio.src = blobUrl;
+          audio.play().catch(() => {});
+        }
+      });
     }
+
+    // 6. Non-blocking stats recording
+    flushStatsToFirebase().catch(() => {});
+    hasRecordedStat    = false;
+    accumulatedPlaySec = 0;
+    playSessionStart   = Date.now();
   },
 
   play() {
@@ -801,7 +784,6 @@ export const player = {
       return player.playSong(playlist[currentIndex]);
     }
     userPaused = false;
-    unlockAudioContext();
     try {
       const p = audio.play();
       if (p !== undefined) p.catch(() => {});
@@ -834,7 +816,16 @@ export const player = {
       return;
     }
 
-    currentIndex = (currentIndex + 1) % playlist.length;
+    if (isShuffle) {
+      let randIdx = Math.floor(Math.random() * playlist.length);
+      if (playlist.length > 1 && randIdx === currentIndex) {
+        randIdx = (randIdx + 1) % playlist.length;
+      }
+      currentIndex = randIdx;
+    } else {
+      currentIndex = (currentIndex + 1) % playlist.length;
+    }
+
     player.playSong(playlist[currentIndex]);
   },
 
