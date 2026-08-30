@@ -181,17 +181,6 @@ function initAudioContext() {
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
 
-    // Connect Audio element into Web Audio EQ Graph
-    try {
-      if (!sourceNode) {
-        audio.crossOrigin = "anonymous";
-        sourceNode = audioCtx.createMediaElementSource(audio);
-        sourceNode.connect(subBassFilter);
-      }
-    } catch (e) {
-      console.warn("createMediaElementSource note:", e);
-    }
-
     try {
       const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
       applyPresetGains(savedPreset);
