@@ -2,7 +2,9 @@
 // Duplicate Prevention Engine + Multi-MP3 Auto-Publisher (1 to 40+ Files)
 
 import {
+  auth,
   db,
+  isAdmin,
   collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp,
   doc, deleteDoc, updateDoc, writeBatch
 } from "./firebase-config.js";
@@ -973,7 +975,8 @@ if (exportJsonBtn) {
 let communityLimit = 15;
 
 function canManageSong(song) {
-  const currentName = creatorUploaderName?.value?.trim() || localStorage.getItem("musicsaura_creator_name") || auth.currentUser?.displayName;
+  if (auth?.currentUser && isAdmin(auth.currentUser.email)) return true;
+  const currentName = uploaderNameInput?.value?.trim() || localStorage.getItem("musicsaura_creator_name") || auth?.currentUser?.displayName;
   if (!currentName) return true;
   const songUploader = (song.uploadedBy || "").toLowerCase().trim();
   const myName = currentName.toLowerCase().trim();
