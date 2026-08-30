@@ -1,1 +1,13 @@
-{"name":"musicsaura","version":"2.0.0","scripts":{"build":"echo ok"},"license":"ISC","dependencies":{}}
+{
+  "name": "musicsaura",
+  "version": "3.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "echo Build succeeded"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "ISC"
+}
