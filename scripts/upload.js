@@ -966,14 +966,29 @@ if (exportJsonBtn) {
 }
 
 // ─── RECENT COMMUNITY UPLOADS LIST ─────────────────────────────────
+let communityLimit = 15;
+
+function canManageSong(song) {
+  const currentName = creatorUploaderName?.value?.trim() || localStorage.getItem("musicsaura_creator_name") || auth.currentUser?.displayName;
+  if (!currentName) return true;
+  const songUploader = (song.uploadedBy || "").toLowerCase().trim();
+  const myName = currentName.toLowerCase().trim();
+  return songUploader === myName || songUploader === "community" || !songUploader;
+}
+
 async function loadCommunityUploads() {
   if (!contribList) return;
 
   try {
-    const q = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(15));
+    const q = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(communityLimit));
     const snap = await getDocs(q);
 
     if (contribCount) contribCount.textContent = `${snap.size} tracks`;
+
+    const loadMoreWrap = document.getElementById("contrib-load-more-wrap");
+    if (loadMoreWrap) {
+      loadMoreWrap.style.display = snap.size >= communityLimit ? "block" : "none";
+    }
 
     if (snap.empty) {
       contribList.innerHTML = `<div class="state-msg">No community tracks uploaded yet. Paste a File Garden link above to add one!</div>`;
@@ -1016,6 +1031,10 @@ async function loadCommunityUploads() {
       const editBtn = item.querySelector(".btn-edit-song");
       if (editBtn) {
         editBtn.addEventListener("click", () => {
+          if (!canManageSong(song)) {
+            showAlert("🔒 Permission Notice: Only the creator of this upload can edit it.", true);
+            return;
+          }
           openEditModal(songId, song);
         });
       }
@@ -1024,6 +1043,10 @@ async function loadCommunityUploads() {
       const genreBtn = item.querySelector(".btn-change-genre");
       if (genreBtn) {
         genreBtn.addEventListener("click", async () => {
+          if (!canManageSong(song)) {
+            showAlert("🔒 Permission Notice: Only the creator of this upload can change its genre.", true);
+            return;
+          }
           const currentG = (song.genre || "hindi").toLowerCase();
           const genreOrder = ["hindi", "punjabi", "haryanvi", "rap", "bhojpuri"];
           const currentIdx = genreOrder.indexOf(currentG);
@@ -1032,6 +1055,10 @@ async function loadCommunityUploads() {
 
           try {
             await updateDoc(doc(db, "songs", songId), { genre: targetG });
+            try {
+              await deleteSongFromGitHub(currentG, song.link, song.title);
+              await commitSongsToGitHub(targetG, [{ ...song, genre: targetG }]);
+            } catch {}
             showAlert(`✅ Changed "${song.title}" genre to ${targetG.toUpperCase()}`);
             loadCommunityUploads();
           } catch (err) {
@@ -1044,6 +1071,10 @@ async function loadCommunityUploads() {
       const delBtn = item.querySelector(".btn-delete-song");
       if (delBtn) {
         delBtn.addEventListener("click", async () => {
+          if (!canManageSong(song)) {
+            showAlert("🔒 Permission Notice: Only the creator of this upload can delete it.", true);
+            return;
+          }
           if (!confirm(`Are you sure you want to permanently delete "${song.title}" from MusicsAura?`)) return;
 
           try {
@@ -1051,7 +1082,7 @@ async function loadCommunityUploads() {
 
             // AUTO GITHUB DELETE: Remove from jsons/{genre}.json in GitHub repository
             try {
-              deleteSongFromGitHub(song.genre, song.link, song.title);
+              await deleteSongFromGitHub(song.genre, song.link, song.title);
             } catch {}
 
             // Clean from local uploads buffer
@@ -1078,6 +1109,15 @@ async function loadCommunityUploads() {
     console.error("Community loads:", err);
     if (contribList) contribList.innerHTML = `<div class="state-msg">Could not load list: ${err.message}</div>`;
   }
+}
+
+// Bind Load More button
+const btnLoadMoreCommunity = document.getElementById("btn-load-more-community");
+if (btnLoadMoreCommunity) {
+  btnLoadMoreCommunity.addEventListener("click", () => {
+    communityLimit += 15;
+    loadCommunityUploads();
+  });
 }
 
 // ─── EDIT MODAL CONTROLLER ─────────────────────────────────────────
@@ -1218,10 +1258,30 @@ if (editSongForm) {
         }
       } catch {}
 
+      // AUTO GITHUB REPOSITORY SYNC: Commit updated song details to jsons/{genre}.json
+      try {
+        const streamLink = activeEditingSong?.link;
+        if (streamLink) {
+          const oldGenre = (activeEditingSong.genre || "hindi").toLowerCase();
+          if (oldGenre !== genre) {
+            await deleteSongFromGitHub(oldGenre, streamLink, activeEditingSong.title);
+          }
+          await commitSongsToGitHub(genre, [{
+            title,
+            artist,
+            link: streamLink,
+            thumbnail,
+            genre
+          }]);
+        }
+      } catch (ghErr) {
+        console.warn("[GitHub Auto-Commit] Notice on edit:", ghErr);
+      }
+
       // Update duplicate registry
       registerNewSong(title, activeEditingSong?.link);
 
-      showAlert(`🎉 Updated "${title}" details & artwork successfully!`);
+      showAlert(`🎉 Updated "${title}" details & artwork and synced to GitHub!`);
       closeEditModal();
       loadCommunityUploads();
 

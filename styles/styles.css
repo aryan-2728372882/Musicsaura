@@ -1524,6 +1524,60 @@ body.page-scroll {
   color: #fff;
 }
 
+/* ── COMPACT LIST ITEMS (FAVORITES & COMMUNITY UPLOADS) ── */
+.fav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.55rem 0.8rem;
+  transition: background var(--ease-smooth), border-color var(--ease-smooth);
+}
+
+.fav-item:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.fav-thumb {
+  width: 48px !important;
+  height: 48px !important;
+  min-width: 48px !important;
+  min-height: 48px !important;
+  max-width: 48px !important;
+  max-height: 48px !important;
+  border-radius: var(--radius-sm);
+  object-fit: cover !important;
+  flex-shrink: 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+}
+
+.fav-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.fav-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.fav-artist {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── TOAST NOTIFICATIONS ── */
 .toast {
   position: fixed;
