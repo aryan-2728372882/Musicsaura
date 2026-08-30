@@ -1003,13 +1003,25 @@ async function loadCommunityUploads() {
       const item = document.createElement("div");
       item.className = "fav-item";
       item.dataset.id = songId;
-      const thumb = song.thumbnail || "assets/logo.png";
+
+      let thumb = song.thumbnail;
+      let artist = song.artist;
+      const regMatch = existingSongsRegistry.find((r) => r.link === song.link || r.title === song.title);
+      if (regMatch) {
+        if (!thumb || thumb === "assets/logo.png" || thumb.includes("logo.png")) {
+          thumb = regMatch.thumbnail;
+        }
+        if (!artist || artist === "Various Artists" || artist === "Unknown") {
+          artist = regMatch.artist;
+        }
+      }
+      if (!thumb) thumb = "assets/logo.png";
 
       item.innerHTML = `
         <img src="${thumb}" alt="" class="fav-thumb" onerror="this.src='assets/logo.png'">
         <div class="fav-info">
           <div class="fav-title">${escapeHtml(song.title)}</div>
-          <div class="fav-artist">${escapeHtml(song.artist || "Unknown")} • <span class="genre-badge" style="color:var(--cyan);font-weight:600">${escapeHtml(song.genre?.toUpperCase())}</span> • <span style="color:var(--text-muted)">by ${escapeHtml(song.uploadedBy || "Community")}</span></div>
+          <div class="fav-artist">${escapeHtml(artist || "Unknown")} • <span class="genre-badge" style="color:var(--cyan);font-weight:600">${escapeHtml(song.genre?.toUpperCase())}</span> • <span style="color:var(--text-muted)">by ${escapeHtml(song.uploadedBy || "Community")}</span></div>
         </div>
         <div style="display:flex;align-items:center;gap:4px">
           <button class="action-btn btn-edit-song" title="Edit Metadata & Artwork" style="color:var(--cyan)">

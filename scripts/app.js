@@ -428,7 +428,7 @@ async function loadRawJson(genre) {
   if (!file) return [];
 
   try {
-    const res = await fetch(file);
+    const res = await fetch(`${file}?v=${Date.now()}`, { cache: "no-cache" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (Array.isArray(data)) {
