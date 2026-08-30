@@ -181,7 +181,17 @@ function initAudioContext() {
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
 
-    // Connect EQ filters only if same-origin/supported
+    // Connect Audio element into Web Audio EQ Graph
+    try {
+      if (!sourceNode) {
+        audio.crossOrigin = "anonymous";
+        sourceNode = audioCtx.createMediaElementSource(audio);
+        sourceNode.connect(subBassFilter);
+      }
+    } catch (e) {
+      console.warn("createMediaElementSource note:", e);
+    }
+
     try {
       const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
       applyPresetGains(savedPreset);
@@ -884,7 +894,7 @@ export const player = {
   },
 
   setEqualizerPreset(presetName) {
-    initAudioContext();
+    unlockAudioContext();
     if (!subBassFilter || !bassFilter || !midFilter || !presenceFilter || !trebleFilter) return;
 
     localStorage.setItem(EQ_PRESET_KEY, presetName);
@@ -913,7 +923,7 @@ export const player = {
   },
 
   setEqualizerCustom(subBass, bass, mid, presence, treble) {
-    initAudioContext();
+    unlockAudioContext();
     if (!subBassFilter || !bassFilter || !midFilter || !presenceFilter || !trebleFilter) return;
 
     subBassFilter.gain.value  = clamp(subBass, -15, 15);
