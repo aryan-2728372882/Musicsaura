@@ -340,15 +340,14 @@ function getSongTimestamp(song) {
 
 /* ── REBUILD ALL CATALOGUES & GLOBAL SEARCH INDEX ── */
 function rebuildAllCatalogues() {
-  // If Firestore songs are loaded, purge stale local buffer
-  if (firestoreSongs.length > 0) {
-    try {
-      const currentLinks = new Set(firestoreSongs.map((s) => s.link).filter(Boolean));
-      const local = JSON.parse(localStorage.getItem(LOCAL_UPLOADS_KEY) || "[]");
-      const cleaned = local.filter((s) => s && s.link && currentLinks.has(s.link));
+  // Purge any legacy placeholder uploads from local storage
+  try {
+    const local = JSON.parse(localStorage.getItem(LOCAL_UPLOADS_KEY) || "[]");
+    const cleaned = local.filter((s) => s && s.link && s.thumbnail && !s.thumbnail.includes("logo.png") && s.artist !== "Various Artists");
+    if (cleaned.length !== local.length) {
       localStorage.setItem(LOCAL_UPLOADS_KEY, JSON.stringify(cleaned));
-    } catch {}
-  }
+    }
+  } catch {}
 
   const localUploads = getLocalUploads()
     .map((s) => normalizeSong(s, s?.genre, "local"))
