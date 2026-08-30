@@ -9,6 +9,7 @@ import {
 // ─── UNIFIED HIGH-PERFORMANCE AUDIO ENGINE ─────────────────────────
 // Single persistent Audio element ensures 100% Android background audio retention & instant playback
 const audio = new Audio();
+audio.crossOrigin = "anonymous";
 audio.preload = "auto";
 audio.setAttribute("playsinline", "");
 audio.setAttribute("webkit-playsinline", "");
@@ -180,6 +181,15 @@ function initAudioContext() {
     presenceFilter.connect(trebleFilter);
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
+
+    if (!sourceNode) {
+      try {
+        sourceNode = audioCtx.createMediaElementSource(audio);
+        sourceNode.connect(subBassFilter);
+      } catch (err) {
+        console.warn("createMediaElementSource notice:", err);
+      }
+    }
 
     try {
       const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
