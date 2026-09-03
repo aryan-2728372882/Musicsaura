@@ -29,6 +29,12 @@
           }
         });
       });
+      // Request permanent storage persistence to prevent auto-eviction of downloaded songs
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().then((granted) => {
+          console.log("[SW] Storage persistence status:", granted ? "Persistent" : "Best-effort");
+        }).catch(() => {});
+      }
     } catch (err) {
       console.warn("[SW] Registration failed:", err);
     }

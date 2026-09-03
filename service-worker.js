@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine
-const APP_SHELL_CACHE = "musicsaura-shell-v67";
+const APP_SHELL_CACHE = "musicsaura-shell-v68";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -9,6 +9,7 @@ const PRECACHE_ASSETS = [
   "/styles/styles.css",
   "/scripts/app.js",
   "/scripts/player.js",
+  "/scripts/storage-db.js",
   "/scripts/firebase-config.js",
   "/scripts/sw-manager.js",
   "/scripts/upload.js",
@@ -52,14 +53,58 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// ─── FETCH: SAME-ORIGIN APP SHELL ONLY ────────────────────────────
+// ─── FETCH: SAME-ORIGIN APP SHELL & OFFLINE AUDIO STREAMING ────────
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
 
-  // Cross-origin assets (File Garden audio, CDNs, Firebase) bypass SW completely for 100% native HTTP streaming
+  // Audio / Media requests: Check OFFLINE_PWA_STORAGE first to serve cached downloads offline
+  const isAudio =
+    request.destination === "audio" ||
+    url.pathname.endsWith(".mp3") ||
+    url.pathname.endsWith(".wav") ||
+    url.pathname.endsWith(".ogg") ||
+    url.hostname.includes("file.garden");
+
+  if (isAudio) {
+    event.respondWith(
+      (async () => {
+        try {
+          const offlineCache = await caches.open(OFFLINE_PWA_STORAGE);
+          const cleanUrl = url.href.split("?")[0];
+          const cached = (await offlineCache.match(request, { ignoreSearch: true })) ||
+                         (await offlineCache.match(cleanUrl, { ignoreSearch: true })) ||
+                         (await offlineCache.match(url.href, { ignoreSearch: true }));
+
+          if (cached) {
+            // Attach CORS and Accept-Ranges headers to cached audio response
+            const headers = new Headers(cached.headers);
+            headers.set("Access-Control-Allow-Origin", "*");
+            headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+            headers.set("Accept-Ranges", "bytes");
+            if (!headers.get("Content-Type")) {
+              headers.set("Content-Type", "audio/mpeg");
+            }
+            return new Response(cached.body, {
+              status: cached.status || 200,
+              statusText: cached.statusText || "OK",
+              headers
+            });
+          }
+        } catch (e) {
+          console.warn("[SW] Cache audio lookup notice:", e);
+        }
+
+        // Not in offline cache — pass through to network
+        return fetch(request);
+      })()
+    );
+    return;
+  }
+
+  // Cross-origin non-audio assets bypass SW completely
   if (url.origin !== self.location.origin) {
     return;
   }

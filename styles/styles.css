@@ -901,6 +901,19 @@ body.page-scroll {
   box-shadow: 0 0 8px rgba(34, 211, 238, 0.5);
 }
 
+.card-offline-btn.is-downloading,
+.player-offline-btn.is-downloading {
+  color: var(--cyan) !important;
+}
+
+.card-offline-btn.is-downloading .material-icons,
+.player-offline-btn.is-downloading .material-icons,
+.fs-pill-btn.is-downloading .material-icons {
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
+  color: var(--cyan) !important;
+}
+
 .player-meta {
   min-width: 0;
   display: flex;

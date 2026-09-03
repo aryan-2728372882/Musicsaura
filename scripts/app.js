@@ -4,6 +4,12 @@ import {
   collection, getDocs, query, orderBy, limit, onSnapshot
 } from "./firebase-config.js";
 import { player, formatTime } from "./player.js";
+import {
+  saveTrackToStorage,
+  deleteTrackFromStorage,
+  requestPersistentStorage,
+  syncOfflineMetadataWithIndexedDB
+} from "./storage-db.js";
 
 /* ── DOM ELEMENTS ── */
 const grid                 = document.getElementById("grid");
@@ -122,93 +128,220 @@ function updateDownloadBadge() {
   }
 }
 
+/* ── ROBUST CONCURRENT-SAFE DOWNLOAD QUEUE MANAGER ── */
+const downloadQueue = [];
+const activeDownloads = new Set();
+const queuedSongIds = new Set();
+const MAX_CONCURRENT_DOWNLOADS = 2; // Optimal concurrency for mobile CDNs and avoids socket exhaustion
+
+// Request permanent persistence and restore offline metadata from IndexedDB immediately on startup
+requestPersistentStorage();
+syncOfflineMetadataWithIndexedDB(OFFLINE_STORAGE_KEY).then((restored) => {
+  if (restored && restored.length > 0) {
+    updateDownloadBadge();
+  }
+});
+
 export async function toggleOfflineStorage(song) {
   if (!song || !song.link) return;
-  const id = song.id || song.link;
-  let offlineList = getOfflineSongs();
-  const existsIndex = offlineList.findIndex((s) => (s.id || s.link) === id);
-  const baseLink = song.link.split("?")[0];
+  const songId = song.id || song.link;
 
-  try {
-    const cache = await caches.open(OFFLINE_CACHE_NAME);
+  // 1. If song is already downloaded, remove it
+  if (isSongOffline(song)) {
+    try {
+      await deleteTrackFromStorage(songId);
+      const currentList = getOfflineSongs().filter((s) => (s.id || s.link) !== songId);
+      localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(currentList));
 
-    if (existsIndex >= 0) {
-      // Remove from in-app storage
-      offlineList.splice(existsIndex, 1);
-      localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(offlineList));
-      await cache.delete(song.link);
-      await cache.delete(baseLink);
-      player.showToast(`Removed from In-App Downloads`);
-      updateOfflineIcons(song, false);
+      player.showToast(`Removed "${song.title}" from Downloads`);
+      updateOfflineIcons(song, "not-downloaded");
       updateDownloadBadge();
       if (activeGenre === "offline") renderGenre("offline");
-    } else {
-      // Save inside in-app storage sandbox (NOT to phone download folder)
-      player.showToast(`📥 Saving "${song.title}" into In-App Storage...`);
-      const res = await fetch(song.link);
-      if (res.ok) {
-        const blob = await res.blob();
-        if (blob && blob.size > 10240) {
-          const audioResponse = new Response(blob, {
-            headers: {
-              "content-type": "audio/mpeg",
-              "content-length": blob.size.toString()
-            }
-          });
-          await cache.put(song.link, audioResponse.clone());
-          await cache.put(baseLink, audioResponse);
+    } catch (err) {
+      console.warn("Error removing offline track:", err);
+    }
+    return;
+  }
 
-          // Also cache thumbnail image for offline UI display
-          if (song.thumbnail && !song.thumbnail.startsWith("assets/")) {
-            try {
-              const tRes = await fetch(song.thumbnail);
-              if (tRes.ok) await cache.put(song.thumbnail, tRes);
-            } catch {}
+  // 2. If already downloading or queued, inform the user
+  if (activeDownloads.has(songId) || queuedSongIds.has(songId)) {
+    player.showToast(`⏳ "${song.title}" is already in the download queue.`);
+    return;
+  }
+
+  // 3. Request storage persistence on user gesture
+  requestPersistentStorage();
+
+  // 4. Enqueue the song
+  queuedSongIds.add(songId);
+  downloadQueue.push(song);
+  updateOfflineIcons(song, "queued");
+
+  const totalActive = downloadQueue.length + activeDownloads.size;
+  player.showToast(`📥 Queued "${song.title}" (${totalActive} in queue)`);
+
+  // 5. Trigger queue processing
+  processDownloadQueue();
+}
+
+async function processDownloadQueue() {
+  if (activeDownloads.size >= MAX_CONCURRENT_DOWNLOADS || downloadQueue.length === 0) {
+    return;
+  }
+
+  const song = downloadQueue.shift();
+  if (!song) return;
+  const songId = song.id || song.link;
+  queuedSongIds.delete(songId);
+  activeDownloads.add(songId);
+
+  updateOfflineIcons(song, "downloading");
+
+  // Run download in background worker
+  (async () => {
+    let blob = null;
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (!blob && attempts < maxAttempts) {
+      attempts++;
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
+        const res = await fetch(song.link, {
+          signal: controller.signal,
+          mode: "cors",
+          cache: "no-store"
+        });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const b = await res.blob();
+          if (b && b.size > 10240) {
+            blob = b;
+            break;
           }
-
-          offlineList.unshift(song);
-          localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(offlineList));
-          player.showToast(`⚡ Saved in PWA Storage! Ready for offline play.`);
-          updateOfflineIcons(song, true);
-          updateDownloadBadge();
-          if (activeGenre === "offline") renderGenre("offline");
-        } else {
-          player.showToast("Could not download audio stream (empty payload)", 3000);
         }
-      } else {
-        player.showToast("Could not download audio stream for offline cache", 3000);
+      } catch (fetchErr) {
+        console.warn(`[DownloadQueue] Attempt ${attempts} failed for "${song.title}":`, fetchErr);
+        if (attempts < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 1000 * attempts));
+        }
       }
     }
-  } catch (err) {
-    console.warn("Offline cache error:", err);
-    player.showToast("Could not save track offline: " + err.message, 3000);
+
+    if (!blob) {
+      console.error(`[DownloadQueue] Failed to download "${song.title}" after ${maxAttempts} attempts.`);
+      updateOfflineIcons(song, "not-downloaded");
+      player.showToast(`❌ Failed to download "${song.title}". Please check connection.`, 4000);
+      return;
+    }
+
+    try {
+      // Save track into both IndexedDB and Cache API
+      await saveTrackToStorage(song, blob);
+
+      // Cache thumbnail image for offline UI
+      if (song.thumbnail && !song.thumbnail.startsWith("assets/")) {
+        try {
+          const tRes = await fetch(song.thumbnail, { mode: "no-cors" });
+          if (tRes) {
+            const cache = await caches.open(OFFLINE_CACHE_NAME);
+            await cache.put(song.thumbnail, tRes);
+          }
+        } catch {}
+      }
+
+      // ATOMIC UPDATE to localStorage metadata (read fresh list to avoid overwriting concurrent downloads!)
+      const freshList = getOfflineSongs();
+      const existingIdx = freshList.findIndex((s) => (s.id || s.link) === songId);
+      if (existingIdx >= 0) {
+        freshList[existingIdx] = song;
+      } else {
+        freshList.unshift(song);
+      }
+      localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(freshList));
+
+      updateOfflineIcons(song, "downloaded");
+      updateDownloadBadge();
+      if (activeGenre === "offline") renderGenre("offline");
+
+      const remaining = downloadQueue.length + activeDownloads.size - 1;
+      if (remaining > 0) {
+        player.showToast(`⚡ Saved "${song.title}" (${remaining} remaining)`);
+      } else {
+        player.showToast(`🎉 Saved "${song.title}"! Ready for offline listening.`);
+      }
+    } catch (saveErr) {
+      console.error(`[DownloadQueue] Error saving "${song.title}":`, saveErr);
+      updateOfflineIcons(song, "not-downloaded");
+      player.showToast(`❌ Could not save "${song.title}": ${saveErr.message}`, 3500);
+    } finally {
+      activeDownloads.delete(songId);
+      // Process next in queue
+      processDownloadQueue();
+    }
+  })();
+
+  // Also spawn parallel worker if under MAX_CONCURRENT_DOWNLOADS
+  if (activeDownloads.size < MAX_CONCURRENT_DOWNLOADS && downloadQueue.length > 0) {
+    processDownloadQueue();
   }
 }
 
-function updateOfflineIcons(song, isOff) {
+function updateOfflineIcons(song, state) {
   const songId = song?.id || song?.link;
   if (!songId) return;
 
+  const isOff = state === "downloaded" || state === true;
+  const isDownloading = state === "downloading";
+  const isQueued = state === "queued";
+
+  let iconName = "offline_bolt";
+  let titleText = "Save in App Storage for Offline Listening";
+  let sheetText = "Save Offline";
+
+  if (isOff) {
+    iconName = "offline_pin";
+    titleText = "Downloaded in App Storage";
+    sheetText = "Downloaded 📥";
+  } else if (isDownloading) {
+    iconName = "sync";
+    titleText = "Downloading audio...";
+    sheetText = "Downloading...";
+  } else if (isQueued) {
+    iconName = "hourglass_top";
+    titleText = "Queued for download...";
+    sheetText = "Queued...";
+  }
+
   // Grid cards
   document.querySelectorAll(`.song-card[data-id="${songId}"] .card-offline-btn`).forEach((btn) => {
-    btn.classList.toggle("active", isOff);
+    btn.classList.toggle("active", isOff || isDownloading || isQueued);
+    btn.classList.toggle("is-downloading", isDownloading || isQueued);
+    btn.title = titleText;
     const icon = btn.querySelector(".material-icons");
-    if (icon) icon.textContent = isOff ? "offline_pin" : "offline_bolt";
+    if (icon) icon.textContent = iconName;
   });
 
   // Footer player offline button
   if (playerOfflineBtn) {
-    playerOfflineBtn.classList.toggle("active", isOff);
+    playerOfflineBtn.classList.toggle("active", isOff || isDownloading || isQueued);
+    playerOfflineBtn.classList.toggle("is-downloading", isDownloading || isQueued);
+    playerOfflineBtn.title = titleText;
     const icon = playerOfflineBtn.querySelector(".material-icons");
-    if (icon) icon.textContent = isOff ? "offline_pin" : "offline_bolt";
+    if (icon) icon.textContent = iconName;
   }
 
   // Fullscreen mobile player offline button
   if (fsOfflineBtn) {
-    fsOfflineBtn.classList.toggle("active", isOff);
+    fsOfflineBtn.classList.toggle("active", isOff || isDownloading || isQueued);
+    fsOfflineBtn.classList.toggle("is-downloading", isDownloading || isQueued);
+    fsOfflineBtn.title = titleText;
     const icon = fsOfflineBtn.querySelector(".material-icons");
-    if (icon) icon.textContent = isOff ? "offline_pin" : "offline_bolt";
-    if (fsOfflineText) fsOfflineText.textContent = isOff ? "Downloaded 📥" : "Save Offline";
+    if (icon) icon.textContent = iconName;
+    if (fsOfflineText) fsOfflineText.textContent = sheetText;
   }
 }
 
@@ -520,7 +653,29 @@ function createCard(song, index) {
   el.dataset.index = String(index);
 
   const isFav = isFavorite(song);
+  const songId = song.id || song.link;
   const isOff = isSongOffline(song);
+  const isDownloading = activeDownloads.has(songId);
+  const isQueued = queuedSongIds.has(songId);
+
+  let offIcon = "offline_bolt";
+  let offClass = "";
+  let offTitle = "Save in App Storage for Offline Listening";
+
+  if (isOff) {
+    offIcon = "offline_pin";
+    offClass = "active";
+    offTitle = "Downloaded in App Storage";
+  } else if (isDownloading) {
+    offIcon = "sync";
+    offClass = "active is-downloading";
+    offTitle = "Downloading audio...";
+  } else if (isQueued) {
+    offIcon = "hourglass_top";
+    offClass = "active is-downloading";
+    offTitle = "Queued for download...";
+  }
+
   const playerState = player.getState();
   const isPlayingThis = playerState.currentSong && (playerState.currentSong.id || playerState.currentSong.link) === (song.id || song.link);
 
@@ -543,8 +698,8 @@ function createCard(song, index) {
       <button class="card-fav-btn ${isFav ? "active" : ""}" aria-label="Favorite" title="${isFav ? "Remove Favorite" : "Favorite"}">
         <span class="material-icons">${isFav ? "favorite" : "favorite_border"}</span>
       </button>
-      <button class="card-fav-btn card-offline-btn ${isOff ? "active" : ""}" style="top:auto;bottom:8px;right:8px;background:rgba(12,12,22,0.85);color:${isOff ? "var(--cyan)" : "var(--text-muted)"}" aria-label="Offline Storage" title="${isOff ? "Downloaded in App Storage" : "Save in App Storage for Offline Listening"}">
-        <span class="material-icons" style="font-size:1.1rem">${isOff ? "offline_pin" : "offline_bolt"}</span>
+      <button class="card-fav-btn card-offline-btn ${offClass}" style="top:auto;bottom:8px;right:8px;background:rgba(12,12,22,0.85);color:${(isOff || isDownloading || isQueued) ? "var(--cyan)" : "var(--text-muted)"}" aria-label="Offline Storage" title="${offTitle}">
+        <span class="material-icons" style="font-size:1.1rem">${offIcon}</span>
       </button>
     </div>
     <div class="card-info">
@@ -651,6 +806,16 @@ function renderGenre(genre) {
     const offList = getOfflineSongs().map((s) => normalizeSong(s, s.genre || "offline", "offline"));
     renderSongList(grid, offList, "No songs downloaded in App Storage yet. Tap the ⚡ icon on any song to download it for offline play (even on Airplane Mode)!");
     updateHeroBanner(offList);
+
+    // Auto-recover from IndexedDB if PWA standalone / OS evicted temporary localStorage
+    syncOfflineMetadataWithIndexedDB(OFFLINE_STORAGE_KEY).then((syncedList) => {
+      if (syncedList && syncedList.length > offList.length && activeGenre === "offline") {
+        const fullList = syncedList.map((s) => normalizeSong(s, s.genre || "offline", "offline"));
+        renderSongList(grid, fullList, "No songs downloaded in App Storage yet. Tap the ⚡ icon on any song to download it for offline play (even on Airplane Mode)!");
+        updateHeroBanner(fullList);
+        updateDownloadBadge();
+      }
+    });
     return;
   }
 
@@ -1105,7 +1270,9 @@ player.subscribe((state) => {
     updateHeartIcons(state.currentSong, isFav);
 
     const isOff = isSongOffline(state.currentSong);
-    updateOfflineIcons(state.currentSong, isOff);
+    const songId = state.currentSong.id || state.currentSong.link;
+    const offState = isOff ? "downloaded" : (activeDownloads.has(songId) ? "downloading" : (queuedSongIds.has(songId) ? "queued" : "not-downloaded"));
+    updateOfflineIcons(state.currentSong, offState);
   }
 
   if (fsPlayIcon) {

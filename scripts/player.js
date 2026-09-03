@@ -5,6 +5,7 @@ import {
   auth, db,
   doc, updateDoc, increment, serverTimestamp
 } from "./firebase-config.js";
+import { getTrackBlobFromStorage } from "./storage-db.js";
 
 // ─── UNIFIED HIGH-PERFORMANCE AUDIO ENGINE ─────────────────────────
 // Single persistent Audio element ensures 100% Android background audio retention & instant playback
@@ -466,20 +467,14 @@ function updateProgress() {
 }
 
 export async function getOfflineAudioBlobUrl(link) {
-  if (!link || !("caches" in window)) return null;
+  if (!link) return null;
   try {
-    const cache = await caches.open("musicsaura-pwa-storage-v2");
-    const rawLink = link.split("?")[0];
-    const cachedRes = (await cache.match(link, { ignoreSearch: true })) ||
-                      (await cache.match(rawLink, { ignoreSearch: true }));
-    if (cachedRes && (cachedRes.ok || cachedRes.status === 200)) {
-      const blob = await cachedRes.blob();
-      if (blob && blob.size > 10240) {
-        return URL.createObjectURL(blob);
-      }
+    const blob = await getTrackBlobFromStorage(link);
+    if (blob && blob.size > 10240) {
+      return URL.createObjectURL(blob);
     }
   } catch (e) {
-    console.warn("Offline blob check:", e);
+    console.warn("[Player] Offline blob check error:", e);
   }
   return null;
 }
@@ -621,19 +616,35 @@ audio.addEventListener("ended", () => {
 });
 
 audio.addEventListener("error", (e) => {
-  console.warn("Audio node playback error:", e, audio.error);
+  console.warn("[Player] Audio node error:", e, audio.error);
   isBuffering = false;
   clearStallWatchdog();
 
   // 1. Check if offline cached blob exists before failing
   getOfflineAudioBlobUrl(currentSong?.link || audio.src).then((blobUrl) => {
     if (blobUrl && audio.src !== blobUrl) {
+      console.log("[Player] Recovering using offline cached track");
+      audio.removeAttribute("crossOrigin");
       audio.src = blobUrl;
       audio.play().catch(() => {});
       return;
     }
 
-    // 2. Extension / Format Fallback (e.g. .webm -> without .webm)
+    // 2. CORS Auto-Recovery: If failed with crossOrigin='anonymous', fall back to native playback without crossOrigin!
+    // Native HTML5 <audio> without crossOrigin NEVER throws CORS policy errors
+    if (audio.hasAttribute("crossOrigin")) {
+      console.warn("[Player] CORS / socket restriction detected. Switching to native direct playback (removing crossOrigin)...");
+      audio.removeAttribute("crossOrigin");
+      const safeUrl = normalizeUrl(currentSong?.link || audio.src || "").split("?")[0];
+      if (safeUrl) {
+        audio.src = safeUrl;
+        audio.load();
+        audio.play().catch((playErr) => console.warn("[Player] Native direct play notice:", playErr));
+        return;
+      }
+    }
+
+    // 3. Extension / Format Fallback (e.g. .webm -> without .webm)
     const rawSrc = audio.src || currentSong?.link || "";
     if (rawSrc && (rawSrc.includes(".webm") || rawSrc.includes("%2Ewebm"))) {
       const cleanSrc = rawSrc.replace(/\.webm(?=[\?&#]|$)/gi, "").replace(/%2Ewebm(?=[\?&#]|$)/gi, "");
@@ -647,23 +658,23 @@ audio.addEventListener("error", (e) => {
       }
     }
 
-    // 3. Slow rainy network retry mechanism
+    // 4. Slow network retry mechanism (fixes the &t= query string corruption)
     if (navigator.onLine && (!audio._retryCount || audio._retryCount < 3)) {
       audio._retryCount = (audio._retryCount || 0) + 1;
       player.showToast(`🌧️ Reconnecting stream (${audio._retryCount}/3)...`, 2500);
       setTimeout(() => {
         const cleanBase = (audio.src || currentSong?.link || "")
           .replace(/\.webm(?=[\?&#]|$)/gi, "")
-          .replace(/%2Ewebm(?=[\?&#]|$)/gi, "");
-        const separator = cleanBase.includes("?") ? "&" : "?";
-        audio.src = cleanBase.split("?")[0] + separator + "t=" + Date.now();
+          .replace(/%2Ewebm(?=[\?&#]|$)/gi, "")
+          .split("?")[0];
+        audio.src = `${cleanBase}?retry=${Date.now()}`;
         audio.load();
         audio.play().catch(() => {});
       }, 1000);
       return;
     }
 
-    // 4. If offline, alert user and stop
+    // 5. If offline, alert user and stop
     if (!navigator.onLine) {
       player.showToast("⚠️ Offline: Connect to Wi-Fi/Data or play downloaded tracks.");
       return;
@@ -733,9 +744,28 @@ export const player = {
       }
     }
 
-    // 2. Synchronously set audio.src & play immediately (0ms start delay)
+    // 2. Prioritize instant offline playback if song is in offline storage
     const cleanUrl = normalizeUrl(song.link);
-    if (cleanUrl && audio.src !== cleanUrl) {
+    const isOffline = isSongStoredOffline(song);
+
+    if (isOffline) {
+      getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
+        if (blobUrl) {
+          audio.removeAttribute("crossOrigin");
+          if (audio.src !== blobUrl) {
+            audio.src = blobUrl;
+            audio.playbackRate = playbackRate;
+            audio.volume = masterVolume;
+            userPaused = false;
+            audio.play().catch(() => {});
+          }
+        }
+      });
+    }
+
+    // Set stream source initially with crossOrigin for EQ capability
+    if (!audio.src || (audio.src !== cleanUrl && !audio.src.startsWith("blob:"))) {
+      audio.crossOrigin = "anonymous";
       audio.src = cleanUrl;
     }
 
@@ -760,16 +790,6 @@ export const player = {
     // 4. Instant UI & MediaSession updates
     updateMediaSession(song);
     updateUI();
-
-    // 5. Offline fallback check (in background without delaying audio.play)
-    if (!navigator.onLine) {
-      getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
-        if (blobUrl && audio.src !== blobUrl) {
-          audio.src = blobUrl;
-          audio.play().catch(() => {});
-        }
-      });
-    }
 
     // 6. Non-blocking stats recording
     flushStatsToFirebase().catch(() => {});
