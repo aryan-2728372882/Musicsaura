@@ -22,6 +22,9 @@ const prefetchAudio = new Audio();
 prefetchAudio.preload = "auto";
 prefetchAudio.volume = 0;
 const prewarmedUrls = new Set();
+let isPrefetching = false;
+let crossfadeInterval = null;
+let crossfadeActive = false;
 
 // ─── DOM ELEMENT BINDINGS ──────────────────────────────────────────
 const titleEl         = document.getElementById("player-title");
@@ -490,6 +493,41 @@ function isSongStoredOffline(song) {
   }
 }
 
+// Helper used by ended handler to continue playback if prefetchAudio is already loaded
+function preloadNextOnEnded() {
+  try {
+    if (!preloadCheckReady()) return false;
+    const nextSrc = prefetchAudio.src;
+    if (!nextSrc) return false;
+    // If prefetchAudio is playing or at least loaded, swap immediately
+    if (!preflightPaused(preloaderStatus())) return false;
+    // Fallback: if prefetchAudio has buffered data, perform swap
+    if (prefetchAudio.buffered && prefetchAudio.buffered.length > 0) {
+      const wasPlaying = !audio.paused;
+      audio.pause();
+      audio.src = prefetchAudio.src;
+      audio.load();
+      audio.volume = masterVolume;
+      if (wasPlaying) audio.play().catch(() => {});
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+function preloadCheckReady() {
+  return prefetchAudio && prefetchAudio.src && prefetchAudio.src.length > 0;
+}
+
+function preloaderStatus() {
+  try { return { paused: prefetchAudio.paused, currentTime: prefetchAudio.currentTime || 0, readyState: prefetchAudio.readyState || 0 }; } catch { return null; }
+}
+
+function preflightPaused(st) {
+  if (!st) return false;
+  return st.readyState >= 3 || !st.paused || st.currentTime > 0;
+}
+
 // ─── SLOW NETWORK WATCHDOG & STALL AUTO-RECOVERY ──────────────────
 function startStallWatchdog() {
   clearTimeout(stallWatchdogTimer);
@@ -594,6 +632,65 @@ audio.addEventListener("timeupdate", () => {
   updateProgress();
   updatePositionState();
 
+  // Crossfade prefetch: start loading next track slightly before current ends
+  try {
+    if (!isPrefetching && !crossfadeActive && crossfadeSeconds > 0 && Number.isFinite(audio.duration) && audio.duration > 0) {
+      const timeLeft = (audio.duration || 0) - (audio.currentTime || 0);
+      if (timeLeft <= crossfadeSeconds + 0.2) {
+        // Begin prefetch and crossfade ramp
+        isPrefetching = true;
+        const nextIdx = isShuffle ? ((Math.floor(Math.random() * playlist.length)) || (currentIndex + 1) % playlist.length) : ((currentIndex + 1) % playlist.length);
+        const nextSong = playlist[nextIdx];
+        if (nextSong && nextSong.link) {
+          const nextUrl = normalizeUrl(nextSong.link);
+          if (!prewarmedUrls.has(nextUrl)) {
+            prewarmedUrls.add(nextUrl);
+            prefetchAudio.pause();
+            prefetchAudio.src = nextUrl;
+            prefetchAudio.crossOrigin = "anonymous";
+            prefetchAudio.load();
+            prefetchAudio.play().catch(() => {});
+          }
+
+          // Start smooth volume ramp over crossfadeSeconds
+          crossfadeActive = true;
+          const steps = Math.max(6, Math.ceil(crossfadeSeconds * 10));
+          let step = 0;
+          const startMainVol = audio.volume;
+          const targetVol = masterVolume;
+          prefetchAudio.volume = 0;
+          clearInterval(crossfadeInterval);
+          crossfadeInterval = setInterval(() => {
+            step++;
+            const t = Math.min(1, step / steps);
+            // linear ramp
+            prefetchAudio.volume = targetVol * t;
+            try { audio.volume = Math.max(0, startMainVol * (1 - t)); } catch(e){}
+            if (t >= 1) {
+              clearInterval(crossfadeInterval);
+              crossfadeInterval = null;
+              // After crossfade complete, swap prefetch into main audio
+              try {
+                const wasPlaying = !audio.paused;
+                audio.pause();
+                audio.src = prefetchAudio.src;
+                audio.load();
+                audio.volume = targetVol;
+                if (wasPlaying) audio.play().catch(() => {});
+              } catch (e) { console.warn('Crossfade swap error', e); }
+              // reset flags
+              crossfadeActive = false;
+              isPrefetching = false;
+            }
+          }, Math.max(50, (crossfadeSeconds * 1000) / steps));
+        } else {
+          isPrefetching = false;
+          crossfadeActive = false;
+        }
+      }
+    }
+  } catch (e) {}
+
   if (playSessionStart > 0 && !hasRecordedStat) {
     const currentSessionSec = (Date.now() - playSessionStart) / 1000;
     if (accumulatedPlaySec + currentSessionSec >= STATS_MIN_PLAY_SECONDS) {
@@ -611,6 +708,9 @@ audio.addEventListener("ended", () => {
     audio.currentTime = 0;
     audio.play().catch(() => {});
   } else {
+    // If crossfade was active and prefetchAudio is already playing the next URL,
+    // we attempt to continue seamlessly. Otherwise, fallback to next().
+    if (preloadNextOnEnded()) return;
     player.next(true);
   }
 });
