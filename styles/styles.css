@@ -1476,12 +1476,31 @@ body.page-scroll {
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  padding: 1.5rem;
+  padding: 1.25rem 1.35rem;
   width: 100%;
-  max-width: 380px;
+  max-width: 440px;
+  max-height: min(88vh, 620px);
+  max-height: min(88dvh, 620px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
   transform: scale(0.94);
   transition: transform var(--ease-smooth);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.modal-box::-webkit-scrollbar {
+  width: 5px;
+}
+
+.modal-box::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modal-box::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
 }
 
 .modal-overlay.open .modal-box {
