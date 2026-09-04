@@ -792,9 +792,9 @@ export const player = {
 
     // 2. Prioritize instant offline playback if song is in offline storage
     const cleanUrl = normalizeUrl(song.link);
-    const isOffline = isSongStoredOffline(song);
+    const isOfflineCatalogueTrack = song.genre === "offline";
 
-    if (isOffline && !navigator.onLine) {
+    if (isOfflineCatalogueTrack) {
       getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
         if (blobUrl && requestGeneration === playbackGeneration && currentSong === song) {
           audio.removeAttribute("crossOrigin");
