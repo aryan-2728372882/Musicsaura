@@ -389,6 +389,7 @@ window.addEventListener("pagehide", () => {
 let isBuffering          = false;
 let stallWatchdogTimer    = null;
 let stallCount            = 0;
+let advancingTrack       = false;
 
 // ─── UI SYNCHRONIZATION ────────────────────────────────────────────
 function emitStateChange() {
@@ -641,6 +642,8 @@ audio.addEventListener("timeupdate", () => {
 });
 
 audio.addEventListener("ended", () => {
+  if (advancingTrack) return;
+  advancingTrack = true;
   flushStatsToFirebase();
   isBuffering = false;
   clearStallWatchdog();
@@ -648,6 +651,7 @@ audio.addEventListener("ended", () => {
   if (repeatMode === "one") {
     audio.currentTime = 0;
     audio.play().catch(() => {});
+    advancingTrack = false;
   } else {
     // Advance exactly once. The old prefetch path played a second audio element
     // concurrently and could advance twice at the track boundary.
@@ -961,6 +965,7 @@ export const player = {
     }
 
     player.playSong(playlist[currentIndex]);
+    advancingTrack = false;
   },
 
   prev() {

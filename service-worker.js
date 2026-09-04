@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine
-const APP_SHELL_CACHE = "musicsaura-shell-v70";
+const APP_SHELL_CACHE = "musicsaura-shell-v71";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -71,6 +71,12 @@ self.addEventListener("fetch", (event) => {
   if (isAudio) {
     event.respondWith(
       (async () => {
+        // Online playback must always come from the current remote URL.
+        // Never let an old downloaded blob hide a deleted or replaced file.
+        if (navigator.onLine) {
+          return fetch(request, { cache: "no-store" });
+        }
+
         try {
           const offlineCache = await caches.open(OFFLINE_PWA_STORAGE);
           const cleanUrl = url.href.split("?")[0];
