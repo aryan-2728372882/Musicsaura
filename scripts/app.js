@@ -472,15 +472,12 @@ function getLocalUploads() {
   }
 }
 
-const BLOCKED_SONG_LINKS = new Set([
-  "https://file.garden/argaqiyidd0tulqv/hindi/mujhe%20tumse%20mohabbat%20hai.mp3"
-]);
-let deletedSongLinks = new Set(BLOCKED_SONG_LINKS);
+let deletedSongLinks = new Set();
 
 function isDeletedSong(song) {
   if (!song) return true;
   const link = (song.link || "").split("?")[0].toLowerCase().trim();
-  return deletedSongLinks.has(link) || BLOCKED_SONG_LINKS.has(link);
+  return deletedSongLinks.has(link);
 }
 
 async function loadDeletedSongLinks() {

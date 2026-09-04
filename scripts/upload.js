@@ -86,6 +86,23 @@ const deletedTitles         = new Set();
 const activeCatalogLinks    = new Set();
 const activeCatalogTitles   = new Set();
 
+async function clearDeletedMarkers(title, link) {
+  const linkKey = normalizeUrlKey(link);
+  const titleKey = normalizeKey(title);
+  try {
+    const snapshot = await getDocs(collection(db, "deleted_songs"));
+    await Promise.all(snapshot.docs
+      .filter((entry) => {
+        const data = entry.data();
+        return (data.link && normalizeUrlKey(data.link) === linkKey) ||
+          (data.title && normalizeKey(data.title) === titleKey);
+      })
+      .map((entry) => deleteDoc(doc(db, "deleted_songs", entry.id))));
+  } catch (err) {
+    console.warn("Replacement blacklist cleanup notice:", err);
+  }
+}
+
 function normalizeKey(str) {
   return (str || "")
     .toLowerCase()
@@ -807,6 +824,7 @@ if (uploadForm) {
         ].filter(Boolean))
       );
 
+      await clearDeletedMarkers(title, audioUrl);
       await addDoc(collection(db, "songs"), {
         title,
         artist,
@@ -939,6 +957,7 @@ if (submitBulkBtn && bulkUrlsInput) {
           plays: 0
         };
 
+        await clearDeletedMarkers(title, url);
         await addDoc(collection(db, "songs"), songData);
 
         importedTracks.push(songData);
