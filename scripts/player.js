@@ -720,6 +720,16 @@ audio.addEventListener("error", (e) => {
   isBuffering = false;
   clearStallWatchdog();
 
+  // A missing online URL must never be replaced by an old offline/cache copy.
+  if (navigator.onLine && currentSong) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    player.showToast(`❌ "${currentSong.title || "This track"}" is unavailable.`, 3500);
+    updateUI();
+    return;
+  }
+
   // Only an explicitly saved track may recover from offline storage.
   // Normal network playback must never resurrect an old IndexedDB blob.
   getOfflineAudioBlobUrl(!navigator.onLine && isSongStoredOffline(currentSong) ? (currentSong?.link || audio.src) : null).then((blobUrl) => {
