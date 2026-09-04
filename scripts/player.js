@@ -61,6 +61,7 @@ let repeatMode        = "off"; // 'off' | 'one' | 'all'
 let isShuffle         = false;
 let isSeeking         = false;
 let userPaused        = false;
+let playbackGeneration = 0;
 
 // Audio Configuration
 let crossfadeSeconds  = parseFloat(localStorage.getItem(CROSSFADE_STORAGE_KEY)) || 4;
@@ -660,86 +661,18 @@ audio.addEventListener("ended", () => {
   }
 });
 
-audio.addEventListener("error", (e) => {
-  console.warn("[Player] Audio node error:", e, audio.error);
+audio.addEventListener("error", () => {
+  console.warn("[Player] Audio node error:", audio.error);
   isBuffering = false;
   clearStallWatchdog();
 
-  // Verify the remote response before considering offline recovery. A real 404
-  // must stop; it must never be replaced by an old downloaded blob.
-  const failedUrl = audio.src;
-  fetch(failedUrl, { method: "HEAD", cache: "no-store" }).then((response) => {
-    if (!response.ok) throw new Error(`Remote audio returned ${response.status}`);
-    throw new Error("Audio failed despite a successful remote response");
-  }).catch(async (networkError) => {
-    const isMissingRemoteFile = networkError.message.includes("Remote audio returned");
-    if (isMissingRemoteFile) {
-      audio.pause();
-      audio.removeAttribute("src");
-      audio.load();
-      player.showToast(`❌ "${currentSong?.title || "This track"}" is unavailable.`, 3500);
-      updateUI();
-      return;
-    }
-
-    // Only use an explicitly downloaded copy when the network itself failed.
-    const offlineLink = isSongStoredOffline(currentSong) ? (currentSong?.link || failedUrl) : null;
-    const blobUrl = await getOfflineAudioBlobUrl(offlineLink);
-    if (blobUrl && audio.src !== blobUrl) {
-      console.log("[Player] Recovering using offline cached track");
-      audio.removeAttribute("crossOrigin");
-      audio.src = blobUrl;
-      audio.play().catch(() => {});
-      return;
-    }
-
-    // 2. CORS Auto-Recovery: If failed with crossOrigin='anonymous', fall back to native playback without crossOrigin!
-    // Native HTML5 <audio> without crossOrigin NEVER throws CORS policy errors
-    if (audio.hasAttribute("crossOrigin")) {
-      console.warn("[Player] CORS / socket restriction detected. Switching to native direct playback (removing crossOrigin)...");
-      audio.removeAttribute("crossOrigin");
-      const safeUrl = normalizeUrl(currentSong?.link || audio.src || "").split("?")[0];
-      if (safeUrl) {
-        audio.src = safeUrl;
-        audio.load();
-        audio.play().catch((playErr) => console.warn("[Player] Native direct play notice:", playErr));
-        return;
-      }
-    }
-
-    // 3. Extension / Format Fallback (e.g. .webm -> without .webm)
-    const rawSrc = audio.src || currentSong?.link || "";
-    if (rawSrc && (rawSrc.includes(".webm") || rawSrc.includes("%2Ewebm"))) {
-      const cleanSrc = rawSrc.replace(/\.webm(?=[\?&#]|$)/gi, "").replace(/%2Ewebm(?=[\?&#]|$)/gi, "");
-      if (cleanSrc && cleanSrc !== rawSrc) {
-        console.log("[Player] Auto-recovering from .webm 404 to clean URL:", cleanSrc);
-        audio.src = cleanSrc;
-        if (currentSong) currentSong.link = cleanSrc;
-        audio.load();
-        audio.play().catch(() => {});
-        return;
-      }
-    }
-
-    // 4. Slow network retry mechanism (fixes the &t= query string corruption)
-    if (!audio._retryCount || audio._retryCount < 3) {
-      audio._retryCount = (audio._retryCount || 0) + 1;
-      player.showToast(`🌧️ Reconnecting stream (${audio._retryCount}/3)...`, 2500);
-      setTimeout(() => {
-        const cleanBase = (audio.src || currentSong?.link || "")
-          .replace(/\.webm(?=[\?&#]|$)/gi, "")
-          .replace(/%2Ewebm(?=[\?&#]|$)/gi, "")
-          .split("?")[0];
-        audio.src = `${cleanBase}?retry=${Date.now()}`;
-        audio.load();
-        audio.play().catch(() => {});
-      }, 1000);
-      return;
-    }
-
-    // 5. If offline, alert user and stop
-    player.showToast("⚠️ Audio could not be loaded. Check your connection.");
-  });
+  // Never recover from an audio error with a persisted blob or a rewritten URL.
+  // Those fallbacks can resurrect deleted/replaced tracks and hide real 404s.
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  player.showToast(`❌ "${currentSong?.title || "This track"}" is unavailable.`, 3500);
+  updateUI();
 });
 
 // Volume initialization
@@ -844,6 +777,9 @@ export const player = {
     if (!song || !song.link) return;
 
     // 1. Immediately update playlist state
+    const requestGeneration = ++playbackGeneration;
+    audio.pause();
+    audio.removeAttribute("src");
     currentSong = song;
     if (playlistContext) {
       if (index !== null) {
@@ -860,7 +796,7 @@ export const player = {
 
     if (isOffline && !navigator.onLine) {
       getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
-        if (blobUrl) {
+        if (blobUrl && requestGeneration === playbackGeneration && currentSong === song) {
           audio.removeAttribute("crossOrigin");
           if (audio.src !== blobUrl) {
             audio.src = blobUrl;
@@ -869,9 +805,13 @@ export const player = {
             userPaused = false;
             audio.play().catch(() => {});
           }
-
+        } else if (requestGeneration === playbackGeneration && currentSong === song) {
+          player.showToast(`❌ "${song.title || "This track"}" is unavailable offline.`, 3500);
         }
       });
+      updateMediaSession(song);
+      updateUI();
+      return;
     }
 
     // Set stream source initially with crossOrigin for EQ capability
@@ -883,7 +823,7 @@ export const player = {
       networkUrl = `${cleanUrl}${sep}cb=${Date.now()}`;
     }
     // Replace a blob left by a previous offline track when this track is network-only.
-    if (!audio.src || audio.src !== networkUrl || (isOffline && !audio.src.startsWith("blob:"))) {
+    if (requestGeneration === playbackGeneration) {
       audio.crossOrigin = "anonymous";
       audio.src = networkUrl;
     }

@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine
-const APP_SHELL_CACHE = "musicsaura-shell-v71";
+const APP_SHELL_CACHE = "musicsaura-shell-v72";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -71,30 +71,21 @@ self.addEventListener("fetch", (event) => {
   if (isAudio) {
     event.respondWith(
       (async () => {
-        // Online playback must always come from the current remote URL.
-        // Never let an old downloaded blob hide a deleted or replaced file.
-        if (navigator.onLine) {
-          return fetch(request, { cache: "no-store" });
-        }
+        // Network is authoritative. Cached audio is only an offline fallback.
+        // Returning non-OK responses prevents a deleted URL from falling back
+        // to an older downloaded copy.
+        try {
+          const networkResponse = await fetch(request, { cache: "no-store" });
+          return networkResponse;
+        } catch {}
 
         try {
           const offlineCache = await caches.open(OFFLINE_PWA_STORAGE);
-          const cleanUrl = url.href.split("?")[0];
-          const hasVersion = url.search && (url.search.includes("v=") || url.search.includes("ver=") || url.search.includes("remix="));
-          const hasAnySearch = Boolean(url.search);
-
-          // If the request contains an explicit version parameter (v=, ver=, remix=)
-          // or any cache-busting query param, treat it as an explicit network request
-          // and only match exact cache keys (including search) — do NOT use ignoreSearch.
-          let cached = null;
-          if (hasVersion || hasAnySearch) {
-            // Exact match only; a cache-busting param will differ from stored keys
-            cached = (await offlineCache.match(request)) || (await offlineCache.match(url.href));
-          } else {
-            // No search params — allow ignoreSearch matching for convenience
-            cached = (await offlineCache.match(request, { ignoreSearch: true })) ||
-                     (await offlineCache.match(cleanUrl, { ignoreSearch: true }));
-          }
+          // This branch runs only after the network failed. Matching the base URL
+          // here lets explicitly downloaded tracks work offline despite the
+          // player's cache-busting query parameter.
+          const cached = (await offlineCache.match(request, { ignoreSearch: true })) ||
+                         (await offlineCache.match(url.href.split("?")[0], { ignoreSearch: true }));
 
           if (cached) {
             // Only serve cached audio that was explicitly saved for offline use.
