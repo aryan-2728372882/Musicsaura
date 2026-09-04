@@ -75,12 +75,17 @@ self.addEventListener("fetch", (event) => {
           const offlineCache = await caches.open(OFFLINE_PWA_STORAGE);
           const cleanUrl = url.href.split("?")[0];
           const hasVersion = url.search && (url.search.includes("v=") || url.search.includes("ver=") || url.search.includes("remix="));
-          
+          const hasAnySearch = Boolean(url.search);
+
+          // If the request contains an explicit version parameter (v=, ver=, remix=)
+          // or any cache-busting query param, treat it as an explicit network request
+          // and only match exact cache keys (including search) — do NOT use ignoreSearch.
           let cached = null;
-          if (hasVersion) {
-            // Exact version match only — never return stale unversioned audio
+          if (hasVersion || hasAnySearch) {
+            // Exact match only; a cache-busting param will differ from stored keys
             cached = (await offlineCache.match(request)) || (await offlineCache.match(url.href));
           } else {
+            // No search params — allow ignoreSearch matching for convenience
             cached = (await offlineCache.match(request, { ignoreSearch: true })) ||
                      (await offlineCache.match(cleanUrl, { ignoreSearch: true }));
           }
@@ -110,8 +115,8 @@ self.addEventListener("fetch", (event) => {
           console.warn("[SW] Cache audio lookup notice:", e);
         }
 
-        // Not in offline cache — pass through to network
-        return fetch(request);
+        // Not in offline cache — force network fetch and bypass browser HTTP cache
+        return fetch(request, { cache: 'no-store' });
       })()
     );
     return;
