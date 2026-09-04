@@ -792,7 +792,7 @@ export const player = {
 
     // 2. Prioritize instant offline playback if song is in offline storage
     const cleanUrl = normalizeUrl(song.link);
-    const isOfflineCatalogueTrack = song.genre === "offline";
+    const isOfflineCatalogueTrack = song.source === "offline";
 
     if (isOfflineCatalogueTrack) {
       getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
