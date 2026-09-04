@@ -466,13 +466,36 @@ function normalizeSong(song, genre = "hindi", source = "json") {
 function getLocalUploads() {
   try {
     const list = JSON.parse(localStorage.getItem(LOCAL_UPLOADS_KEY) || "[]");
-    return list.filter((s) => s && s.link && !deletedSongLinks.has(s.link));
+    return list.filter((s) => s && s.link && !isDeletedSong(s));
   } catch {
     return [];
   }
 }
 
-let deletedSongLinks = new Set();
+const BLOCKED_SONG_LINKS = new Set([
+  "https://file.garden/argaqiyidd0tulqv/hindi/mujhe%20tumse%20mohabbat%20hai.mp3"
+]);
+const BLOCKED_SONG_TITLES = new Set(["mujhe tumse mohabbat hai"]);
+let deletedSongLinks = new Set(BLOCKED_SONG_LINKS);
+
+function isDeletedSong(song) {
+  if (!song) return true;
+  const link = (song.link || "").split("?")[0].toLowerCase().trim();
+  const title = (song.title || "").toLowerCase().trim();
+  return deletedSongLinks.has(link) || BLOCKED_SONG_LINKS.has(link) || BLOCKED_SONG_TITLES.has(title);
+}
+
+async function loadDeletedSongLinks() {
+  try {
+    const snapshot = await getDocs(collection(db, "deleted_songs"));
+    snapshot.forEach((entry) => {
+      const data = entry.data();
+      if (data?.link) deletedSongLinks.add(data.link.split("?")[0].toLowerCase().trim());
+    });
+  } catch (err) {
+    console.warn("Deleted-song blacklist notice:", err);
+  }
+}
 
 function getSongTimestamp(song) {
   if (!song) return 0;
@@ -509,11 +532,11 @@ function rebuildAllCatalogues() {
 
   const localUploads = getLocalUploads()
     .map((s) => normalizeSong(s, s?.genre, "local"))
-    .filter((s) => s && s.link && !deletedSongLinks.has(s.link));
+    .filter((s) => s && s.link && !isDeletedSong(s));
 
   // Merge Firestore songs and local uploads
   const allCustom = [...firestoreSongs, ...localUploads]
-    .filter((s) => s && s.link && !deletedSongLinks.has(s.link));
+    .filter((s) => s && s.link && !isDeletedSong(s));
 
   // Remove duplicate custom songs by link and keep the latest
   const uniqueMap = new Map();
@@ -538,7 +561,7 @@ function rebuildAllCatalogues() {
 
   // Build each genre preserving raw JSON catalog top order + newest community uploads
   Object.keys(GENRE_FILES).forEach((genre) => {
-    const raw = (rawJsonSongs[genre] || []).filter((s) => s && s.link && !deletedSongLinks.has(s.link));
+    const raw = (rawJsonSongs[genre] || []).filter((s) => s && s.link && !isDeletedSong(s));
     const rawLinks = new Set(raw.map((s) => s.link.split("?")[0].toLowerCase().trim()));
     const rawTitles = new Set(raw.map((s) => (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim()).filter(Boolean));
 
@@ -560,7 +583,7 @@ function rebuildAllCatalogues() {
   // 1. Add all songs from all JSONs (guaranteeing official order)
   Object.values(songsByGenre).forEach((list) => {
     list.forEach((s) => {
-      if (!s || !s.link || deletedSongLinks.has(s.link)) return;
+      if (!s || !s.link || isDeletedSong(s)) return;
       const cleanLink = s.link.split("?")[0].toLowerCase().trim();
       const cleanTitle = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
       if (!globalSeenLinks.has(cleanLink) && (!cleanTitle || !globalSeenTitles.has(cleanTitle))) {
@@ -611,7 +634,7 @@ function loadCachedFirestoreSongs() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        firestoreSongs = parsed.filter((s) => s && s.link && !deletedSongLinks.has(s.link));
+        firestoreSongs = parsed.filter((s) => s && s.link && !isDeletedSong(s));
         rebuildAllCatalogues();
       }
     }
@@ -644,7 +667,7 @@ async function subscribeToFirestoreSongs() {
     const newSongs = [];
     snap.forEach((docSnap) => {
       const data = docSnap.data();
-      if (data && data.link && !deletedSongLinks.has(data.link)) {
+      if (data && data.link && !isDeletedSong(data)) {
         const norm = normalizeSong({ id: docSnap.id, ...data }, data.genre, "firestore");
         if (norm && norm.link) {
           newSongs.push(norm);
@@ -1402,6 +1425,9 @@ window.addEventListener("online", () => {
       player.showToast("✈️ Offline Mode: Playing from In-App Storage", 3500);
       return;
     }
+
+    // Load the deletion blacklist before JSON, Firestore, or local catalogues.
+    await loadDeletedSongLinks();
 
     // 2. Load all 5 JSON catalogues immediately
     await Promise.allSettled([
