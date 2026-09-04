@@ -665,19 +665,26 @@ audio.addEventListener("error", (e) => {
   isBuffering = false;
   clearStallWatchdog();
 
-  // A missing online URL must never be replaced by an old offline/cache copy.
-  if (navigator.onLine && currentSong) {
-    audio.pause();
-    audio.removeAttribute("src");
-    audio.load();
-    player.showToast(`❌ "${currentSong.title || "This track"}" is unavailable.`, 3500);
-    updateUI();
-    return;
-  }
+  // Verify the remote response before considering offline recovery. A real 404
+  // must stop; it must never be replaced by an old downloaded blob.
+  const failedUrl = audio.src;
+  fetch(failedUrl, { method: "HEAD", cache: "no-store" }).then((response) => {
+    if (!response.ok) throw new Error(`Remote audio returned ${response.status}`);
+    throw new Error("Audio failed despite a successful remote response");
+  }).catch(async (networkError) => {
+    const isMissingRemoteFile = networkError.message.includes("Remote audio returned");
+    if (isMissingRemoteFile) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      player.showToast(`❌ "${currentSong?.title || "This track"}" is unavailable.`, 3500);
+      updateUI();
+      return;
+    }
 
-  // Only an explicitly saved track may recover from offline storage.
-  // Normal network playback must never resurrect an old IndexedDB blob.
-  getOfflineAudioBlobUrl(!navigator.onLine && isSongStoredOffline(currentSong) ? (currentSong?.link || audio.src) : null).then((blobUrl) => {
+    // Only use an explicitly downloaded copy when the network itself failed.
+    const offlineLink = isSongStoredOffline(currentSong) ? (currentSong?.link || failedUrl) : null;
+    const blobUrl = await getOfflineAudioBlobUrl(offlineLink);
     if (blobUrl && audio.src !== blobUrl) {
       console.log("[Player] Recovering using offline cached track");
       audio.removeAttribute("crossOrigin");
@@ -715,7 +722,7 @@ audio.addEventListener("error", (e) => {
     }
 
     // 4. Slow network retry mechanism (fixes the &t= query string corruption)
-    if (navigator.onLine && (!audio._retryCount || audio._retryCount < 3)) {
+    if (!audio._retryCount || audio._retryCount < 3) {
       audio._retryCount = (audio._retryCount || 0) + 1;
       player.showToast(`🌧️ Reconnecting stream (${audio._retryCount}/3)...`, 2500);
       setTimeout(() => {
@@ -731,14 +738,7 @@ audio.addEventListener("error", (e) => {
     }
 
     // 5. If offline, alert user and stop
-    if (!navigator.onLine) {
-      player.showToast("⚠️ Offline: Connect to Wi-Fi/Data or play downloaded tracks.");
-      return;
-    }
-
-    if (!userPaused && playlist.length > 1) {
-      setTimeout(() => player.next(true), 2000);
-    }
+    player.showToast("⚠️ Audio could not be loaded. Check your connection.");
   });
 });
 
@@ -876,7 +876,7 @@ export const player = {
 
     // Set stream source initially with crossOrigin for EQ capability
     // If the song is not stored offline, force a network fetch by adding a cache-busting param.
-    const shouldForceNetwork = navigator.onLine;
+    const shouldForceNetwork = true;
     let networkUrl = cleanUrl;
     if (shouldForceNetwork) {
       const sep = cleanUrl.includes("?") ? "&" : "?";
