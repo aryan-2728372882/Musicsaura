@@ -493,42 +493,42 @@ async function loadDeletedSongLinks() {
       if (data?.link) deletedSongLinks.add(data.link.split("?")[0].toLowerCase().trim());
     });
   } catch (err) {
-    console.warn("Deleted-song blacklist notice:", err);
+    // Public clients may not have permission to read the administrative blacklist.
+  }
+}
+
+async function removeMissingJsonSongsFromFirestore() {
+  const loadedGenres = Object.keys(GENRE_FILES).every((genre) => Array.isArray(rawJsonSongs[genre]));
+  if (!loadedGenres) {
+    console.warn("Skipping Firestore catalogue reconciliation because a JSON catalogue failed to load.");
+    return;
   }
 
-  async function removeMissingJsonSongsFromFirestore() {
-    const loadedGenres = Object.keys(GENRE_FILES).every((genre) => Array.isArray(rawJsonSongs[genre]));
-    if (!loadedGenres) {
-      console.warn("Skipping Firestore catalogue reconciliation because a JSON catalogue failed to load.");
-      return;
-    }
+  const jsonLinks = new Set(
+    Object.values(rawJsonSongs)
+      .flat()
+      .map((song) => (song?.link || "").split("?")[0].toLowerCase().trim())
+      .filter(Boolean)
+  );
 
-    const jsonLinks = new Set(
-      Object.values(rawJsonSongs)
-        .flat()
-        .map((song) => (song?.link || "").split("?")[0].toLowerCase().trim())
-        .filter(Boolean)
-    );
-
-    try {
-      const snapshot = await getDocs(collection(db, "songs"));
-      const removals = [];
-      snapshot.forEach((entry) => {
-        const data = entry.data();
-        const link = (data?.link || "").split("?")[0].toLowerCase().trim();
-        if (isDeletedSong(data) || (data?.catalogManaged === true && link && !jsonLinks.has(link))) {
-          removals.push(deleteDoc(doc(db, "songs", entry.id)));
-        } else if (link && jsonLinks.has(link) && data?.catalogManaged !== true) {
-          removals.push(updateDoc(doc(db, "songs", entry.id), { catalogManaged: true }));
-        }
-      });
-      if (removals.length) {
-        await Promise.all(removals);
-        console.log(`[Catalogue] Removed ${removals.length} JSON-deleted song(s) from Firestore.`);
+  try {
+    const snapshot = await getDocs(collection(db, "songs"));
+    const removals = [];
+    snapshot.forEach((entry) => {
+      const data = entry.data();
+      const link = (data?.link || "").split("?")[0].toLowerCase().trim();
+      if (isDeletedSong(data) || (data?.catalogManaged === true && link && !jsonLinks.has(link))) {
+        removals.push(deleteDoc(doc(db, "songs", entry.id)));
+      } else if (link && jsonLinks.has(link) && data?.catalogManaged !== true) {
+        removals.push(updateDoc(doc(db, "songs", entry.id), { catalogManaged: true }));
       }
-    } catch (err) {
-      console.warn("Firestore catalogue reconciliation notice:", err);
+    });
+    if (removals.length) {
+      await Promise.all(removals);
+      console.log(`[Catalogue] Removed ${removals.length} JSON-deleted song(s) from Firestore.`);
     }
+  } catch (err) {
+    console.warn("Firestore catalogue reconciliation notice:", err);
   }
 }
 
