@@ -862,20 +862,23 @@ if (uploadForm) {
 
       // AUTO GITHUB COMMIT: Automatically commit track to jsons/{genre}.json on GitHub
       try {
-        commitSongsToGitHub(genre, [{
+        const ghRes = await commitSongsToGitHub(genre, [{
           title,
           artist,
           genre,
           link: audioUrl,
           thumbnail: coverUrl || "assets/logo.png"
-        }]).then((res) => {
-          if (res && res.success) {
-            console.log(`[GitHub Auto-Commit] "${title}" committed directly into jsons/${genre.toLowerCase()}.json!`);
-          }
-        });
-      } catch {}
-
-      showAlert(`🎉 "${title}" published successfully and synced to GitHub! It's now live for everyone.`);
+        }]);
+        if (ghRes && ghRes.success) {
+          console.log(`[GitHub Auto-Commit] "${title}" committed directly into jsons/${genre.toLowerCase()}.json!`);
+          showAlert(`🎉 "${title}" published successfully and committed to GitHub repository!`);
+        } else {
+          console.warn(`[GitHub Auto-Commit] Notice:`, ghRes?.message);
+          showAlert(`⚠️ "${title}" saved to database, but GitHub auto-commit failed (${ghRes?.message || "Token issue"}). Click "GitHub Token" above to configure.`, true);
+        }
+      } catch (ghErr) {
+        showAlert(`⚠️ "${title}" saved to database, but GitHub commit notice: ${ghErr.message}. Click "GitHub Token" above.`, true);
+      }
       uploadForm.reset();
       if (coverPreviewImg) coverPreviewImg.src = "assets/logo.png";
       loadCommunityUploads();
@@ -1364,6 +1367,77 @@ function escapeHtml(str) {
   return (str || "").toString().replace(/[&<>"']/g, (m) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   })[m]);
+}
+
+// ─── GITHUB SYNC TOKEN SETTINGS ─────────────────────────────────
+const btnGithubSettings   = document.getElementById("btn-github-settings");
+const githubSettingsBox   = document.getElementById("github-settings-box");
+const inputGithubToken    = document.getElementById("input-github-token");
+const btnSaveGithubToken  = document.getElementById("btn-save-github-token");
+const githubTokenStatus   = document.getElementById("github-token-status");
+
+if (btnGithubSettings && githubSettingsBox) {
+  btnGithubSettings.addEventListener("click", () => {
+    const isHidden = githubSettingsBox.style.display === "none";
+    githubSettingsBox.style.display = isHidden ? "block" : "none";
+    if (isHidden && inputGithubToken) {
+      const currentToken = localStorage.getItem("musicsaura_github_token") || "";
+      inputGithubToken.value = currentToken;
+      if (currentToken && githubTokenStatus) {
+        githubTokenStatus.style.display = "block";
+        githubTokenStatus.style.color = "var(--cyan)";
+        githubTokenStatus.textContent = "Custom GitHub Token is currently configured.";
+      }
+    }
+  });
+}
+
+if (btnSaveGithubToken && inputGithubToken) {
+  btnSaveGithubToken.addEventListener("click", async () => {
+    const token = inputGithubToken.value.trim();
+    if (!token) {
+      localStorage.removeItem("musicsaura_github_token");
+      if (githubTokenStatus) {
+        githubTokenStatus.style.display = "block";
+        githubTokenStatus.style.color = "var(--text-muted)";
+        githubTokenStatus.textContent = "Custom token removed. Reverted to embedded token.";
+      }
+      return;
+    }
+
+    btnSaveGithubToken.disabled = true;
+    btnSaveGithubToken.textContent = "Validating...";
+
+    try {
+      const res = await fetch("https://api.github.com/user", {
+        headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github.v3+json" }
+      });
+      if (res.ok) {
+        const u = await res.json();
+        localStorage.setItem("musicsaura_github_token", token);
+        if (githubTokenStatus) {
+          githubTokenStatus.style.display = "block";
+          githubTokenStatus.style.color = "#4ade80";
+          githubTokenStatus.textContent = `✅ Connected as @${u.login}! Auto-commit to GitHub is active.`;
+        }
+      } else {
+        if (githubTokenStatus) {
+          githubTokenStatus.style.display = "block";
+          githubTokenStatus.style.color = "#f87171";
+          githubTokenStatus.textContent = "❌ Invalid GitHub Token (401 Bad Credentials). Please check token permissions.";
+        }
+      }
+    } catch (e) {
+      if (githubTokenStatus) {
+        githubTokenStatus.style.display = "block";
+        githubTokenStatus.style.color = "#f87171";
+        githubTokenStatus.textContent = "❌ Connection failed: " + e.message;
+      }
+    } finally {
+      btnSaveGithubToken.disabled = false;
+      btnSaveGithubToken.textContent = "Save Token";
+    }
+  });
 }
 
 // ─── INITIALIZATION ────────────────────────────────────────────────

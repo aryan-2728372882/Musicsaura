@@ -61,7 +61,11 @@
             Paste link or drop audio — creates live stream link and auto-fetches artwork!
           </p>
         </div>
-        <div style="display:flex;gap:0.5rem">
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+          <button type="button" id="btn-github-settings" class="genre-pill" style="font-size:0.8rem" title="Configure GitHub Sync Token">
+            <span class="material-icons" style="font-size:0.95rem;vertical-align:middle;margin-right:3px">sync</span>
+            GitHub Token
+          </button>
           <button type="button" id="toggle-bulk-btn" class="genre-pill" style="font-size:0.8rem">
             <span class="material-icons" style="font-size:0.95rem;vertical-align:middle;margin-right:3px">format_list_bulleted</span>
             Bulk Links
@@ -71,6 +75,22 @@
             Export JSON
           </button>
         </div>
+      </div>
+
+      <!-- GITHUB TOKEN CONFIGURATION BOX -->
+      <div id="github-settings-box" style="display:none;padding:1rem 1.2rem;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:12px;margin-bottom:1.5rem">
+        <h3 style="font-size:0.92rem;font-weight:700;margin-bottom:0.4rem;display:flex;align-items:center;gap:6px">
+          <span class="material-icons" style="color:var(--cyan);font-size:1.1rem">key</span>
+          GitHub Auto-Publish Token
+        </h3>
+        <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:0.8rem;line-height:1.4">
+          Allows Creator Studio to commit uploaded songs directly into your GitHub repository's <code>jsons/{genre}.json</code>. Enter a GitHub Token (Classic with <code>repo</code> scope, or Fine-grained with <code>Contents: Read and write</code>):
+        </p>
+        <div style="display:flex;gap:8px">
+          <input type="password" id="input-github-token" class="form-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" style="flex:1;font-family:monospace;font-size:0.85rem">
+          <button type="button" id="btn-save-github-token" class="genre-pill active" style="padding:0.6rem 1.2rem;font-size:0.85rem;white-space:nowrap">Save Token</button>
+        </div>
+        <div id="github-token-status" style="font-size:0.8rem;margin-top:8px;display:none"></div>
       </div>
 
       <div id="upload-alert" class="alert-box"></div>
