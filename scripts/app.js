@@ -1461,9 +1461,6 @@ window.addEventListener("online", () => {
       return;
     }
 
-    // Load the deletion blacklist before JSON, Firestore, or local catalogues.
-    await loadDeletedSongLinks();
-
     // 2. Load all 5 JSON catalogues immediately
     await Promise.allSettled([
       loadRawJson("hindi"),
@@ -1472,8 +1469,6 @@ window.addEventListener("online", () => {
       loadRawJson("rap"),
       loadRawJson("bhojpuri")
     ]);
-    await removeMissingJsonSongsFromFirestore();
-
     // 3. Connect Firestore sync and load cached/custom songs
     await subscribeToFirestoreSongs();
 
