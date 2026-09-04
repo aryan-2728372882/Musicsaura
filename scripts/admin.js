@@ -244,7 +244,7 @@ if (uploadForm) {
         plays: 0
       };
 
-      await addDoc(collection(db, "songs"), newSongData);
+      await addDoc(collection(db, "songs"), { ...newSongData, catalogManaged: true });
 
       // AUTO GITHUB SYNC: Commit to jsons/{genre}.json in GitHub repository
       try {
@@ -330,7 +330,8 @@ if (submitBulkBtn && bulkUrlsInput) {
           keywords,
           uploadedBy: currentAdminUser.email,
           createdAt: serverTimestamp(),
-          plays: 0
+          plays: 0,
+          catalogManaged: true
         });
         successCount++;
       });

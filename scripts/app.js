@@ -1,7 +1,7 @@
 // scripts/app.js — MusicsAura 3.0 Core App Controller
 import {
   auth, db, isAdmin, onAuthStateChanged,
-  collection, getDocs, query, orderBy, limit, onSnapshot
+  collection, getDocs, query, orderBy, limit, onSnapshot, deleteDoc, doc
 } from "./firebase-config.js";
 import { player, formatTime } from "./player.js";
 import {
@@ -494,6 +494,39 @@ async function loadDeletedSongLinks() {
     });
   } catch (err) {
     console.warn("Deleted-song blacklist notice:", err);
+  }
+
+  async function removeMissingJsonSongsFromFirestore() {
+    const loadedGenres = Object.keys(GENRE_FILES).every((genre) => Array.isArray(rawJsonSongs[genre]));
+    if (!loadedGenres) {
+      console.warn("Skipping Firestore catalogue reconciliation because a JSON catalogue failed to load.");
+      return;
+    }
+
+    const jsonLinks = new Set(
+      Object.values(rawJsonSongs)
+        .flat()
+        .map((song) => (song?.link || "").split("?")[0].toLowerCase().trim())
+        .filter(Boolean)
+    );
+
+    try {
+      const snapshot = await getDocs(collection(db, "songs"));
+      const removals = [];
+      snapshot.forEach((entry) => {
+        const data = entry.data();
+        const link = (data?.link || "").split("?")[0].toLowerCase().trim();
+        if (data?.catalogManaged === true && link && !jsonLinks.has(link)) {
+          removals.push(deleteDoc(doc(db, "songs", entry.id)));
+        }
+      });
+      if (removals.length) {
+        await Promise.all(removals);
+        console.log(`[Catalogue] Removed ${removals.length} JSON-deleted song(s) from Firestore.`);
+      }
+    } catch (err) {
+      console.warn("Firestore catalogue reconciliation notice:", err);
+    }
   }
 }
 
@@ -1437,6 +1470,7 @@ window.addEventListener("online", () => {
       loadRawJson("rap"),
       loadRawJson("bhojpuri")
     ]);
+    await removeMissingJsonSongsFromFirestore();
 
     // 3. Connect Firestore sync and load cached/custom songs
     await subscribeToFirestoreSongs();

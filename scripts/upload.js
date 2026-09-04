@@ -601,6 +601,7 @@ if (btnPublishBatch) {
           link: track.streamUrl,
           thumbnail: track.artwork || "assets/logo.png",
           keywords,
+          catalogManaged: true,
           uploadedBy: uploaderName,
           createdAt: serverTimestamp(),
           plays: 0
@@ -791,6 +792,7 @@ if (uploadForm) {
         link: audioUrl,
         thumbnail: coverUrl || "assets/logo.png",
         keywords,
+        catalogManaged: true,
         uploadedBy: uploaderName,
         createdAt: serverTimestamp(),
         plays: 0
@@ -909,6 +911,7 @@ if (submitBulkBtn && bulkUrlsInput) {
           link: url,
           thumbnail: artwork,
           keywords,
+          catalogManaged: true,
           uploadedBy: "Community",
           createdAt: serverTimestamp(),
           plays: 0
