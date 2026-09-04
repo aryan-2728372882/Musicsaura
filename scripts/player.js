@@ -632,65 +632,6 @@ audio.addEventListener("timeupdate", () => {
   updateProgress();
   updatePositionState();
 
-  // Crossfade prefetch: start loading next track slightly before current ends
-  try {
-    if (!isPrefetching && !crossfadeActive && crossfadeSeconds > 0 && Number.isFinite(audio.duration) && audio.duration > 0) {
-      const timeLeft = (audio.duration || 0) - (audio.currentTime || 0);
-      if (timeLeft <= crossfadeSeconds + 0.2) {
-        // Begin prefetch and crossfade ramp
-        isPrefetching = true;
-        const nextIdx = isShuffle ? ((Math.floor(Math.random() * playlist.length)) || (currentIndex + 1) % playlist.length) : ((currentIndex + 1) % playlist.length);
-        const nextSong = playlist[nextIdx];
-        if (nextSong && nextSong.link) {
-          const nextUrl = normalizeUrl(nextSong.link);
-          if (!prewarmedUrls.has(nextUrl)) {
-            prewarmedUrls.add(nextUrl);
-            prefetchAudio.pause();
-            prefetchAudio.src = nextUrl;
-            prefetchAudio.crossOrigin = "anonymous";
-            prefetchAudio.load();
-            prefetchAudio.play().catch(() => {});
-          }
-
-          // Start smooth volume ramp over crossfadeSeconds
-          crossfadeActive = true;
-          const steps = Math.max(6, Math.ceil(crossfadeSeconds * 10));
-          let step = 0;
-          const startMainVol = audio.volume;
-          const targetVol = masterVolume;
-          prefetchAudio.volume = 0;
-          clearInterval(crossfadeInterval);
-          crossfadeInterval = setInterval(() => {
-            step++;
-            const t = Math.min(1, step / steps);
-            // linear ramp
-            prefetchAudio.volume = targetVol * t;
-            try { audio.volume = Math.max(0, startMainVol * (1 - t)); } catch(e){}
-            if (t >= 1) {
-              clearInterval(crossfadeInterval);
-              crossfadeInterval = null;
-              // After crossfade complete, swap prefetch into main audio
-              try {
-                const wasPlaying = !audio.paused;
-                audio.pause();
-                audio.src = prefetchAudio.src;
-                audio.load();
-                audio.volume = targetVol;
-                if (wasPlaying) audio.play().catch(() => {});
-              } catch (e) { console.warn('Crossfade swap error', e); }
-              // reset flags
-              crossfadeActive = false;
-              isPrefetching = false;
-            }
-          }, Math.max(50, (crossfadeSeconds * 1000) / steps));
-        } else {
-          isPrefetching = false;
-          crossfadeActive = false;
-        }
-      }
-    }
-  } catch (e) {}
-
   if (playSessionStart > 0 && !hasRecordedStat) {
     const currentSessionSec = (Date.now() - playSessionStart) / 1000;
     if (accumulatedPlaySec + currentSessionSec >= STATS_MIN_PLAY_SECONDS) {
@@ -708,9 +649,9 @@ audio.addEventListener("ended", () => {
     audio.currentTime = 0;
     audio.play().catch(() => {});
   } else {
-    // If crossfade was active and prefetchAudio is already playing the next URL,
-    // we attempt to continue seamlessly. Otherwise, fallback to next().
-    if (preloadNextOnEnded()) return;
+    // Advance exactly once. The old prefetch path played a second audio element
+    // concurrently and could advance twice at the track boundary.
+    prefetchAudio.pause();
     player.next(true);
   }
 });
@@ -931,7 +872,7 @@ export const player = {
 
     // Set stream source initially with crossOrigin for EQ capability
     // If the song is not stored offline, force a network fetch by adding a cache-busting param.
-    const shouldForceNetwork = !isOffline;
+    const shouldForceNetwork = navigator.onLine;
     let networkUrl = cleanUrl;
     if (shouldForceNetwork) {
       const sep = cleanUrl.includes("?") ? "&" : "?";
