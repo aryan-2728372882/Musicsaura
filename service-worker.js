@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine
-const APP_SHELL_CACHE = "musicsaura-shell-v68";
+const APP_SHELL_CACHE = "musicsaura-shell-v69";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -74,9 +74,16 @@ self.addEventListener("fetch", (event) => {
         try {
           const offlineCache = await caches.open(OFFLINE_PWA_STORAGE);
           const cleanUrl = url.href.split("?")[0];
-          const cached = (await offlineCache.match(request, { ignoreSearch: true })) ||
-                         (await offlineCache.match(cleanUrl, { ignoreSearch: true })) ||
-                         (await offlineCache.match(url.href, { ignoreSearch: true }));
+          const hasVersion = url.search && (url.search.includes("v=") || url.search.includes("ver=") || url.search.includes("remix="));
+          
+          let cached = null;
+          if (hasVersion) {
+            // Exact version match only — never return stale unversioned audio
+            cached = (await offlineCache.match(request)) || (await offlineCache.match(url.href));
+          } else {
+            cached = (await offlineCache.match(request, { ignoreSearch: true })) ||
+                     (await offlineCache.match(cleanUrl, { ignoreSearch: true }));
+          }
 
           if (cached) {
             // Attach CORS and Accept-Ranges headers to cached audio response

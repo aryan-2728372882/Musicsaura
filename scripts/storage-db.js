@@ -150,18 +150,21 @@ export async function getTrackBlobFromStorage(idOrLink) {
         return track.blob;
       }
 
-      // Try index search by link
-      const trackByLink = await new Promise((resolve) => {
-        const tx = db.transaction(STORE_NAME, "readonly");
-        const store = tx.objectStore(STORE_NAME);
-        const index = store.index("link");
-        const req = index.get(rawTarget);
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => resolve(null);
-      });
+      // Only search unversioned raw link if caller did not explicitly request a version query
+      const hasVersionParam = idOrLink.includes("?v=") || idOrLink.includes("&v=") || idOrLink.includes("?remix=");
+      if (!hasVersionParam) {
+        const trackByLink = await new Promise((resolve) => {
+          const tx = db.transaction(STORE_NAME, "readonly");
+          const store = tx.objectStore(STORE_NAME);
+          const index = store.index("link");
+          const req = index.get(rawTarget);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => resolve(null);
+        });
 
-      if (trackByLink && trackByLink.blob && trackByLink.blob.size > 10240) {
-        return trackByLink.blob;
+        if (trackByLink && trackByLink.blob && trackByLink.blob.size > 10240) {
+          return trackByLink.blob;
+        }
       }
     }
   } catch (e) {
@@ -172,8 +175,10 @@ export async function getTrackBlobFromStorage(idOrLink) {
   try {
     if ("caches" in window) {
       const cache = await caches.open(CACHE_NAME);
-      const cachedRes = (await cache.match(idOrLink, { ignoreSearch: true })) ||
-                        (await cache.match(rawTarget, { ignoreSearch: true }));
+      const hasVersionParam = idOrLink.includes("?v=") || idOrLink.includes("&v=") || idOrLink.includes("?remix=");
+      const cachedRes = hasVersionParam
+        ? (await cache.match(idOrLink))
+        : (await cache.match(idOrLink, { ignoreSearch: true })) || (await cache.match(rawTarget, { ignoreSearch: true }));
       if (cachedRes && (cachedRes.ok || cachedRes.status === 200)) {
         const blob = await cachedRes.blob();
         if (blob && blob.size > 10240) {

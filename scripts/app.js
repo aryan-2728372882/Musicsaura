@@ -1004,6 +1004,31 @@ if (heroFxBtn) heroFxBtn.onclick = openFxModal;
 if (fsFxBtn) fsFxBtn.onclick = () => { closeFullscreenPlayer(); openFxModal(); };
 if (closeFxBtn) closeFxBtn.onclick = closeFxModal;
 
+const clearCacheBtn = document.getElementById("clear-cache-btn");
+if (clearCacheBtn) {
+  clearCacheBtn.addEventListener("click", async () => {
+    player.showToast("🧹 Purging audio cache & refreshing...", 2500);
+    try {
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const reg of regs) {
+          await reg.unregister();
+        }
+      }
+      player.showToast("✅ Audio cache cleared! Reloading fresh stream...", 1500);
+      setTimeout(() => {
+        location.href = location.pathname + "?refresh=" + Date.now();
+      }, 800);
+    } catch {
+      location.reload();
+    }
+  });
+}
+
 if (audioFxModal) {
   audioFxModal.addEventListener("click", (e) => {
     if (e.target === audioFxModal) closeFxModal();
