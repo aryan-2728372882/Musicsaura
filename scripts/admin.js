@@ -1,7 +1,6 @@
-// scripts/admin.js — MusicsAura 3.0 Studio Controller
 import {
   auth, db, isAdmin, onAuthStateChanged, signOut,
-  collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch
+  collection, query, where, orderBy, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch
 } from "./firebase-config.js";
 import { commitSongsToGitHub, deleteSongFromGitHub } from "./github-sync.js";
 
@@ -594,15 +593,24 @@ async function deleteSong(songId) {
   }
 
   try {
-    // 1. Delete from Firestore 'songs' collection
+    // 1. Delete this specific document from Firestore 'songs' collection
     await deleteDoc(doc(db, "songs", songId));
 
-    // AUTO GITHUB DELETE: Remove from jsons/{genre}.json in GitHub repository
-    try {
-      deleteSongFromGitHub(song.genre, song.link, song.title);
-    } catch {}
+    // 2. Delete any matching duplicate documents in Firestore with the same link
+    if (song.link) {
+      try {
+        const qSnap = await getDocs(query(collection(db, "songs"), where("link", "==", song.link)));
+        const deletes = [];
+        qSnap.forEach((d) => {
+          if (d.id !== songId) deletes.push(deleteDoc(doc(db, "songs", d.id)));
+        });
+        if (deletes.length > 0) await Promise.all(deletes);
+      } catch (e) {
+        console.warn("Duplicate Firestore doc cleanup notice:", e);
+      }
+    }
 
-    // 2. Add to 'deleted_songs' collection so it stays deleted across all users and caches
+    // 3. Add to 'deleted_songs' collection so it stays deleted across all users and caches
     if (song.link) {
       try {
         await addDoc(collection(db, "deleted_songs"), {
@@ -615,8 +623,17 @@ async function deleteSong(songId) {
       }
     }
 
-    // 3. Clean from local storage buffers
+    // 4. AUTO GITHUB DELETE: Remove from jsons/{genre}.json in GitHub repository
     try {
+      await deleteSongFromGitHub(song.genre, song.link, song.title);
+    } catch (e) {
+      console.warn("GitHub delete notice:", e);
+    }
+
+    // 5. Invalidate local Firestore cache so it disappears immediately from main catalogue
+    try {
+      localStorage.removeItem("musicsaura_firestore_songs_cache");
+      localStorage.removeItem("musicsaura_firestore_cache_time");
       const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
       const filtered = local.filter((s) => (s.id !== songId && s.link !== song.link));
       localStorage.setItem("musicsaura_local_uploads", JSON.stringify(filtered));
@@ -843,6 +860,10 @@ function openDuplicatesReport(title, summaryHtml, listItems, allowPurge = false)
             if (!confirm(`Delete duplicate copy of "${item.title}" from database?`)) return;
             try {
               await deleteDoc(doc(db, "songs", item.docId));
+              try {
+                localStorage.removeItem("musicsaura_firestore_songs_cache");
+                localStorage.removeItem("musicsaura_firestore_cache_time");
+              } catch {}
               row.remove();
               showAlert(`🗑️ Deleted duplicate "${item.title}"`);
               loadUploadedSongs();
@@ -897,6 +918,10 @@ if (btnPurgeAllDups) {
           deleted++;
         }
       }
+      try {
+        localStorage.removeItem("musicsaura_firestore_songs_cache");
+        localStorage.removeItem("musicsaura_firestore_cache_time");
+      } catch {}
       showAlert(`🎉 Successfully purged ${deleted} duplicate songs from Firestore!`);
       closeDuplicatesModal();
       loadUploadedSongs();

@@ -17,12 +17,8 @@ audio.setAttribute("webkit-playsinline", "");
 
 window._musicsaura_audio = audio;
 
-// Predictive Next-Track & Instant-Touch Audio Preloader
-const prefetchAudio = new Audio();
-prefetchAudio.preload = "auto";
-prefetchAudio.volume = 0;
-const prewarmedUrls = new Set();
-let isPrefetching = false;
+// In-Memory Offline Blob URL Cache for 0ms synchronous background track transitions
+const offlineBlobUrlCache = new Map();
 let crossfadeInterval = null;
 let crossfadeActive = false;
 
@@ -474,15 +470,37 @@ function updateProgress() {
 
 export async function getOfflineAudioBlobUrl(link) {
   if (!link) return null;
+  const rawTarget = link.split("?")[0];
+  if (offlineBlobUrlCache.has(rawTarget)) {
+    return offlineBlobUrlCache.get(rawTarget);
+  }
+  if (offlineBlobUrlCache.has(link)) {
+    return offlineBlobUrlCache.get(link);
+  }
   try {
     const blob = await getTrackBlobFromStorage(link);
     if (blob && blob.size > 10240) {
-      return URL.createObjectURL(blob);
+      const bUrl = URL.createObjectURL(blob);
+      offlineBlobUrlCache.set(rawTarget, bUrl);
+      offlineBlobUrlCache.set(link, bUrl);
+      return bUrl;
     }
   } catch (e) {
     console.warn("[Player] Offline blob check error:", e);
   }
   return null;
+}
+
+function prewarmNextSongOfflineBlob() {
+  if (!playlist || playlist.length <= 1) return;
+  const nextIdx = (currentIndex + 1) % playlist.length;
+  const nextSong = playlist[nextIdx];
+  if (nextSong && nextSong.link) {
+    const rawTarget = nextSong.link.split("?")[0];
+    if (!offlineBlobUrlCache.has(rawTarget) && !offlineBlobUrlCache.has(nextSong.link)) {
+      getOfflineAudioBlobUrl(nextSong.link).catch(() => {});
+    }
+  }
 }
 
 function isSongStoredOffline(song) {
@@ -494,41 +512,6 @@ function isSongStoredOffline(song) {
   } catch {
     return false;
   }
-}
-
-// Helper used by ended handler to continue playback if prefetchAudio is already loaded
-function preloadNextOnEnded() {
-  try {
-    if (!preloadCheckReady()) return false;
-    const nextSrc = prefetchAudio.src;
-    if (!nextSrc) return false;
-    // If prefetchAudio is playing or at least loaded, swap immediately
-    if (!preflightPaused(preloaderStatus())) return false;
-    // Fallback: if prefetchAudio has buffered data, perform swap
-    if (prefetchAudio.buffered && prefetchAudio.buffered.length > 0) {
-      const wasPlaying = !audio.paused;
-      audio.pause();
-      audio.src = prefetchAudio.src;
-      audio.load();
-      audio.volume = masterVolume;
-      if (wasPlaying) audio.play().catch(() => {});
-      return true;
-    }
-  } catch (e) {}
-  return false;
-}
-
-function preloadCheckReady() {
-  return prefetchAudio && prefetchAudio.src && prefetchAudio.src.length > 0;
-}
-
-function preloaderStatus() {
-  try { return { paused: prefetchAudio.paused, currentTime: prefetchAudio.currentTime || 0, readyState: prefetchAudio.readyState || 0 }; } catch { return null; }
-}
-
-function preflightPaused(st) {
-  if (!st) return false;
-  return st.readyState >= 3 || !st.paused || st.currentTime > 0;
 }
 
 // ─── SLOW NETWORK WATCHDOG & STALL AUTO-RECOVERY ──────────────────
@@ -597,6 +580,7 @@ audio.addEventListener("canplaythrough", () => {
 });
 
 audio.addEventListener("playing", () => {
+  advancingTrack = false;
   isBuffering = false;
   clearStallWatchdog();
   userPaused = false;
@@ -607,6 +591,7 @@ audio.addEventListener("playing", () => {
 });
 
 audio.addEventListener("pause", () => {
+  if (userPaused) advancingTrack = false;
   isBuffering = false;
   clearStallWatchdog();
   capturePlaySeconds();
@@ -655,14 +640,12 @@ audio.addEventListener("ended", () => {
     audio.play().catch(() => {});
     advancingTrack = false;
   } else {
-    // Advance exactly once. The old prefetch path played a second audio element
-    // concurrently and could advance twice at the track boundary.
-    prefetchAudio.pause();
     player.next(true);
   }
 });
 
 audio.addEventListener("error", () => {
+  advancingTrack = false;
   console.warn("[Player] Audio node error:", audio.error);
   isBuffering = false;
   clearStallWatchdog();
@@ -714,6 +697,7 @@ export const player = {
       playlist = [...songs];
       currentIndex = startIndex;
     }
+    prewarmNextSongOfflineBlob();
   },
 
   prefetchAudioStream(link) {
@@ -777,10 +761,9 @@ export const player = {
   playSong(song, playlistContext = null, index = null) {
     if (!song || !song.link) return;
 
-    // 1. Immediately update playlist state
+    unlockAudioContext();
+
     const requestGeneration = ++playbackGeneration;
-    audio.pause();
-    audio.removeAttribute("src");
     currentSong = song;
     if (playlistContext) {
       if (index !== null) {
@@ -791,41 +774,75 @@ export const player = {
       }
     }
 
-    // 2. Prioritize instant offline playback if song is in offline storage
+    // Pre-warm the next song in the playlist for 0ms transition
+    prewarmNextSongOfflineBlob();
+
     const cleanUrl = normalizeUrl(song.link);
-    const isOfflineCatalogueTrack = song.source === "offline";
+    const isOfflineCatalogueTrack = song.source === "offline" || isSongStoredOffline(song);
 
     if (isOfflineCatalogueTrack) {
+      const rawTarget = cleanUrl.split("?")[0];
+      const cachedBlobUrl = offlineBlobUrlCache.get(rawTarget) || offlineBlobUrlCache.get(cleanUrl) || offlineBlobUrlCache.get(song.link);
+
+      if (cachedBlobUrl) {
+        if (audio.src !== cachedBlobUrl) {
+          audio.src = cachedBlobUrl;
+        }
+        audio.playbackRate = playbackRate;
+        audio.volume = masterVolume;
+        userPaused = false;
+        try {
+          const p = audio.play();
+          if (p !== undefined) p.catch((e) => console.warn("Blob play error:", e));
+        } catch (e) {}
+
+        updateMediaSession(song);
+        updateUI();
+        flushStatsToFirebase().catch(() => {});
+        hasRecordedStat    = false;
+        accumulatedPlaySec = 0;
+        playSessionStart   = Date.now();
+        return;
+      }
+
+      // If not yet in memory cache, fetch from IndexedDB without tearing down audio element
       getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
-        if (blobUrl && requestGeneration === playbackGeneration && currentSong === song) {
-          audio.removeAttribute("crossOrigin");
+        if (requestGeneration !== playbackGeneration || currentSong !== song) return;
+        if (blobUrl) {
           if (audio.src !== blobUrl) {
             audio.src = blobUrl;
-            audio.playbackRate = playbackRate;
-            audio.volume = masterVolume;
-            userPaused = false;
-            audio.play().catch(() => {});
           }
-        } else if (requestGeneration === playbackGeneration && currentSong === song) {
-          player.showToast(`❌ "${song.title || "This track"}" is unavailable offline.`, 3500);
+          audio.playbackRate = playbackRate;
+          audio.volume = masterVolume;
+          userPaused = false;
+          audio.play().catch((e) => console.warn("Deferred blob play error:", e));
+          updateUI();
+        } else {
+          // If offline blob fails or is missing, seamlessly fall back to network stream
+          const sep = cleanUrl.includes("?") ? "&" : "?";
+          const fallbackUrl = `${cleanUrl}${sep}cb=${Date.now()}`;
+          if (audio.src !== fallbackUrl) audio.src = fallbackUrl;
+          audio.playbackRate = playbackRate;
+          audio.volume = masterVolume;
+          userPaused = false;
+          audio.play().catch(() => {});
+          updateUI();
         }
       });
+
       updateMediaSession(song);
       updateUI();
+      flushStatsToFirebase().catch(() => {});
+      hasRecordedStat    = false;
+      accumulatedPlaySec = 0;
+      playSessionStart   = Date.now();
       return;
     }
 
-    // Set stream source initially with crossOrigin for EQ capability
-    // If the song is not stored offline, force a network fetch by adding a cache-busting param.
-    const shouldForceNetwork = true;
-    let networkUrl = cleanUrl;
-    if (shouldForceNetwork) {
-      const sep = cleanUrl.includes("?") ? "&" : "?";
-      networkUrl = `${cleanUrl}${sep}cb=${Date.now()}`;
-    }
-    // Replace a blob left by a previous offline track when this track is network-only.
-    if (requestGeneration === playbackGeneration) {
-      audio.crossOrigin = "anonymous";
+    // Network Stream Path (keeps crossOrigin="anonymous" permanent for EQ & visualizer)
+    const sep = cleanUrl.includes("?") ? "&" : "?";
+    const networkUrl = `${cleanUrl}${sep}cb=${Date.now()}`;
+    if (audio.src !== networkUrl) {
       audio.src = networkUrl;
     }
 
@@ -833,7 +850,7 @@ export const player = {
     audio.volume = masterVolume;
     userPaused = false;
 
-    // 3. Direct synchronous play call (keeps mobile browser background audio permission active)
+    // Direct synchronous play call preserves mobile browser background audio permission
     try {
       const playPromise = audio.play();
       if (playPromise !== undefined) {
@@ -847,11 +864,9 @@ export const player = {
       updateUI();
     }
 
-    // 4. Instant UI & MediaSession updates
     updateMediaSession(song);
     updateUI();
 
-    // 6. Non-blocking stats recording
     flushStatsToFirebase().catch(() => {});
     hasRecordedStat    = false;
     accumulatedPlaySec = 0;
@@ -859,6 +874,7 @@ export const player = {
   },
 
   play() {
+    unlockAudioContext();
     if (!currentSong && playlist.length > 0) {
       return player.playSong(playlist[currentIndex]);
     }
@@ -892,6 +908,7 @@ export const player = {
 
     if (repeatMode === "off" && currentIndex >= playlist.length - 1 && isAuto) {
       player.pause();
+      advancingTrack = false;
       return;
     }
 
@@ -906,7 +923,7 @@ export const player = {
     }
 
     player.playSong(playlist[currentIndex]);
-    advancingTrack = false;
+    // advancingTrack remains true until new track fires "playing" or "error", preventing double-advance collision
   },
 
   prev() {

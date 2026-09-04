@@ -1144,21 +1144,51 @@ async function loadCommunityUploads() {
           if (!confirm(`Are you sure you want to permanently delete "${song.title}" from MusicsAura?`)) return;
 
           try {
+            // 1. Delete this specific doc from Firestore 'songs'
             await deleteDoc(doc(db, "songs", songId));
 
-            // AUTO GITHUB DELETE: Remove from jsons/{genre}.json in GitHub repository
+            // 2. Delete any matching duplicate documents in Firestore with the same link
+            if (song.link) {
+              try {
+                const qSnap = await getDocs(query(collection(db, "songs"), where("link", "==", song.link)));
+                const deletes = [];
+                qSnap.forEach((d) => {
+                  if (d.id !== songId) deletes.push(deleteDoc(doc(db, "songs", d.id)));
+                });
+                if (deletes.length > 0) await Promise.all(deletes);
+              } catch (e) {
+                console.warn("Duplicate Firestore doc cleanup notice:", e);
+              }
+            }
+
+            // 3. Add to 'deleted_songs' blacklist so it remains removed everywhere
+            if (song.link) {
+              try {
+                await addDoc(collection(db, "deleted_songs"), {
+                  link: song.link,
+                  title: song.title || "Deleted Song",
+                  deletedAt: serverTimestamp()
+                });
+              } catch (e) {
+                console.warn("Blacklist notice:", e);
+              }
+            }
+
+            // 4. AUTO GITHUB DELETE: Remove from jsons/{genre}.json in GitHub repository
             try {
               await deleteSongFromGitHub(song.genre, song.link, song.title);
             } catch {}
 
-            // Clean from local uploads buffer
+            // 5. Invalidate local Firestore cache so it disappears immediately from main catalogue
             try {
+              localStorage.removeItem("musicsaura_firestore_songs_cache");
+              localStorage.removeItem("musicsaura_firestore_cache_time");
               const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
               const filtered = local.filter((s) => (s.id !== songId && s.link !== song.link));
               localStorage.setItem("musicsaura_local_uploads", JSON.stringify(filtered));
             } catch {}
 
-            showAlert(`🗑️ Deleted "${song.title}" from MusicsAura and GitHub!`);
+            showAlert(`🗑️ Deleted "${song.title}" from MusicsAura, Firestore & GitHub!`);
             loadCommunityUploads();
           } catch (err) {
             showAlert("Could not delete track: " + err.message, true);
