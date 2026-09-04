@@ -10,8 +10,8 @@ function getGitHubToken() {
   const custom = localStorage.getItem("musicsaura_github_token");
   if (custom && custom.trim().length > 10) return custom.trim();
   // Embedded fallback classic token provided by repository owner
-  const p1 = "ghp_62kCKZ07gG2m6g8g";
-  const p2 = "mSefRR6v2QK1QG1qe60I";
+  const p1 = "ghp_jDHyTZ5Gx98fMQUT";
+  const p2 = "jSakpefZfoCq2i0TPHev";
   return p1 + p2;
 }
 
