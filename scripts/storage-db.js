@@ -67,6 +67,29 @@ export function getDB() {
   return dbPromise;
 }
 
+// ─── 6. LIST ALL PERSISTED TRACKS FROM INDEXEDDB ─────────────────
+export async function getAllPersistedTracks() {
+  try {
+    const db = await getDB();
+    if (!db) return [];
+    return await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      } catch (e) {
+        console.warn('[StorageDB] getAllPersistedTracks notice:', e);
+        resolve([]);
+      }
+    });
+  } catch (err) {
+    console.warn('[StorageDB] getAllPersistedTracks error:', err);
+    return [];
+  }
+}
+
 // ─── 3. SAVE TRACK TO DUAL-LAYER STORAGE (IndexedDB + Cache API) ───
 export async function saveTrackToStorage(song, blob) {
   if (!song || !song.link || !blob) return false;
