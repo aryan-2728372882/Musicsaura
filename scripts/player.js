@@ -720,8 +720,9 @@ audio.addEventListener("error", (e) => {
   isBuffering = false;
   clearStallWatchdog();
 
-  // 1. Check if offline cached blob exists before failing
-  getOfflineAudioBlobUrl(currentSong?.link || audio.src).then((blobUrl) => {
+  // Only an explicitly saved track may recover from offline storage.
+  // Normal network playback must never resurrect an old IndexedDB blob.
+  getOfflineAudioBlobUrl(isSongStoredOffline(currentSong) ? (currentSong?.link || audio.src) : null).then((blobUrl) => {
     if (blobUrl && audio.src !== blobUrl) {
       console.log("[Player] Recovering using offline cached track");
       audio.removeAttribute("crossOrigin");
@@ -930,7 +931,8 @@ export const player = {
       const sep = cleanUrl.includes("?") ? "&" : "?";
       networkUrl = `${cleanUrl}${sep}cb=${Date.now()}`;
     }
-    if (!audio.src || (audio.src !== networkUrl && !audio.src.startsWith("blob:"))) {
+    // Replace a blob left by a previous offline track when this track is network-only.
+    if (!audio.src || audio.src !== networkUrl || (isOffline && !audio.src.startsWith("blob:"))) {
       audio.crossOrigin = "anonymous";
       audio.src = networkUrl;
     }
