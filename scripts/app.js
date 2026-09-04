@@ -1,7 +1,7 @@
 // scripts/app.js — MusicsAura 3.0 Core App Controller
 import {
   auth, db, isAdmin, onAuthStateChanged,
-  collection, getDocs, query, orderBy, limit, onSnapshot, deleteDoc, doc
+  collection, getDocs, query, orderBy, limit, onSnapshot, deleteDoc, doc, updateDoc
 } from "./firebase-config.js";
 import { player, formatTime } from "./player.js";
 import {
@@ -516,8 +516,10 @@ async function loadDeletedSongLinks() {
       snapshot.forEach((entry) => {
         const data = entry.data();
         const link = (data?.link || "").split("?")[0].toLowerCase().trim();
-        if (data?.catalogManaged === true && link && !jsonLinks.has(link)) {
+        if (isDeletedSong(data) || (data?.catalogManaged === true && link && !jsonLinks.has(link))) {
           removals.push(deleteDoc(doc(db, "songs", entry.id)));
+        } else if (link && jsonLinks.has(link) && data?.catalogManaged !== true) {
+          removals.push(updateDoc(doc(db, "songs", entry.id), { catalogManaged: true }));
         }
       });
       if (removals.length) {
