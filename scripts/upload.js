@@ -81,6 +81,10 @@ let batchTracks             = []; // Array of { file, title, artist, artwork, ge
 const existingLinks         = new Set();
 const existingTitles        = new Set();
 const existingSongsRegistry = [];
+const deletedLinks          = new Set();
+const deletedTitles         = new Set();
+const activeCatalogLinks    = new Set();
+const activeCatalogTitles   = new Set();
 
 function normalizeKey(str) {
   return (str || "")
@@ -104,6 +108,16 @@ function normalizeUrlKey(url) {
 
 async function loadExistingRegistry() {
   try {
+    // A deleted song may be uploaded again as a replacement.
+    try {
+      const deletedSnap = await getDocs(collection(db, "deleted_songs"));
+      deletedSnap.forEach((docSnap) => {
+        const deleted = docSnap.data();
+        if (deleted?.link) deletedLinks.add(normalizeUrlKey(deleted.link));
+        if (deleted?.title) deletedTitles.add(normalizeKey(deleted.title));
+      });
+    } catch {}
+
     // 1. Load static JSON catalogues
     await Promise.all(
       Object.entries(GENRE_JSON_FILES).map(async ([genre, path]) => {
@@ -114,8 +128,10 @@ async function loadExistingRegistry() {
             if (Array.isArray(data)) {
               existingSongsRegistry.push(...data);
               data.forEach((s) => {
-                if (s.link) existingLinks.add(normalizeUrlKey(s.link));
-                if (s.title) existingTitles.add(normalizeKey(s.title));
+                if (s.link && !deletedLinks.has(normalizeUrlKey(s.link))) existingLinks.add(normalizeUrlKey(s.link));
+                if (s.title && !deletedTitles.has(normalizeKey(s.title))) existingTitles.add(normalizeKey(s.title));
+                if (s.link) activeCatalogLinks.add(normalizeUrlKey(s.link));
+                if (s.title) activeCatalogTitles.add(normalizeKey(s.title));
               });
             }
           }
@@ -128,8 +144,11 @@ async function loadExistingRegistry() {
       const snap = await getDocs(query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(15)));
       snap.forEach((docSnap) => {
         const s = docSnap.data();
-        if (s.link) existingLinks.add(normalizeUrlKey(s.link));
-        if (s.title) existingTitles.add(normalizeKey(s.title));
+        const linkKey = normalizeUrlKey(s.link);
+        const titleKey = normalizeKey(s.title);
+        const isCurrentCatalogSong = activeCatalogLinks.has(linkKey) || activeCatalogTitles.has(titleKey);
+        if (s.link && !deletedLinks.has(linkKey) && isCurrentCatalogSong) existingLinks.add(linkKey);
+        if (s.title && !deletedTitles.has(titleKey) && isCurrentCatalogSong) existingTitles.add(titleKey);
       });
     } catch {}
 
@@ -137,8 +156,11 @@ async function loadExistingRegistry() {
     try {
       const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
       local.forEach((s) => {
-        if (s.link) existingLinks.add(normalizeUrlKey(s.link));
-        if (s.title) existingTitles.add(normalizeKey(s.title));
+        const linkKey = normalizeUrlKey(s.link);
+        const titleKey = normalizeKey(s.title);
+        const isCurrentCatalogSong = activeCatalogLinks.has(linkKey) || activeCatalogTitles.has(titleKey);
+        if (s.link && !deletedLinks.has(linkKey) && isCurrentCatalogSong) existingLinks.add(linkKey);
+        if (s.title && !deletedTitles.has(titleKey) && isCurrentCatalogSong) existingTitles.add(titleKey);
       });
     } catch {}
 
