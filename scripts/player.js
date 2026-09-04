@@ -722,7 +722,7 @@ audio.addEventListener("error", (e) => {
 
   // Only an explicitly saved track may recover from offline storage.
   // Normal network playback must never resurrect an old IndexedDB blob.
-  getOfflineAudioBlobUrl(isSongStoredOffline(currentSong) ? (currentSong?.link || audio.src) : null).then((blobUrl) => {
+  getOfflineAudioBlobUrl(!navigator.onLine && isSongStoredOffline(currentSong) ? (currentSong?.link || audio.src) : null).then((blobUrl) => {
     if (blobUrl && audio.src !== blobUrl) {
       console.log("[Player] Recovering using offline cached track");
       audio.removeAttribute("crossOrigin");
@@ -903,7 +903,7 @@ export const player = {
     const cleanUrl = normalizeUrl(song.link);
     const isOffline = isSongStoredOffline(song);
 
-    if (isOffline) {
+    if (isOffline && !navigator.onLine) {
       getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
         if (blobUrl) {
           audio.removeAttribute("crossOrigin");
@@ -915,10 +915,6 @@ export const player = {
             audio.play().catch(() => {});
           }
 
-          // Automatically check if the server replaced the audio file and auto-update in background!
-          if (navigator.onLine) {
-            player.checkAndRefreshStaleOfflineTrack(song);
-          }
         }
       });
     }
