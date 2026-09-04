@@ -5,7 +5,7 @@ import {
   auth, db,
   doc, updateDoc, increment, serverTimestamp
 } from "./firebase-config.js";
-import { getTrackBlobFromStorage } from "./storage-db.js";
+import { getTrackBlobFromStorage, saveTrackToStorage } from "./storage-db.js";
 
 // ─── UNIFIED HIGH-PERFORMANCE AUDIO ENGINE ─────────────────────────
 // Single persistent Audio element ensures 100% Android background audio retention & instant playback
@@ -730,6 +730,60 @@ export const player = {
     // Disabled concurrent prefetch to prevent socket-throttling on File Garden CDN
   },
 
+  async checkAndRefreshStaleOfflineTrack(song) {
+    if (!song || !song.link || !navigator.onLine) return;
+    const cleanUrl = normalizeUrl(song.link).split("?")[0];
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const headRes = await fetch(cleanUrl, {
+        method: "HEAD",
+        cache: "no-cache",
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (!headRes.ok) return;
+
+      const serverSize = parseInt(headRes.headers.get("content-length"), 10);
+      if (!serverSize || isNaN(serverSize)) return;
+
+      // Get current local cached blob size
+      const localBlob = await getTrackBlobFromStorage(song.link);
+      if (!localBlob) return;
+
+      // If file size on server changed by more than 1KB (song was replaced with remix or updated mix!)
+      if (Math.abs(serverSize - localBlob.size) > 1024) {
+        console.log(`[Player] Server song updated! Local size: ${localBlob.size}B, Server size: ${serverSize}B. Auto-refreshing...`);
+        player.showToast(`🔄 Updating to latest version of "${song.title}"...`, 3000);
+
+        const getRes = await fetch(cleanUrl, { cache: "reload" });
+        if (getRes.ok) {
+          const freshBlob = await getRes.blob();
+          if (freshBlob && freshBlob.size > 10240) {
+            await saveTrackToStorage(song, freshBlob);
+            const newBlobUrl = URL.createObjectURL(freshBlob);
+
+            // Hot-swap audio if this song is actively playing
+            if (currentSong && (currentSong.id || currentSong.link) === (song.id || song.link)) {
+              const curTime = audio.currentTime || 0;
+              const wasPlaying = !audio.paused;
+              audio.src = newBlobUrl;
+              if (curTime > 0 && curTime < (audio.duration || 9999)) {
+                audio.currentTime = curTime;
+              }
+              if (wasPlaying) audio.play().catch(() => {});
+            }
+
+            player.showToast(`✨ "${song.title}" updated to latest version!`, 3500);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[Player] Freshness check notice:", err);
+    }
+  },
+
   playSong(song, playlistContext = null, index = null) {
     if (!song || !song.link) return;
 
@@ -758,6 +812,11 @@ export const player = {
             audio.volume = masterVolume;
             userPaused = false;
             audio.play().catch(() => {});
+          }
+
+          // Automatically check if the server replaced the audio file and auto-update in background!
+          if (navigator.onLine) {
+            player.checkAndRefreshStaleOfflineTrack(song);
           }
         }
       });
