@@ -475,14 +475,12 @@ function getLocalUploads() {
 const BLOCKED_SONG_LINKS = new Set([
   "https://file.garden/argaqiyidd0tulqv/hindi/mujhe%20tumse%20mohabbat%20hai.mp3"
 ]);
-const BLOCKED_SONG_TITLES = new Set(["mujhe tumse mohabbat hai"]);
 let deletedSongLinks = new Set(BLOCKED_SONG_LINKS);
 
 function isDeletedSong(song) {
   if (!song) return true;
   const link = (song.link || "").split("?")[0].toLowerCase().trim();
-  const title = (song.title || "").toLowerCase().trim();
-  return deletedSongLinks.has(link) || BLOCKED_SONG_LINKS.has(link) || BLOCKED_SONG_TITLES.has(title);
+  return deletedSongLinks.has(link) || BLOCKED_SONG_LINKS.has(link);
 }
 
 async function loadDeletedSongLinks() {
