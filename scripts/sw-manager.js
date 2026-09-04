@@ -11,10 +11,16 @@
 
   if (!("serviceWorker" in navigator) || !isSecureContext) return;
 
-  const SW_URL = "/service-worker.js?build=74";
+  const SW_URL = "/service-worker.js?build=75";
+  let reloadedForControllerChange = false;
 
   window.addEventListener("load", async () => {
     try {
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (reloadedForControllerChange) return;
+        reloadedForControllerChange = true;
+        window.location.reload();
+      });
       const reg = await navigator.serviceWorker.register(SW_URL);
       await reg.update();
       console.log("[SW] Registered successfully:", reg.scope);
