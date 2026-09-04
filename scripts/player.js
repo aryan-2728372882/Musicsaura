@@ -923,9 +923,16 @@ export const player = {
     }
 
     // Set stream source initially with crossOrigin for EQ capability
-    if (!audio.src || (audio.src !== cleanUrl && !audio.src.startsWith("blob:"))) {
+    // If the song is not stored offline, force a network fetch by adding a cache-busting param.
+    const shouldForceNetwork = !isOffline;
+    let networkUrl = cleanUrl;
+    if (shouldForceNetwork) {
+      const sep = cleanUrl.includes("?") ? "&" : "?";
+      networkUrl = `${cleanUrl}${sep}cb=${Date.now()}`;
+    }
+    if (!audio.src || (audio.src !== networkUrl && !audio.src.startsWith("blob:"))) {
       audio.crossOrigin = "anonymous";
-      audio.src = cleanUrl;
+      audio.src = networkUrl;
     }
 
     audio.playbackRate = playbackRate;
