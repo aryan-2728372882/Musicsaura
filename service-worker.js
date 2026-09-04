@@ -86,19 +86,25 @@ self.addEventListener("fetch", (event) => {
           }
 
           if (cached) {
-            // Attach CORS and Accept-Ranges headers to cached audio response
-            const headers = new Headers(cached.headers);
-            headers.set("Access-Control-Allow-Origin", "*");
-            headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-            headers.set("Accept-Ranges", "bytes");
-            if (!headers.get("Content-Type")) {
-              headers.set("Content-Type", "audio/mpeg");
+            // Only serve cached audio that was explicitly saved for offline use.
+            // Saved audio entries are marked with the `X-Offline-Saved` header by the app.
+            const savedMarker = cached.headers && cached.headers.get && cached.headers.get('X-Offline-Saved');
+            if (savedMarker) {
+              // Attach CORS and Accept-Ranges headers to cached audio response
+              const headers = new Headers(cached.headers);
+              headers.set("Access-Control-Allow-Origin", "*");
+              headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+              headers.set("Accept-Ranges", "bytes");
+              if (!headers.get("Content-Type")) {
+                headers.set("Content-Type", "audio/mpeg");
+              }
+              return new Response(cached.body, {
+                status: cached.status || 200,
+                statusText: cached.statusText || "OK",
+                headers
+              });
             }
-            return new Response(cached.body, {
-              status: cached.status || 200,
-              statusText: cached.statusText || "OK",
-              headers
-            });
+            // If cached entry exists but wasn't explicitly saved, fall through to network
           }
         } catch (e) {
           console.warn("[SW] Cache audio lookup notice:", e);

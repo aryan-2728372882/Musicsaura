@@ -115,7 +115,9 @@ export async function saveTrackToStorage(song, blob) {
           "Content-Type": "audio/mpeg",
           "Content-Length": blob.size.toString(),
           "Access-Control-Allow-Origin": "*",
-          "Accept-Ranges": "bytes"
+          "Accept-Ranges": "bytes",
+          // Marker used by the service worker to identify explicitly saved offline files
+          "X-Offline-Saved": "1"
         }
       });
       await cache.put(song.link, audioResponse.clone());
@@ -180,11 +182,15 @@ export async function getTrackBlobFromStorage(idOrLink) {
         ? (await cache.match(idOrLink))
         : (await cache.match(idOrLink, { ignoreSearch: true })) || (await cache.match(rawTarget, { ignoreSearch: true }));
       if (cachedRes && (cachedRes.ok || cachedRes.status === 200)) {
-        const blob = await cachedRes.blob();
-        if (blob && blob.size > 10240) {
-          // Re-hydrate IndexedDB automatically so it stays permanently!
-          rehydrateIndexedDB(idOrLink, blob);
-          return blob;
+        // Only use cache entries that were explicitly saved for offline use
+        const savedMarker = cachedRes.headers && cachedRes.headers.get && cachedRes.headers.get('X-Offline-Saved');
+        if (savedMarker) {
+          const blob = await cachedRes.blob();
+          if (blob && blob.size > 10240) {
+            // Re-hydrate IndexedDB automatically so it stays permanently!
+            rehydrateIndexedDB(idOrLink, blob);
+            return blob;
+          }
         }
       }
     }
