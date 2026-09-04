@@ -11,11 +11,12 @@
 
   if (!("serviceWorker" in navigator) || !isSecureContext) return;
 
-  const SW_URL = "/service-worker.js";
+  const SW_URL = "/service-worker.js?build=71";
 
   window.addEventListener("load", async () => {
     try {
       const reg = await navigator.serviceWorker.register(SW_URL);
+      await reg.update();
       console.log("[SW] Registered successfully:", reg.scope);
 
       // Check for updates on load and periodically

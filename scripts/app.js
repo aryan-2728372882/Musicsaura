@@ -142,6 +142,31 @@ syncOfflineMetadataWithIndexedDB(OFFLINE_STORAGE_KEY).then((restored) => {
   }
 });
 
+// Remove only downloaded records whose remote file was explicitly deleted.
+// The catalogue entry remains visible; it simply cannot resurrect old audio.
+async function purgeDeletedOfflineTracks() {
+  const offlineSongs = getOfflineSongs();
+  const deletedIds = new Set();
+  for (const song of offlineSongs) {
+    if (!song?.link || !song.link.includes("file.garden")) continue;
+    try {
+      const response = await fetch(song.link, { method: "HEAD", cache: "no-store" });
+      if (response.status === 404 || response.status === 410) {
+        const id = song.id || song.link;
+        await deleteTrackFromStorage(id);
+        deletedIds.add(id);
+      }
+    } catch {}
+  }
+  if (deletedIds.size > 0) {
+    const remaining = getOfflineSongs().filter((song) => !deletedIds.has(song.id || song.link));
+    localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(remaining));
+    updateDownloadBadge();
+  }
+}
+
+purgeDeletedOfflineTracks();
+
 export async function toggleOfflineStorage(song) {
   if (!song || !song.link) return;
   const songId = song.id || song.link;
