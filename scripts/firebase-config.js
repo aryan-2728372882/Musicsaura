@@ -1,8 +1,9 @@
-// scripts/firebase-config.js — MusicsAura 3.0
-import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+// scripts/firebase-config.js — MusicsAura 3.0 (Offline-Resilient Local Module Architecture)
+import { initializeApp } from "./firebase/firebase-app.js";
 import {
   getAuth,
   GoogleAuthProvider,
+  signInWithPopup,
   onAuthStateChanged,
   signOut,
   deleteUser,
@@ -11,7 +12,7 @@ import {
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
   updateProfile
-} from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+} from "./firebase/firebase-auth.js";
 import {
   getFirestore,
   doc,
@@ -30,7 +31,7 @@ import {
   getDocs,
   addDoc,
   writeBatch
-} from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+} from "./firebase/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyClIhXAaTVmlqhEPxU49C9w9fDkUag-1eQ",
@@ -53,7 +54,7 @@ export const provider = new GoogleAuthProvider();
 
 export {
   // Auth
-  onAuthStateChanged, signOut, deleteUser, reauthenticateWithPopup,
+  signInWithPopup, onAuthStateChanged, signOut, deleteUser, reauthenticateWithPopup,
   createUserWithEmailAndPassword, signInWithEmailAndPassword,
   sendPasswordResetEmail, updateProfile,
   // Firestore (Metadata only: song names, links, artists, genres, users)

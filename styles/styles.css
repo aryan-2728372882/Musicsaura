@@ -4,6 +4,31 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600;700&display=swap');
 
+/* ── OFFLINE MATERIAL ICONS (100% AIRPLANE / OFFLINE IMMUNITY) ── */
+@font-face {
+  font-family: 'Material Icons';
+  font-style: normal;
+  font-weight: 400;
+  src: url('../assets/fonts/material-icons.ttf') format('truetype'),
+       url('https://fonts.gstatic.com/s/materialicons/v145/flUhRq6tzZclQEJ-Vdg-IuiaDsNZ.ttf') format('truetype');
+  font-display: swap;
+}
+
+.material-icons {
+  font-family: 'Material Icons' !important;
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+}
+
 /* ── RESET & BASE VARIABLES ── */
 *, *::before, *::after {
   margin: 0;

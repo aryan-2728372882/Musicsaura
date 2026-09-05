@@ -69,12 +69,11 @@
 <script type="module">
   import {
     auth, db, provider, isAdmin,
-    onAuthStateChanged,
+    onAuthStateChanged, signInWithPopup,
     signInWithEmailAndPassword, createUserWithEmailAndPassword,
     sendPasswordResetEmail, updateProfile,
     doc, setDoc, getDoc, serverTimestamp
   } from "./scripts/firebase-config.js";
-  import { signInWithPopup } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
   const errorBox    = document.getElementById("auth-error");
   const successBox  = document.getElementById("auth-success");
