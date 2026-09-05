@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v79";
+const APP_SHELL_CACHE = "musicsaura-shell-v80";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
