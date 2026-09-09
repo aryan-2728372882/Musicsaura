@@ -255,10 +255,7 @@ async function processDownloadQueue() {
           const res = await fetch(downloadUrl, {
             signal: controller.signal,
             mode: "cors",
-            cache: "no-store",
-            headers: {
-              "X-Download-Mode": "1"
-            }
+            cache: "no-store"
           });
           clearTimeout(timeoutId);
 
