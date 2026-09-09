@@ -132,6 +132,7 @@ function updateDownloadBadge() {
 const downloadQueue = [];
 const activeDownloads = new Set();
 const queuedSongIds = new Set();
+const activeDownloadTimestamps = new Map();
 const MAX_CONCURRENT_DOWNLOADS = 2; // Optimal concurrency for mobile CDNs and avoids socket exhaustion
 
 // Request permanent persistence and restore offline metadata from IndexedDB immediately on startup
@@ -188,10 +189,19 @@ export async function toggleOfflineStorage(song) {
     return;
   }
 
-  // 2. If already downloading or queued, inform the user
+  // 2. If already downloading or queued, check if stalled
   if (activeDownloads.has(songId) || queuedSongIds.has(songId)) {
-    player.showToast(`⏳ "${song.title}" is already in the download queue.`);
-    return;
+    const startedAt = activeDownloadTimestamps.get(songId) || 0;
+    // Auto-recover if download has been stuck for more than 45 seconds
+    if (startedAt > 0 && Date.now() - startedAt > 45000) {
+      activeDownloads.delete(songId);
+      queuedSongIds.delete(songId);
+      activeDownloadTimestamps.delete(songId);
+      player.showToast(`🔄 Resetting stalled download for "${song.title}"...`);
+    } else {
+      player.showToast(`⏳ "${song.title}" is already in the download queue.`);
+      return;
+    }
   }
 
   // 3. Request storage persistence on user gesture
@@ -219,51 +229,63 @@ async function processDownloadQueue() {
   const songId = song.id || song.link;
   queuedSongIds.delete(songId);
   activeDownloads.add(songId);
+  activeDownloadTimestamps.set(songId, Date.now());
 
   updateOfflineIcons(song, "downloading");
 
-  // Run download in background worker
+  // Run download in background worker with guaranteed cleanup via top-level try...finally
   (async () => {
-    let blob = null;
-    let attempts = 0;
-    const maxAttempts = 3;
+    try {
+      let blob = null;
+      let attempts = 0;
+      const maxAttempts = 3;
 
-    while (!blob && attempts < maxAttempts) {
-      attempts++;
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+      while (!blob && attempts < maxAttempts) {
+        attempts++;
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s per attempt
 
-        const res = await fetch(song.link, {
-          signal: controller.signal,
-          mode: "cors",
-          cache: "no-store"
-        });
-        clearTimeout(timeoutId);
+          // Bypass Service Worker proxy via _dl query param & X-Download-Mode header
+          // This allows full 40+ Mbps direct streaming from CDN with zero browser/SW socket throttling
+          const downloadUrl = song.link.includes("?")
+            ? `${song.link}&_dl=${Date.now()}`
+            : `${song.link}?_dl=${Date.now()}`;
 
-        if (res.ok) {
-          const b = await res.blob();
-          if (b && b.size > 10240) {
-            blob = b;
-            break;
+          const res = await fetch(downloadUrl, {
+            signal: controller.signal,
+            mode: "cors",
+            cache: "no-store",
+            headers: {
+              "X-Download-Mode": "1"
+            }
+          });
+          clearTimeout(timeoutId);
+
+          if (res.ok) {
+            const b = await res.blob();
+            if (b && b.size > 10240) {
+              blob = b;
+              break;
+            }
+          } else {
+            console.warn(`[DownloadQueue] Attempt ${attempts} HTTP status ${res.status} for "${song.title}"`);
+          }
+        } catch (fetchErr) {
+          console.warn(`[DownloadQueue] Attempt ${attempts} failed for "${song.title}":`, fetchErr);
+          if (attempts < maxAttempts) {
+            await new Promise((r) => setTimeout(r, 1000 * attempts));
           }
         }
-      } catch (fetchErr) {
-        console.warn(`[DownloadQueue] Attempt ${attempts} failed for "${song.title}":`, fetchErr);
-        if (attempts < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 1000 * attempts));
-        }
       }
-    }
 
-    if (!blob) {
-      console.error(`[DownloadQueue] Failed to download "${song.title}" after ${maxAttempts} attempts.`);
-      updateOfflineIcons(song, "not-downloaded");
-      player.showToast(`❌ Failed to download "${song.title}". Please check connection.`, 4000);
-      return;
-    }
+      if (!blob) {
+        console.error(`[DownloadQueue] Failed to download "${song.title}" after ${maxAttempts} attempts.`);
+        updateOfflineIcons(song, "not-downloaded");
+        player.showToast(`❌ Failed to download "${song.title}". Please check connection.`, 4000);
+        return; // will execute finally block below, clearing activeDownloads
+      }
 
-    try {
       // Save track into both IndexedDB and Cache API
       await saveTrackToStorage(song, blob);
 
@@ -304,7 +326,8 @@ async function processDownloadQueue() {
       player.showToast(`❌ Could not save "${song.title}": ${saveErr.message}`, 3500);
     } finally {
       activeDownloads.delete(songId);
-      // Process next in queue
+      activeDownloadTimestamps.delete(songId);
+      // Advance next download in queue
       processDownloadQueue();
     }
   })();

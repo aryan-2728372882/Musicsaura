@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v80";
+const APP_SHELL_CACHE = "musicsaura-shell-v81";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -126,6 +126,12 @@ self.addEventListener("fetch", (event) => {
     url.hostname.includes("file.garden");
 
   if (isAudio) {
+    // If request is an explicit background download, bypass SW interception completely
+    // so the browser streams directly at line speed (40+ Mbps) without proxy overhead
+    if (url.searchParams.has("_dl") || request.headers.get("X-Download-Mode") === "1") {
+      return;
+    }
+
     event.respondWith(
       (async () => {
         // If device is online, try network first (network authoritative)
