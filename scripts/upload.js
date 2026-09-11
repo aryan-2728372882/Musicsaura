@@ -5,7 +5,8 @@ import {
   auth,
   db,
   isAdmin,
-  collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp,
+  onAuthStateChanged,
+  collection, addDoc, getDocs, query, where, orderBy, limit, serverTimestamp,
   doc, deleteDoc, updateDoc, writeBatch
 } from "./firebase-config.js";
 import { commitSongsToGitHub, deleteSongFromGitHub } from "./github-sync.js";
@@ -1191,7 +1192,13 @@ async function loadCommunityUploads() {
             showAlert(`🗑️ Deleted "${song.title}" from MusicsAura, Firestore & GitHub!`);
             loadCommunityUploads();
           } catch (err) {
-            showAlert("Could not delete track: " + err.message, true);
+            console.error("Delete track error:", err);
+            const isPerm = err?.code === "permission-denied" || (err?.message && err.message.toLowerCase().includes("permission"));
+            if (isPerm) {
+              showAlert("🔒 Firestore Permission Denied: Update your Firestore rules in Firebase Console to allow update & delete on songs and deleted_songs.", true);
+            } else {
+              showAlert("Could not delete track: " + err.message, true);
+            }
           }
         });
       }
@@ -1226,6 +1233,7 @@ const btnEditAutoFetch    = document.getElementById("btn-edit-autofetch");
 const editTitle           = document.getElementById("edit-title");
 const editArtist          = document.getElementById("edit-artist");
 const editGenre           = document.getElementById("edit-genre");
+const editLink            = document.getElementById("edit-link");
 const closeEditModalBtn   = document.getElementById("close-edit-modal-btn");
 const btnCancelEdit       = document.getElementById("btn-cancel-edit");
 
@@ -1240,6 +1248,7 @@ function openEditModal(songId, song) {
   if (editArtist) editArtist.value = song.artist || "";
   if (editGenre) editGenre.value = (song.genre || "hindi").toLowerCase();
   if (editCoverUrl) editCoverUrl.value = song.thumbnail || "";
+  if (editLink) editLink.value = song.link || "";
   if (editCoverPreview) editCoverPreview.src = song.thumbnail || "assets/logo.png";
 
   editSongModal.classList.add("open");
@@ -1310,9 +1319,10 @@ if (editSongForm) {
     const artist = editArtist.value.trim() || "Various Artists";
     const genre = editGenre.value.toLowerCase();
     const thumbnail = editCoverUrl.value.trim() || "assets/logo.png";
+    const link = editLink ? editLink.value.trim() : (activeEditingSong?.link || "");
 
-    if (!songId || !title) {
-      alert("Please provide a title");
+    if (!songId || !title || !link) {
+      alert("Please provide title and audio stream link");
       return;
     }
 
@@ -1336,18 +1346,26 @@ if (editSongForm) {
         title,
         artist,
         genre,
+        link,
         thumbnail,
         keywords
       });
 
+      const oldLink = activeEditingSong?.link;
+      const oldGenre = (activeEditingSong?.genre || "hindi").toLowerCase();
+      const oldTitle = activeEditingSong?.title || title;
+
       // Update local storage buffer
       try {
+        localStorage.removeItem("musicsaura_firestore_songs_cache");
+        localStorage.removeItem("musicsaura_firestore_cache_time");
         const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
-        const found = local.find((s) => s.id === songId || s.link === activeEditingSong?.link);
+        const found = local.find((s) => s.id === songId || (oldLink && s.link === oldLink));
         if (found) {
           found.title = title;
           found.artist = artist;
           found.genre = genre;
+          found.link = link;
           found.thumbnail = thumbnail;
           found.keywords = keywords;
           localStorage.setItem("musicsaura_local_uploads", JSON.stringify(local));
@@ -1356,16 +1374,15 @@ if (editSongForm) {
 
       // AUTO GITHUB REPOSITORY SYNC: Commit updated song details to jsons/{genre}.json
       try {
-        const streamLink = activeEditingSong?.link;
-        if (streamLink) {
-          const oldGenre = (activeEditingSong.genre || "hindi").toLowerCase();
-          if (oldGenre !== genre) {
-            await deleteSongFromGitHub(oldGenre, streamLink, activeEditingSong.title);
+        if (oldLink) {
+          // If genre, stream link, or title changed, remove previous entry from old genre
+          if (oldGenre !== genre || oldLink !== link || oldTitle !== title) {
+            await deleteSongFromGitHub(oldGenre, oldLink, oldTitle);
           }
           await commitSongsToGitHub(genre, [{
             title,
             artist,
-            link: streamLink,
+            link,
             thumbnail,
             genre
           }]);
@@ -1375,9 +1392,9 @@ if (editSongForm) {
       }
 
       // Update duplicate registry
-      registerNewSong(title, activeEditingSong?.link);
+      registerNewSong(title, link);
 
-      showAlert(`🎉 Updated "${title}" details & artwork and synced to GitHub!`);
+      showAlert(`🎉 Updated "${title}" details, audio link & artwork and synced to GitHub!`);
       closeEditModal();
       loadCommunityUploads();
 
