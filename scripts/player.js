@@ -8,19 +8,27 @@ import {
 import { getTrackBlobFromStorage, saveTrackToStorage } from "./storage-db.js";
 
 // ─── UNIFIED HIGH-PERFORMANCE AUDIO ENGINE ─────────────────────────
-// Single persistent Audio element ensures 100% Android background audio retention & instant playback
-const audio = new Audio();
-audio.crossOrigin = "anonymous";
-audio.preload = "auto";
-audio.setAttribute("playsinline", "");
-audio.setAttribute("webkit-playsinline", "");
+// Dual-Deck Studio Architecture for 100% Android 14/15/16 Lockscreen Playback & True Equal-Power DJ Crossfade
+const deckA = new Audio();
+const deckB = new Audio();
 
-window._musicsaura_audio = audio;
+[deckA, deckB].forEach((d) => {
+  d.crossOrigin = "anonymous";
+  d.preload = "auto";
+  d.setAttribute("playsinline", "");
+  d.setAttribute("webkit-playsinline", "");
+});
+
+let activeDeck = deckA;
+let standbyDeck = deckB;
+let audio = activeDeck;
+window._musicsaura_audio = activeDeck;
+
+let isTransitioning = false;
+let crossfadeTimer = null;
 
 // In-Memory Offline Blob URL Cache for 0ms synchronous background track transitions
 const offlineBlobUrlCache = new Map();
-let crossfadeInterval = null;
-let crossfadeActive = false;
 
 // ─── DOM ELEMENT BINDINGS ──────────────────────────────────────────
 const titleEl         = document.getElementById("player-title");
@@ -72,7 +80,8 @@ let midFilter         = null; // 1000Hz Peaking
 let presenceFilter    = null; // 3500Hz Peaking
 let trebleFilter      = null; // 10000Hz Highshelf
 let analyserNode      = null;
-let sourceNode        = null;
+let sourceNodeA       = null;
+let sourceNodeB       = null;
 let wakeLock          = null;
 
 // Stats Tracking
@@ -184,12 +193,21 @@ function initAudioContext() {
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
 
-    if (!sourceNode) {
+    if (!sourceNodeA) {
       try {
-        sourceNode = audioCtx.createMediaElementSource(audio);
-        sourceNode.connect(subBassFilter);
+        sourceNodeA = audioCtx.createMediaElementSource(deckA);
+        sourceNodeA.connect(subBassFilter);
       } catch (err) {
-        console.warn("createMediaElementSource notice:", err);
+        console.warn("createMediaElementSource deckA notice:", err);
+      }
+    }
+
+    if (!sourceNodeB) {
+      try {
+        sourceNodeB = audioCtx.createMediaElementSource(deckB);
+        sourceNodeB.connect(subBassFilter);
+      } catch (err) {
+        console.warn("createMediaElementSource deckB notice:", err);
       }
     }
 
@@ -298,18 +316,18 @@ function updateMediaSession(song) {
     console.warn("MediaMetadata error:", e);
   }
 
-  navigator.mediaSession.playbackState = !audio.paused ? "playing" : "paused";
+  navigator.mediaSession.playbackState = !activeDeck.paused ? "playing" : "paused";
   updatePositionState();
 }
 
 function updatePositionState() {
   if (!("mediaSession" in navigator) || !("setPositionState" in navigator.mediaSession)) return;
   try {
-    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+    if (Number.isFinite(activeDeck.duration) && activeDeck.duration > 0) {
       navigator.mediaSession.setPositionState({
-        duration: audio.duration,
-        playbackRate: audio.playbackRate || 1,
-        position: clamp(audio.currentTime, 0, audio.duration)
+        duration: activeDeck.duration,
+        playbackRate: activeDeck.playbackRate || 1,
+        position: clamp(activeDeck.currentTime, 0, activeDeck.duration)
       });
     }
   } catch {}
@@ -417,18 +435,18 @@ function updateUI() {
   }
 
   if (playBtnIcon) {
-    if (isBuffering && !audio.paused) {
+    if (isBuffering && !activeDeck.paused) {
       playBtnIcon.textContent = "refresh";
       if (playBtnEl) playBtnEl.classList.add("is-buffering");
     } else {
-      playBtnIcon.textContent = !audio.paused ? "pause" : "play_arrow";
+      playBtnIcon.textContent = !activeDeck.paused ? "pause" : "play_arrow";
       if (playBtnEl) playBtnEl.classList.remove("is-buffering");
     }
   }
 
   const liveWave = document.querySelector(".live-wave-visualizer");
   if (liveWave) {
-    liveWave.classList.toggle("is-buffering", isBuffering && !audio.paused);
+    liveWave.classList.toggle("is-buffering", isBuffering && !activeDeck.paused);
   }
 
   if (repeatIcon && repeatBtnEl) {
@@ -452,8 +470,8 @@ let isAppHidden = false;
 
 function updateProgress() {
   if (isSeeking || isAppHidden) return;
-  const cur = audio.currentTime || 0;
-  const dur = audio.duration || 0;
+  const cur = activeDeck.currentTime || 0;
+  const dur = activeDeck.duration || 0;
 
   if (currentTimeEl) currentTimeEl.textContent = formatTime(cur);
   if (durationEl)    durationEl.textContent    = formatTime(dur);
@@ -542,16 +560,16 @@ function isSongStoredOffline(song) {
 function startStallWatchdog() {
   clearTimeout(stallWatchdogTimer);
   stallWatchdogTimer = setTimeout(() => {
-    if (isBuffering && !audio.paused && !userPaused) {
+    if (isBuffering && !activeDeck.paused && !userPaused) {
       stallCount++;
       if (stallCount === 1) {
         player.showToast("🌧️ Slow network: Buffering audio stream...", 4000);
       }
 
-      const cur = audio.currentTime || 0;
+      const cur = activeDeck.currentTime || 0;
       let hasBufferedAhead = false;
-      for (let i = 0; i < audio.buffered.length; i++) {
-        if (audio.buffered.start(i) <= cur && audio.buffered.end(i) > cur + 0.5) {
+      for (let i = 0; i < activeDeck.buffered.length; i++) {
+        if (activeDeck.buffered.start(i) <= cur && activeDeck.buffered.end(i) > cur + 0.5) {
           hasBufferedAhead = true;
           break;
         }
@@ -559,10 +577,10 @@ function startStallWatchdog() {
 
       if (!hasBufferedAhead && stallCount >= 2) {
         // Unfreeze socket stalled by slow rainy network packet loss
-        const savedPos = audio.currentTime;
-        audio.load();
-        if (savedPos > 0) audio.currentTime = savedPos;
-        audio.play().catch(() => {});
+        const savedPos = activeDeck.currentTime;
+        activeDeck.load();
+        if (savedPos > 0) activeDeck.currentTime = savedPos;
+        activeDeck.play().catch(() => {});
       }
     }
   }, 4500);
@@ -573,123 +591,354 @@ function clearStallWatchdog() {
   stallCount = 0;
 }
 
-// ─── PERSISTENT AUDIO EVENT HANDLING ──────────────────────────────
-audio.addEventListener("loadstart", () => {
-  isBuffering = true;
-  updateUI();
-});
+// ─── DUAL-DECK AUDIO SOURCE RESOLVER & STANDBY PRELOADER ───────────
+async function resolveAudioSource(song) {
+  if (!song || !song.link) return "";
+  const cleanUrl = normalizeUrl(song.link);
+  const isOfflineCatalogueTrack = song.source === "offline" || isSongStoredOffline(song);
 
-audio.addEventListener("waiting", () => {
-  isBuffering = true;
-  updateUI();
-  startStallWatchdog();
-});
+  if (isOfflineCatalogueTrack) {
+    const rawTarget = cleanUrl.split("?")[0];
+    const cachedBlobUrl = offlineBlobUrlCache.get(rawTarget) || offlineBlobUrlCache.get(cleanUrl) || offlineBlobUrlCache.get(song.link);
+    if (cachedBlobUrl) return cachedBlobUrl;
 
-audio.addEventListener("stalled", () => {
-  isBuffering = true;
-  updateUI();
-  startStallWatchdog();
-});
-
-audio.addEventListener("canplay", () => {
-  isBuffering = false;
-  clearStallWatchdog();
-  updateUI();
-});
-
-audio.addEventListener("canplaythrough", () => {
-  isBuffering = false;
-  clearStallWatchdog();
-  updateUI();
-});
-
-audio.addEventListener("playing", () => {
-  advancingTrack = false;
-  isBuffering = false;
-  clearStallWatchdog();
-  userPaused = false;
-  playSessionStart = Date.now();
-  acquireWakeLock();
-  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
-  updateUI();
-});
-
-audio.addEventListener("pause", () => {
-  if (userPaused) advancingTrack = false;
-  isBuffering = false;
-  clearStallWatchdog();
-  capturePlaySeconds();
-  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
-  updateUI();
-  if (userPaused) releaseWakeLock();
-});
-
-audio.addEventListener("seeking", () => {
-  isBuffering = true;
-  updateUI();
-});
-
-audio.addEventListener("seeked", () => {
-  isBuffering = false;
-  updateUI();
-});
-
-audio.addEventListener("progress", () => {
-  if (audio.buffered.length > 0) {
-    clearStallWatchdog();
+    try {
+      const blobUrl = await getOfflineAudioBlobUrl(song.link);
+      if (blobUrl) return blobUrl;
+    } catch {}
   }
-});
+  return cleanUrl;
+}
 
-audio.addEventListener("timeupdate", () => {
-  updateProgress();
-  updatePositionState();
-
-  // If track has been playing smoothly for 5 seconds, pre-warm next track initial audio bytes
-  if (audio.currentTime > 5 && !prewarmedTrackUrl) {
-    prewarmNextTrackStream();
-  }
-
-  if (playSessionStart > 0 && !hasRecordedStat) {
-    const currentSessionSec = (Date.now() - playSessionStart) / 1000;
-    if (accumulatedPlaySec + currentSessionSec >= STATS_MIN_PLAY_SECONDS) {
-      flushStatsToFirebase();
-    }
-  }
-});
-
-audio.addEventListener("ended", () => {
-  if (advancingTrack) return;
-  advancingTrack = true;
-  flushStatsToFirebase();
-  isBuffering = false;
-  clearStallWatchdog();
-
+function getNextTrackCandidate() {
+  if (!playlist || !playlist.length) return null;
   if (repeatMode === "one") {
-    audio.currentTime = 0;
-    audio.play().catch(() => {});
-    advancingTrack = false;
-  } else {
-    player.next(true);
+    return { song: playlist[currentIndex], index: currentIndex };
   }
-});
+  if (repeatMode === "off" && currentIndex >= playlist.length - 1) {
+    return null;
+  }
+  if (isShuffle) {
+    let randIdx = Math.floor(Math.random() * playlist.length);
+    if (playlist.length > 1 && randIdx === currentIndex) {
+      randIdx = (randIdx + 1) % playlist.length;
+    }
+    return { song: playlist[randIdx], index: randIdx };
+  }
+  const nextIdx = (currentIndex + 1) % playlist.length;
+  return { song: playlist[nextIdx], index: nextIdx };
+}
 
-audio.addEventListener("error", () => {
+let standbySong = null;
+let standbyIndex = -1;
+
+async function armStandbyDeck() {
+  if (isTransitioning) return;
+  const candidate = getNextTrackCandidate();
+  if (!candidate || !candidate.song) {
+    standbySong = null;
+    standbyIndex = -1;
+    return;
+  }
+
+  standbySong = candidate.song;
+  standbyIndex = candidate.index;
+
+  const resolvedUrl = await resolveAudioSource(standbySong);
+  if (!resolvedUrl) return;
+
+  if (standbyDeck.src !== resolvedUrl) {
+    standbyDeck.src = resolvedUrl;
+    standbyDeck.playbackRate = playbackRate;
+    standbyDeck.volume = crossfadeSeconds > 0 ? 0 : masterVolume;
+    standbyDeck.preload = "auto";
+    standbyDeck.load();
+  }
+}
+
+// ─── DUAL-DECK EQUAL-POWER TRANSITION ENGINE ───────────────────────
+// Studio Equal-Power DJ Crossfade: Constant acoustic loudness across whole blend (cos² + sin² = 1)
+// Starts standbyDeck.play() WHILE activeDeck is playing to prevent Android 14/15/16 background Doze freeze!
+async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedNextIndex = null) {
+  if (isTransitioning) return;
+
+  let targetSong = forcedNextSong;
+  let targetIndex = forcedNextIndex;
+
+  if (!targetSong) {
+    const candidate = getNextTrackCandidate();
+    if (!candidate) {
+      // Reached end of playlist with repeat off
+      player.pause();
+      return;
+    }
+    targetSong = candidate.song;
+    targetIndex = candidate.index;
+  }
+
+  isTransitioning = true;
+  advancingTrack = true;
+
+  // Ensure standbyDeck is prepared with target song
+  const targetSrc = await resolveAudioSource(targetSong);
+  if (standbyDeck.src !== targetSrc) {
+    standbyDeck.src = targetSrc;
+    standbyDeck.load();
+  }
+
+  standbyDeck.playbackRate = playbackRate;
+
+  if (crossfadeTimer) {
+    clearInterval(crossfadeTimer);
+    crossfadeTimer = null;
+  }
+
+  const durationSec = Math.max(0, fadeSec);
+  const useCrossfade = durationSec > 0.4 && !activeDeck.paused;
+
+  if (useCrossfade) {
+    standbyDeck.volume = 0;
+  } else {
+    standbyDeck.volume = masterVolume;
+  }
+
+  // 🚀 CRITICAL FOR ANDROID 14/15/16 LOCKSCREEN KEEP-ALIVE:
+  // Play standbyDeck WHILE activeDeck is currently outputting sound.
+  // OS audio session never drops to 0 active streams, preventing Doze from suspending Chrome background JS!
+  try {
+    const playPromise = standbyDeck.play();
+    if (playPromise !== undefined) {
+      await playPromise.catch((err) => {
+        console.warn("[Player] Standby play error:", err);
+      });
+    }
+  } catch (err) {
+    console.warn("[Player] Standby play exception:", err);
+  }
+
+  if (useCrossfade) {
+    const startTime = performance.now();
+    const fadeDurationMs = durationSec * 1000;
+
+    await new Promise((resolve) => {
+      crossfadeTimer = setInterval(() => {
+        const elapsed = performance.now() - startTime;
+        const progress = clamp(elapsed / fadeDurationMs, 0, 1);
+
+        // Constant Equal-Power mathematical curve:
+        // P(t) = cos²(θ) + sin²(θ) = 1 (Zero volume dip, perfect club/studio blend)
+        const outVol = Math.cos(progress * 0.5 * Math.PI) * masterVolume;
+        const inVol  = Math.sin(progress * 0.5 * Math.PI) * masterVolume;
+
+        activeDeck.volume  = clamp(outVol, 0, 1);
+        standbyDeck.volume = clamp(inVol, 0, 1);
+
+        if (progress >= 1) {
+          clearInterval(crossfadeTimer);
+          crossfadeTimer = null;
+          resolve();
+        }
+      }, 25);
+    });
+  }
+
+  // Finalize switch
+  activeDeck.pause();
+  activeDeck.currentTime = 0;
+  activeDeck.volume = masterVolume;
+  standbyDeck.volume = masterVolume;
+
+  // Swap active and standby deck pointers
+  const prevActive = activeDeck;
+  activeDeck = standbyDeck;
+  standbyDeck = prevActive;
+
+  audio = activeDeck;
+  window._musicsaura_audio = activeDeck;
+
+  currentSong = targetSong;
+  currentIndex = targetIndex !== null && targetIndex >= 0 ? targetIndex : currentIndex;
+  userPaused = false;
   advancingTrack = false;
-  console.warn("[Player] Audio node error:", audio.error);
-  isBuffering = false;
-  clearStallWatchdog();
+  isTransitioning = false;
 
-  // Never recover from an audio error with a persisted blob or a rewritten URL.
-  // Those fallbacks can resurrect deleted/replaced tracks and hide real 404s.
-  audio.pause();
-  audio.removeAttribute("src");
-  audio.load();
-  player.showToast(`❌ "${currentSong?.title || "This track"}" is unavailable.`, 3500);
+  flushStatsToFirebase().catch(() => {});
+  hasRecordedStat    = false;
+  accumulatedPlaySec = 0;
+  playSessionStart   = Date.now();
+
+  updateMediaSession(currentSong);
   updateUI();
-});
+  updateProgress();
 
-// Volume initialization
-audio.volume = masterVolume;
+  // Immediately arm the new standby deck for the subsequent track
+  armStandbyDeck();
+}
+
+// ─── PERSISTENT DUAL-DECK AUDIO EVENT BINDINGS ─────────────────────
+function bindDeckEvents(deck) {
+  deck.addEventListener("loadstart", () => {
+    if (deck === activeDeck) {
+      isBuffering = true;
+      updateUI();
+    }
+  });
+
+  deck.addEventListener("waiting", () => {
+    if (deck === activeDeck) {
+      isBuffering = true;
+      updateUI();
+      startStallWatchdog();
+    }
+  });
+
+  deck.addEventListener("stalled", () => {
+    if (deck === activeDeck) {
+      isBuffering = true;
+      updateUI();
+      startStallWatchdog();
+    }
+  });
+
+  deck.addEventListener("canplay", () => {
+    if (deck === activeDeck) {
+      isBuffering = false;
+      clearStallWatchdog();
+      updateUI();
+    }
+  });
+
+  deck.addEventListener("canplaythrough", () => {
+    if (deck === activeDeck) {
+      isBuffering = false;
+      clearStallWatchdog();
+      updateUI();
+    }
+  });
+
+  deck.addEventListener("playing", () => {
+    if (deck === activeDeck) {
+      advancingTrack = false;
+      isBuffering = false;
+      clearStallWatchdog();
+      userPaused = false;
+      playSessionStart = Date.now();
+      acquireWakeLock();
+      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
+      updateUI();
+    }
+  });
+
+  deck.addEventListener("pause", () => {
+    if (deck === activeDeck && !isTransitioning) {
+      if (userPaused) advancingTrack = false;
+      isBuffering = false;
+      clearStallWatchdog();
+      capturePlaySeconds();
+      if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
+      updateUI();
+      if (userPaused) releaseWakeLock();
+    }
+  });
+
+  deck.addEventListener("seeking", () => {
+    if (deck === activeDeck) {
+      isBuffering = true;
+      updateUI();
+    }
+  });
+
+  deck.addEventListener("seeked", () => {
+    if (deck === activeDeck) {
+      isBuffering = false;
+      updateUI();
+    }
+  });
+
+  deck.addEventListener("progress", () => {
+    if (deck === activeDeck && deck.buffered.length > 0) {
+      clearStallWatchdog();
+    }
+  });
+
+  deck.addEventListener("timeupdate", () => {
+    if (deck !== activeDeck) return;
+    updateProgress();
+    updatePositionState();
+
+    // Pre-arm standby deck if not armed yet
+    if (deck.currentTime > 4 && (!standbySong || !standbyDeck.src)) {
+      armStandbyDeck();
+    }
+
+    if (playSessionStart > 0 && !hasRecordedStat) {
+      const currentSessionSec = (Date.now() - playSessionStart) / 1000;
+      if (accumulatedPlaySec + currentSessionSec >= STATS_MIN_PLAY_SECONDS) {
+        flushStatsToFirebase();
+      }
+    }
+
+    // Auto-advance / Studio crossfade check
+    const dur = deck.duration;
+    const cur = deck.currentTime;
+    if (Number.isFinite(dur) && dur > 4 && !isTransitioning && !userPaused && !advancingTrack) {
+      if (repeatMode === "one") {
+        if (dur - cur <= 0.25) {
+          deck.currentTime = 0;
+        }
+        return;
+      }
+      if (repeatMode === "off" && currentIndex >= playlist.length - 1) {
+        return; // Play to the very end of last song
+      }
+
+      const fadeSec = crossfadeSeconds > 0 ? Math.min(crossfadeSeconds, Math.floor(dur / 2)) : 0.35;
+      const remaining = dur - cur;
+      if (remaining <= fadeSec && remaining > 0) {
+        triggerDeckTransition(crossfadeSeconds > 0 ? fadeSec : 0);
+      }
+    }
+  });
+
+  deck.addEventListener("ended", () => {
+    if (deck !== activeDeck) return;
+    if (advancingTrack || isTransitioning) return;
+
+    flushStatsToFirebase();
+    isBuffering = false;
+    clearStallWatchdog();
+
+    if (repeatMode === "one") {
+      deck.currentTime = 0;
+      deck.play().catch(() => {});
+    } else {
+      player.next(true);
+    }
+  });
+
+  deck.addEventListener("error", () => {
+    if (deck !== activeDeck) return;
+    advancingTrack = false;
+    isTransitioning = false;
+    console.warn("[Player] Active deck error:", deck.error);
+    isBuffering = false;
+    clearStallWatchdog();
+
+    deck.pause();
+    deck.removeAttribute("src");
+    deck.load();
+    player.showToast(`❌ "${currentSong?.title || "This track"}" is unavailable.`, 3500);
+    updateUI();
+  });
+}
+
+// Bind events to both hardware audio channels
+bindDeckEvents(deckA);
+bindDeckEvents(deckB);
+
+// Initial volume calibration
+deckA.volume = masterVolume;
+deckB.volume = masterVolume;
 if (volumeSlider) volumeSlider.value = Math.round(masterVolume * 100);
 
 // ─── EXPORTED PLAYER API ──────────────────────────────────────────
@@ -702,10 +951,10 @@ export const player = {
   getState() {
     return {
       currentSong,
-      isPlaying: !audio.paused,
+      isPlaying: !activeDeck.paused,
       isBuffering,
-      currentTime: audio.currentTime || 0,
-      duration: audio.duration || 0,
+      currentTime: activeDeck.currentTime || 0,
+      duration: activeDeck.duration || 0,
       playlist,
       currentIndex,
       repeatMode,
@@ -720,17 +969,17 @@ export const player = {
     originalList = [...songs];
     if (isShuffle) {
       playlist = player.shuffleArray([...songs]);
-      currentIndex = playlist.findIndex((s) => s.link === songs[startIndex]?.link);
+      currentIndex = playlist.findIndex((s) => (s.id || s.link) === (songs[startIndex]?.id || songs[startIndex]?.link));
       if (currentIndex < 0) currentIndex = 0;
     } else {
       playlist = [...songs];
       currentIndex = startIndex;
     }
-    prewarmNextSongOfflineBlob();
+    armStandbyDeck();
   },
 
   prefetchAudioStream(link) {
-    // Disabled concurrent prefetch to prevent socket-throttling on File Garden CDN
+    // Handled natively by armStandbyDeck()
   },
 
   async checkAndRefreshStaleOfflineTrack(song) {
@@ -751,13 +1000,11 @@ export const player = {
       const serverSize = parseInt(headRes.headers.get("content-length"), 10);
       if (!serverSize || isNaN(serverSize)) return;
 
-      // Get current local cached blob size
       const localBlob = await getTrackBlobFromStorage(song.link);
       if (!localBlob) return;
 
-      // If file size on server changed by more than 1KB (song was replaced with remix or updated mix!)
       if (Math.abs(serverSize - localBlob.size) > 1024) {
-        console.log(`[Player] Server song updated! Local size: ${localBlob.size}B, Server size: ${serverSize}B. Auto-refreshing...`);
+        console.log(`[Player] Server song updated! Local: ${localBlob.size}B, Server: ${serverSize}B. Refreshing...`);
         player.showToast(`🔄 Updating to latest version of "${song.title}"...`, 3000);
 
         const getRes = await fetch(cleanUrl, { cache: "reload" });
@@ -767,15 +1014,14 @@ export const player = {
             await saveTrackToStorage(song, freshBlob);
             const newBlobUrl = URL.createObjectURL(freshBlob);
 
-            // Hot-swap audio if this song is actively playing
             if (currentSong && (currentSong.id || currentSong.link) === (song.id || song.link)) {
-              const curTime = audio.currentTime || 0;
-              const wasPlaying = !audio.paused;
-              audio.src = newBlobUrl;
-              if (curTime > 0 && curTime < (audio.duration || 9999)) {
-                audio.currentTime = curTime;
+              const curTime = activeDeck.currentTime || 0;
+              const wasPlaying = !activeDeck.paused;
+              activeDeck.src = newBlobUrl;
+              if (curTime > 0 && curTime < (activeDeck.duration || 9999)) {
+                activeDeck.currentTime = curTime;
               }
-              if (wasPlaying) audio.play().catch(() => {});
+              if (wasPlaying) activeDeck.play().catch(() => {});
             }
 
             player.showToast(`✨ "${song.title}" updated to latest version!`, 3500);
@@ -787,13 +1033,13 @@ export const player = {
     }
   },
 
-  playSong(song, playlistContext = null, index = null) {
+  async playSong(song, playlistContext = null, index = null) {
     if (!song || !song.link) return;
 
     unlockAudioContext();
 
     const requestGeneration = ++playbackGeneration;
-    currentSong = song;
+
     if (playlistContext) {
       if (index !== null) {
         player.setPlaylist(playlistContext, index);
@@ -801,96 +1047,51 @@ export const player = {
         const found = playlistContext.findIndex((s) => (s.id || s.link) === (song.id || song.link));
         player.setPlaylist(playlistContext, found >= 0 ? found : 0);
       }
+    } else if (index !== null) {
+      currentIndex = index;
     }
 
-    // Pre-warm the next song in the playlist for 0ms transition
-    prewarmNextSongOfflineBlob();
-    prewarmedTrackUrl = null;
-
-    const cleanUrl = normalizeUrl(song.link);
-    const isOfflineCatalogueTrack = song.source === "offline" || isSongStoredOffline(song);
-
-    if (isOfflineCatalogueTrack) {
-      const rawTarget = cleanUrl.split("?")[0];
-      const cachedBlobUrl = offlineBlobUrlCache.get(rawTarget) || offlineBlobUrlCache.get(cleanUrl) || offlineBlobUrlCache.get(song.link);
-
-      if (cachedBlobUrl) {
-        if (audio.src !== cachedBlobUrl) {
-          audio.src = cachedBlobUrl;
-        }
-        audio.playbackRate = playbackRate;
-        audio.volume = masterVolume;
-        userPaused = false;
-        try {
-          const p = audio.play();
-          if (p !== undefined) p.catch((e) => console.warn("Blob play error:", e));
-        } catch (e) {}
-
-        updateMediaSession(song);
-        updateUI();
-        flushStatsToFirebase().catch(() => {});
-        hasRecordedStat    = false;
-        accumulatedPlaySec = 0;
-        playSessionStart   = Date.now();
-        return;
-      }
-
-      // If not yet in memory cache, fetch from IndexedDB without tearing down audio element
-      getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
-        if (requestGeneration !== playbackGeneration || currentSong !== song) return;
-        if (blobUrl) {
-          if (audio.src !== blobUrl) {
-            audio.src = blobUrl;
-          }
-          audio.playbackRate = playbackRate;
-          audio.volume = masterVolume;
-          userPaused = false;
-          audio.play().catch((e) => console.warn("Deferred blob play error:", e));
-          updateUI();
-        } else {
-          // If offline blob fails or is missing, seamlessly fall back to network stream
-          if (audio.src !== cleanUrl) {
-            audio.src = cleanUrl;
-            audio.load();
-          }
-          audio.playbackRate = playbackRate;
-          audio.volume = masterVolume;
-          userPaused = false;
-          audio.play().catch(() => {});
-          updateUI();
-        }
-      });
-
-      updateMediaSession(song);
-      updateUI();
-      flushStatsToFirebase().catch(() => {});
-      hasRecordedStat    = false;
-      accumulatedPlaySec = 0;
-      playSessionStart   = Date.now();
+    // If currently playing and crossfade > 0, execute smooth transition into target track
+    if (!activeDeck.paused && activeDeck.currentTime > 1.2 && crossfadeSeconds > 0 && !isTransitioning) {
+      triggerDeckTransition(Math.min(crossfadeSeconds, 3.0), song, currentIndex);
       return;
     }
 
-    // Direct Native Stream Path (Clean URL allows Cloudflare regional Edge CDN HTTP 206 caching & instant start in <100ms even on 3G)
-    if (audio.src !== cleanUrl) {
-      audio.src = cleanUrl;
-      audio.load(); // Immediately instruct browser media engine to buffer first audio chunk
+    // Direct playback initiation
+    if (crossfadeTimer) {
+      clearInterval(crossfadeTimer);
+      crossfadeTimer = null;
+    }
+    isTransitioning = false;
+    standbyDeck.pause();
+    standbyDeck.currentTime = 0;
+    standbyDeck.volume = masterVolume;
+
+    currentSong = song;
+    userPaused = false;
+    prewarmedTrackUrl = null;
+
+    const src = await resolveAudioSource(song);
+    if (requestGeneration !== playbackGeneration) return;
+
+    if (activeDeck.src !== src) {
+      activeDeck.src = src;
+      activeDeck.load();
     }
 
-    audio.playbackRate = playbackRate;
-    audio.volume = masterVolume;
-    userPaused = false;
+    activeDeck.playbackRate = playbackRate;
+    activeDeck.volume = masterVolume;
 
-    // Direct synchronous play call preserves mobile browser background audio permission
     try {
-      const playPromise = audio.play();
+      const playPromise = activeDeck.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
-          console.warn("Playback gesture required:", err);
+          console.warn("[Player] Direct play gesture warning:", err);
           updateUI();
         });
       }
     } catch (err) {
-      console.warn("Playback error:", err);
+      console.warn("[Player] Direct play error:", err);
       updateUI();
     }
 
@@ -901,6 +1102,9 @@ export const player = {
     hasRecordedStat    = false;
     accumulatedPlaySec = 0;
     playSessionStart   = Date.now();
+
+    // Arm standby deck with the next upcoming song
+    armStandbyDeck();
   },
 
   play() {
@@ -910,7 +1114,7 @@ export const player = {
     }
     userPaused = false;
     try {
-      const p = audio.play();
+      const p = activeDeck.play();
       if (p !== undefined) p.catch(() => {});
     } catch (err) {
       console.warn("Play error:", err);
@@ -920,12 +1124,20 @@ export const player = {
 
   pause() {
     userPaused = true;
-    audio.pause();
+    if (crossfadeTimer) {
+      clearInterval(crossfadeTimer);
+      crossfadeTimer = null;
+    }
+    isTransitioning = false;
+    activeDeck.pause();
+    standbyDeck.pause();
+    activeDeck.volume = masterVolume;
+    standbyDeck.volume = masterVolume;
     updateUI();
   },
 
   togglePlay() {
-    if (audio.paused) {
+    if (activeDeck.paused) {
       player.play();
     } else {
       player.pause();
@@ -942,43 +1154,63 @@ export const player = {
       return;
     }
 
+    let nextIdx = 0;
     if (isShuffle) {
       let randIdx = Math.floor(Math.random() * playlist.length);
       if (playlist.length > 1 && randIdx === currentIndex) {
         randIdx = (randIdx + 1) % playlist.length;
       }
-      currentIndex = randIdx;
+      nextIdx = randIdx;
     } else {
-      currentIndex = (currentIndex + 1) % playlist.length;
+      nextIdx = (currentIndex + 1) % playlist.length;
     }
 
-    player.playSong(playlist[currentIndex]);
-    // advancingTrack remains true until new track fires "playing" or "error", preventing double-advance collision
+    const nextSong = playlist[nextIdx];
+    if (!nextSong) return;
+
+    if (!activeDeck.paused && activeDeck.currentTime > 1.0 && crossfadeSeconds > 0 && !isTransitioning) {
+      triggerDeckTransition(Math.min(crossfadeSeconds, 2.5), nextSong, nextIdx);
+    } else {
+      player.playSong(nextSong, null, nextIdx);
+    }
   },
 
   prev() {
     userPaused = false;
-    if (audio.currentTime > 3.5) {
-      audio.currentTime = 0;
+    if (activeDeck.currentTime > 3.5) {
+      activeDeck.currentTime = 0;
       updateProgress();
       return;
     }
     if (!playlist.length) return;
-    currentIndex = (currentIndex - 1 + playlist.length) % playlist.length;
-    player.playSong(playlist[currentIndex]);
+    const prevIdx = (currentIndex - 1 + playlist.length) % playlist.length;
+    player.playSong(playlist[prevIdx], null, prevIdx);
   },
 
   seek(seconds) {
-    if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
-    const clamped = clamp(seconds, 0, audio.duration);
-    audio.currentTime = clamped;
+    if (!Number.isFinite(activeDeck.duration) || activeDeck.duration <= 0) return;
+    if (crossfadeTimer) {
+      clearInterval(crossfadeTimer);
+      crossfadeTimer = null;
+    }
+    isTransitioning = false;
+    standbyDeck.pause();
+    standbyDeck.currentTime = 0;
+    standbyDeck.volume = masterVolume;
+    activeDeck.volume = masterVolume;
+
+    const clamped = clamp(seconds, 0, activeDeck.duration);
+    activeDeck.currentTime = clamped;
     updateProgress();
     updatePositionState();
   },
 
   setVolume(vol) {
     masterVolume = clamp(vol, 0, 1);
-    audio.volume = masterVolume;
+    if (!isTransitioning) {
+      activeDeck.volume = masterVolume;
+      standbyDeck.volume = masterVolume;
+    }
     localStorage.setItem(VOLUME_STORAGE_KEY, String(masterVolume));
     if (volumeSlider) volumeSlider.value = Math.round(masterVolume * 100);
     if (volumeBtn) {
@@ -991,22 +1223,24 @@ export const player = {
 
   toggleMute() {
     if (masterVolume > 0) {
-      audio._prevVol = masterVolume;
+      activeDeck._prevVol = masterVolume;
       player.setVolume(0);
     } else {
-      player.setVolume(audio._prevVol || 1.0);
+      player.setVolume(activeDeck._prevVol || 1.0);
     }
   },
 
   setCrossfade(sec) {
     crossfadeSeconds = clamp(parseFloat(sec) || 0, 0, 15);
     localStorage.setItem(CROSSFADE_STORAGE_KEY, String(crossfadeSeconds));
-    player.showToast(crossfadeSeconds === 0 ? "⚡ Gapless mode active" : `🎚️ Transition set to ${crossfadeSeconds}s`);
+    player.showToast(crossfadeSeconds === 0 ? "⚡ Gapless mode active (0s)" : `🎚️ Studio Crossfade: ${crossfadeSeconds}s`);
+    armStandbyDeck();
   },
 
   setPlaybackSpeed(speed) {
     playbackRate = clamp(parseFloat(speed) || 1.0, 0.5, 2.0);
-    audio.playbackRate = playbackRate;
+    activeDeck.playbackRate = playbackRate;
+    standbyDeck.playbackRate = playbackRate;
     localStorage.setItem(SPEED_STORAGE_KEY, String(playbackRate));
     player.showToast(`⏩ Playback speed: ${playbackRate}x`);
   },
@@ -1057,6 +1291,7 @@ export const player = {
     else repeatMode = "off";
 
     updateUI();
+    armStandbyDeck();
     player.showToast(
       repeatMode === "one" ? "🔂 Repeat single track" :
       repeatMode === "all" ? "🔁 Repeat playlist" : "➡️ Repeat off"
@@ -1080,6 +1315,7 @@ export const player = {
       }
     }
     updateUI();
+    armStandbyDeck();
     player.showToast(isShuffle ? "🔀 Shuffle mode on" : "➡️ Normal order");
   },
 
@@ -1148,8 +1384,8 @@ if (shuffleBtnEl) shuffleBtnEl.onclick = () => player.toggleShuffle();
 if (seekBar) {
   seekBar.addEventListener("input", () => {
     isSeeking = true;
-    if (Number.isFinite(audio.duration) && audio.duration > 0) {
-      const sec = (seekBar.value / 100) * audio.duration;
+    if (Number.isFinite(activeDeck.duration) && activeDeck.duration > 0) {
+      const sec = (seekBar.value / 100) * activeDeck.duration;
       if (progressFill)  progressFill.style.width = `${seekBar.value}%`;
       if (currentTimeEl) currentTimeEl.textContent = formatTime(sec);
     }
@@ -1157,8 +1393,8 @@ if (seekBar) {
 
   seekBar.addEventListener("change", () => {
     isSeeking = false;
-    if (Number.isFinite(audio.duration) && audio.duration > 0) {
-      const sec = (seekBar.value / 100) * audio.duration;
+    if (Number.isFinite(activeDeck.duration) && activeDeck.duration > 0) {
+      const sec = (seekBar.value / 100) * activeDeck.duration;
       player.seek(sec);
     }
   });
@@ -1176,11 +1412,11 @@ if (volumeBtn) {
 document.addEventListener("visibilitychange", () => {
   isAppHidden = document.hidden;
   if (document.hidden) {
-    if (!audio.paused && "mediaSession" in navigator) {
+    if (!activeDeck.paused && "mediaSession" in navigator) {
       navigator.mediaSession.playbackState = "playing";
     }
   } else {
-    if (!audio.paused) {
+    if (!activeDeck.paused) {
       acquireWakeLock();
       updateMediaSession(currentSong);
       updateUI();
