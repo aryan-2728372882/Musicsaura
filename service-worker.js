@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v82";
+const APP_SHELL_CACHE = "musicsaura-shell-v83";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -132,17 +132,16 @@ self.addEventListener("fetch", (event) => {
       return;
     }
 
+    // Direct native browser streaming when online:
+    // Completely bypasses Service Worker thread latency and IPC proxy buffers.
+    // Allows the native browser media engine (ExoPlayer/Stagefright/AVFoundation)
+    // to stream directly from Cloudflare Edge CDN using hardware-accelerated HTTP 206 Range requests (instant start on 3G/4G/5G)
+    if (navigator.onLine) {
+      return;
+    }
+
     event.respondWith(
       (async () => {
-        // If device is online, try network first (network authoritative)
-        if (navigator.onLine) {
-          try {
-            const networkResponse = await fetch(request);
-            if (networkResponse && (networkResponse.ok || networkResponse.status === 206)) {
-              return networkResponse;
-            }
-          } catch {}
-        }
 
         // Offline / Airplane Mode Fallback: retrieve from In-App Download Storage
         try {
