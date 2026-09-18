@@ -67,8 +67,16 @@ let isSeeking         = false;
 let userPaused        = false;
 let playbackGeneration = 0;
 
-// Audio Configuration
-let crossfadeSeconds  = parseFloat(localStorage.getItem(CROSSFADE_STORAGE_KEY)) || 4;
+// Audio Configuration (15s Default Studio Transition)
+const savedCrossfade = localStorage.getItem(CROSSFADE_STORAGE_KEY);
+let crossfadeSeconds = 15;
+if (savedCrossfade !== null) {
+  const parsed = parseFloat(savedCrossfade);
+  if (!isNaN(parsed)) {
+    crossfadeSeconds = parsed === 4 ? 15 : clamp(parsed, 0, 20);
+  }
+}
+localStorage.setItem(CROSSFADE_STORAGE_KEY, String(crossfadeSeconds));
 let playbackRate      = parseFloat(localStorage.getItem(SPEED_STORAGE_KEY)) || 1.0;
 let masterVolume      = clamp(parseFloat(localStorage.getItem(VOLUME_STORAGE_KEY)) || 1.0, 0, 1);
 
@@ -719,19 +727,31 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
   if (useCrossfade) {
     const startTime = performance.now();
     const fadeDurationMs = durationSec * 1000;
+    let switchedMetaAtMidpoint = false;
 
     await new Promise((resolve) => {
       crossfadeTimer = setInterval(() => {
         const elapsed = performance.now() - startTime;
         const progress = clamp(elapsed / fadeDurationMs, 0, 1);
 
-        // Constant Equal-Power mathematical curve:
-        // P(t) = cos²(θ) + sin²(θ) = 1 (Zero volume dip, perfect club/studio blend)
-        const outVol = Math.cos(progress * 0.5 * Math.PI) * masterVolume;
-        const inVol  = Math.sin(progress * 0.5 * Math.PI) * masterVolume;
+        // Studio Raised Cosine / Hann Window Blend (15s Studio Transition):
+        // Ending song: Audio starts going down smoothly from 100% to 0% in its final 15 seconds
+        // Starting song: Audio increases smoothly from 0% up to 100%
+        // Linear amplitude sum remains constant at 1.0 (zero clipping, zero dip, silky radio transition)
+        const outFactor = 0.5 * (1 + Math.cos(progress * Math.PI));
+        const inFactor  = 0.5 * (1 - Math.cos(progress * Math.PI));
 
-        activeDeck.volume  = clamp(outVol, 0, 1);
-        standbyDeck.volume = clamp(inVol, 0, 1);
+        activeDeck.volume  = clamp(outFactor * masterVolume, 0, 1);
+        standbyDeck.volume = clamp(inFactor * masterVolume, 0, 1);
+
+        // Seamlessly switch player title, artist, artwork & lockscreen notification at midpoint (when incoming song becomes dominant)
+        if (progress >= 0.5 && !switchedMetaAtMidpoint) {
+          switchedMetaAtMidpoint = true;
+          currentSong = targetSong;
+          currentIndex = targetIndex !== null && targetIndex >= 0 ? targetIndex : currentIndex;
+          updateMediaSession(currentSong);
+          updateUI();
+        }
 
         if (progress >= 1) {
           clearInterval(crossfadeTimer);
@@ -1231,9 +1251,9 @@ export const player = {
   },
 
   setCrossfade(sec) {
-    crossfadeSeconds = clamp(parseFloat(sec) || 0, 0, 15);
+    crossfadeSeconds = clamp(parseFloat(sec) || 0, 0, 20);
     localStorage.setItem(CROSSFADE_STORAGE_KEY, String(crossfadeSeconds));
-    player.showToast(crossfadeSeconds === 0 ? "⚡ Gapless mode active (0s)" : `🎚️ Studio Crossfade: ${crossfadeSeconds}s`);
+    player.showToast(crossfadeSeconds === 0 ? "⚡ Gapless mode active (0s)" : `🎚️ 15s Studio Crossfade Active: ${crossfadeSeconds}s`);
     armStandbyDeck();
   },
 

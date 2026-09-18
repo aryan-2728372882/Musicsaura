@@ -1136,13 +1136,12 @@ if (audioFxModal) {
 if (crossfadeSlider && crossfadeVal) {
   const currentCrossfade = player.getState().crossfadeSeconds;
   crossfadeSlider.value = currentCrossfade;
-  crossfadeVal.textContent = currentCrossfade === 0 ? "0s (Gapless)" : `${currentCrossfade}s`;
+  crossfadeVal.textContent = currentCrossfade === 0 ? "0s (Gapless)" : currentCrossfade === 15 ? "15s (Studio Fade)" : `${currentCrossfade}s`;
 
   crossfadeSlider.addEventListener("input", (e) => {
-    let sec = parseInt(e.target.value, 10);
-    if (sec > 0 && sec < 3) sec = 3; // Least active crossfade is 3 seconds (0s is off / gapless)
+    const sec = parseInt(e.target.value, 10);
     crossfadeSlider.value = sec;
-    crossfadeVal.textContent = sec === 0 ? "0s (Gapless)" : `${sec}s`;
+    crossfadeVal.textContent = sec === 0 ? "0s (Gapless)" : sec === 15 ? "15s (Studio Fade)" : `${sec}s`;
     player.setCrossfade(sec);
   });
 }
