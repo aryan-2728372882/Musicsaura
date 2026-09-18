@@ -600,21 +600,27 @@ function clearStallWatchdog() {
 }
 
 // ─── DUAL-DECK AUDIO SOURCE RESOLVER & STANDBY PRELOADER ───────────
+function resolveAudioSourceSync(song) {
+  if (!song || !song.link) return "";
+  const cleanUrl = normalizeUrl(song.link);
+  const rawTarget = cleanUrl.split("?")[0];
+  const cachedBlobUrl = offlineBlobUrlCache.get(rawTarget) || offlineBlobUrlCache.get(cleanUrl) || offlineBlobUrlCache.get(song.link);
+  if (cachedBlobUrl) return cachedBlobUrl;
+  return cleanUrl;
+}
+
 async function resolveAudioSource(song) {
   if (!song || !song.link) return "";
   const cleanUrl = normalizeUrl(song.link);
-  const isOfflineCatalogueTrack = song.source === "offline" || isSongStoredOffline(song);
+  const rawTarget = cleanUrl.split("?")[0];
+  const cachedBlobUrl = offlineBlobUrlCache.get(rawTarget) || offlineBlobUrlCache.get(cleanUrl) || offlineBlobUrlCache.get(song.link);
+  if (cachedBlobUrl) return cachedBlobUrl;
 
-  if (isOfflineCatalogueTrack) {
-    const rawTarget = cleanUrl.split("?")[0];
-    const cachedBlobUrl = offlineBlobUrlCache.get(rawTarget) || offlineBlobUrlCache.get(cleanUrl) || offlineBlobUrlCache.get(song.link);
-    if (cachedBlobUrl) return cachedBlobUrl;
+  try {
+    const blobUrl = await getOfflineAudioBlobUrl(song.link);
+    if (blobUrl) return blobUrl;
+  } catch {}
 
-    try {
-      const blobUrl = await getOfflineAudioBlobUrl(song.link);
-      if (blobUrl) return blobUrl;
-    } catch {}
-  }
   return cleanUrl;
 }
 
@@ -886,8 +892,13 @@ function bindDeckEvents(deck) {
     updateProgress();
     updatePositionState();
 
-    // Pre-arm standby deck if not armed yet
-    if (deck.currentTime > 4 && (!standbySong || !standbyDeck.src)) {
+    // Auto-advance / Studio crossfade check
+    const dur = deck.duration;
+    const cur = deck.currentTime;
+
+    // Arm standby deck only when the active track is well underway (> 12s) and approaching the transition window (remaining <= 40s),
+    // ensuring 100% of network bandwidth is given to the initial playback of the active song!
+    if (Number.isFinite(dur) && cur > 12 && (dur - cur <= 40) && (!standbySong || !standbyDeck.src)) {
       armStandbyDeck();
     }
 
@@ -898,9 +909,6 @@ function bindDeckEvents(deck) {
       }
     }
 
-    // Auto-advance / Studio crossfade check
-    const dur = deck.duration;
-    const cur = deck.currentTime;
     if (Number.isFinite(dur) && dur > 4 && !isTransitioning && !userPaused && !advancingTrack) {
       if (repeatMode === "one") {
         if (dur - cur <= 0.25) {
@@ -995,7 +1003,6 @@ export const player = {
       playlist = [...songs];
       currentIndex = startIndex;
     }
-    armStandbyDeck();
   },
 
   prefetchAudioStream(link) {
@@ -1053,7 +1060,7 @@ export const player = {
     }
   },
 
-  async playSong(song, playlistContext = null, index = null) {
+  playSong(song, playlistContext = null, index = null, isDirectSelection = false) {
     if (!song || !song.link) return;
 
     unlockAudioContext();
@@ -1071,13 +1078,13 @@ export const player = {
       currentIndex = index;
     }
 
-    // If currently playing and crossfade > 0, execute smooth transition into target track
-    if (!activeDeck.paused && activeDeck.currentTime > 1.2 && crossfadeSeconds > 0 && !isTransitioning) {
+    // Only crossfade if NOT a direct user card click and already playing
+    if (!isDirectSelection && !activeDeck.paused && activeDeck.currentTime > 1.2 && crossfadeSeconds > 0 && !isTransitioning) {
       triggerDeckTransition(Math.min(crossfadeSeconds, 3.0), song, currentIndex);
       return;
     }
 
-    // Direct playback initiation
+    // Direct playback initiation: cancel any running crossfade timer immediately
     if (crossfadeTimer) {
       clearInterval(crossfadeTimer);
       crossfadeTimer = null;
@@ -1091,12 +1098,11 @@ export const player = {
     userPaused = false;
     prewarmedTrackUrl = null;
 
-    const src = await resolveAudioSource(song);
-    if (requestGeneration !== playbackGeneration) return;
+    // Fast synchronous source resolution: preserves mobile user gesture activation for line-speed playback
+    const src = resolveAudioSourceSync(song);
 
     if (activeDeck.src !== src) {
       activeDeck.src = src;
-      activeDeck.load();
     }
 
     activeDeck.playbackRate = playbackRate;
@@ -1123,8 +1129,15 @@ export const player = {
     accumulatedPlaySec = 0;
     playSessionStart   = Date.now();
 
-    // Arm standby deck with the next upcoming song
-    armStandbyDeck();
+    // Check IndexedDB in background without blocking instant user playback
+    getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
+      if (blobUrl && requestGeneration === playbackGeneration && activeDeck.src !== blobUrl && !activeDeck.paused) {
+        const cur = activeDeck.currentTime || 0;
+        activeDeck.src = blobUrl;
+        if (cur > 0) activeDeck.currentTime = cur;
+        activeDeck.play().catch(() => {});
+      }
+    }).catch(() => {});
   },
 
   play() {

@@ -866,7 +866,7 @@ function updateHeroBanner(songs) {
   if (heroPlayBtn) {
     heroPlayBtn.onclick = () => {
       player.setPlaylist(songs, 0);
-      player.playSong(topSong);
+      player.playSong(topSong, songs, 0, true);
     };
   }
 }
@@ -1006,7 +1006,7 @@ function setupContainerClickHandler(container) {
     if (playerState.currentSong && (playerState.currentSong.id || playerState.currentSong.link) === (selectedSong.id || selectedSong.link)) {
       player.togglePlay();
     } else {
-      player.playSong(selectedSong, songs, idx);
+      player.playSong(selectedSong, songs, idx, true);
     }
     updateQueueDrawer();
   });
@@ -1253,7 +1253,7 @@ function updateQueueDrawer() {
     `;
 
     item.addEventListener("click", () => {
-      player.playSong(song, playlist, idx);
+      player.playSong(song, playlist, idx, true);
       updateQueueDrawer();
     });
 
