@@ -571,27 +571,10 @@ function startStallWatchdog() {
     if (isBuffering && !activeDeck.paused && !userPaused) {
       stallCount++;
       if (stallCount === 1) {
-        player.showToast("🌧️ Slow network: Buffering audio stream...", 4000);
-      }
-
-      const cur = activeDeck.currentTime || 0;
-      let hasBufferedAhead = false;
-      for (let i = 0; i < activeDeck.buffered.length; i++) {
-        if (activeDeck.buffered.start(i) <= cur && activeDeck.buffered.end(i) > cur + 0.5) {
-          hasBufferedAhead = true;
-          break;
-        }
-      }
-
-      if (!hasBufferedAhead && stallCount >= 2) {
-        // Unfreeze socket stalled by slow rainy network packet loss
-        const savedPos = activeDeck.currentTime;
-        activeDeck.load();
-        if (savedPos > 0) activeDeck.currentTime = savedPos;
-        activeDeck.play().catch(() => {});
+        player.showToast("⏳ Connecting to audio stream...", 3000);
       }
     }
-  }, 4500);
+  }, 10000);
 }
 
 function clearStallWatchdog() {
