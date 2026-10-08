@@ -13,7 +13,6 @@ const deckA = new Audio();
 const deckB = new Audio();
 
 [deckA, deckB].forEach((d) => {
-  d.crossOrigin = "anonymous";
   d.preload = "auto";
   d.setAttribute("playsinline", "");
   d.setAttribute("webkit-playsinline", "");
@@ -26,6 +25,7 @@ window._musicsaura_audio = activeDeck;
 
 let isTransitioning = false;
 let crossfadeTimer = null;
+let lastTransitionTriggeredTrack = null;
 
 // In-Memory Offline Blob URL Cache for 0ms synchronous background track transitions
 const offlineBlobUrlCache = new Map();
@@ -203,24 +203,6 @@ function initAudioContext() {
     presenceFilter.connect(trebleFilter);
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
-
-    if (!sourceNodeA) {
-      try {
-        sourceNodeA = audioCtx.createMediaElementSource(deckA);
-        sourceNodeA.connect(subBassFilter);
-      } catch (err) {
-        console.warn("createMediaElementSource deckA notice:", err);
-      }
-    }
-
-    if (!sourceNodeB) {
-      try {
-        sourceNodeB = audioCtx.createMediaElementSource(deckB);
-        sourceNodeB.connect(subBassFilter);
-      } catch (err) {
-        console.warn("createMediaElementSource deckB notice:", err);
-      }
-    }
 
     try {
       const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
@@ -749,7 +731,9 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     console.warn("[Player] Standby deck could not start audio stream. Aborting transition to protect current playback.");
     activeDeck.volume = masterVolume;
     isTransitioning = false;
-    player.next(false);
+    standbyDeck.pause();
+    standbyDeck.removeAttribute("src");
+    standbyDeck.load();
     return;
   }
 
@@ -945,7 +929,9 @@ function bindDeckEvents(deck) {
 
       const fadeSec = crossfadeSeconds > 0 ? Math.min(crossfadeSeconds, Math.floor(dur / 2)) : 0.35;
       const remaining = dur - cur;
-      if (remaining <= fadeSec && remaining > 0) {
+      const songKey = currentSong?.id || currentSong?.link;
+      if (remaining <= fadeSec && remaining > 0 && lastTransitionTriggeredTrack !== songKey) {
+        lastTransitionTriggeredTrack = songKey;
         triggerDeckTransition(crossfadeSeconds > 0 ? fadeSec : 0);
       }
     }
@@ -996,8 +982,19 @@ function bindDeckEvents(deck) {
     deck.pause();
     deck.removeAttribute("src");
     deck.load();
-    player.showToast(`❌ "${currentSong?.title || "This track"}" is unavailable.`, 3500);
+    player.showToast(`⚠️ "${currentSong?.title || "Track"}" is temporarily unavailable on server.`, 3000);
     updateUI();
+
+    // Auto-advance cleanly to next track if playlist has more songs
+    if (playlist.length > 1 && !userPaused && !advancingTrack) {
+      advancingTrack = true;
+      setTimeout(() => {
+        advancingTrack = false;
+        if (!userPaused) {
+          player.next(true);
+        }
+      }, 1200);
+    }
   });
 }
 
@@ -1138,6 +1135,7 @@ export const player = {
     currentSong = song;
     userPaused = false;
     prewarmedTrackUrl = null;
+    lastTransitionTriggeredTrack = null;
 
     // Fast synchronous source resolution: preserves mobile user gesture activation for line-speed playback
     const src = resolveAudioSourceSync(song);
