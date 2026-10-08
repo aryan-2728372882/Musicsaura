@@ -3,7 +3,7 @@ import {
   auth, db, isAdmin, onAuthStateChanged,
   collection, getDocs, query, orderBy, limit, onSnapshot, deleteDoc, doc, updateDoc
 } from "./firebase-config.js";
-import { player, formatTime } from "./player.js";
+import { player, formatTime, prewarmAllOfflineTracks } from "./player.js";
 import {
   saveTrackToStorage,
   deleteTrackFromStorage,
@@ -285,6 +285,7 @@ async function processDownloadQueue() {
 
       // Save track into both IndexedDB and Cache API
       await saveTrackToStorage(song, blob);
+      prewarmAllOfflineTracks();
 
       // Cache thumbnail image for offline UI
       if (song.thumbnail && !song.thumbnail.startsWith("assets/")) {
@@ -1491,6 +1492,7 @@ onAuthStateChanged(auth, (user) => {
 /* ── ONLINE / OFFLINE DETECTOR ── */
 window.addEventListener("offline", () => {
   player.showToast("✈️ Offline Mode: Switched to In-App Downloads", 3500);
+  prewarmAllOfflineTracks();
   selectGenre("offline");
 });
 

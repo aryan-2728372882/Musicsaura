@@ -532,6 +532,25 @@ function prewarmNextSongOfflineBlob() {
   }
 }
 
+export function prewarmAllOfflineTracks() {
+  try {
+    const list = JSON.parse(localStorage.getItem("musicsaura_offline_songs") || "[]");
+    list.forEach((s) => {
+      if (s && s.link) {
+        getOfflineAudioBlobUrl(s.link).catch(() => {});
+      }
+    });
+  } catch {}
+}
+
+if (typeof window !== "undefined") {
+  if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", () => setTimeout(prewarmAllOfflineTracks, 300));
+  } else {
+    setTimeout(prewarmAllOfflineTracks, 300);
+  }
+}
+
 let prewarmedTrackUrl = null;
 
 function prewarmNextTrackStream() {
@@ -1160,11 +1179,14 @@ export const player = {
 
     // Check IndexedDB in background without blocking instant user playback
     getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
-      if (blobUrl && requestGeneration === playbackGeneration && activeDeck.src !== blobUrl && !activeDeck.paused) {
-        const cur = activeDeck.currentTime || 0;
-        activeDeck.src = blobUrl;
-        if (cur > 0) activeDeck.currentTime = cur;
-        activeDeck.play().catch(() => {});
+      if (blobUrl && requestGeneration === playbackGeneration && activeDeck.src !== blobUrl) {
+        if (!userPaused) {
+          const cur = activeDeck.currentTime || 0;
+          activeDeck.src = blobUrl;
+          if (cur > 0) activeDeck.currentTime = cur;
+          activeDeck.play().catch((e) => console.warn("[Player] Offline blob play error:", e));
+          updateUI();
+        }
       }
     }).catch(() => {});
   },
