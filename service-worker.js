@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v87";
+const APP_SHELL_CACHE = "musicsaura-shell-v89";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -126,14 +126,16 @@ self.addEventListener("fetch", (event) => {
     url.hostname.includes("file.garden");
 
   if (isAudio) {
-    // 1. If explicit background download, bypass SW completely so it downloads at full line speed
-    if (url.searchParams.has("_dl")) {
+    // 1. Explicit download or online external streaming:
+    // ALWAYS bypass SW completely! Allows browser's native C++ streaming pipeline to stream directly
+    // at full line speed (40+ Mbps) with hardware range requests (206) and zero SW CORS/503 interference.
+    if (url.searchParams.has("_dl") || (navigator.onLine && !url.origin.includes(self.location.origin))) {
       return;
     }
 
+    // 2. Offline playback or same-origin audio: check In-App Offline Storage
     event.respondWith(
       (async () => {
-        // A. If track was downloaded to In-App Offline Storage, serve immediately (0ms)
         try {
           const offlineCache = await caches.open(OFFLINE_PWA_STORAGE);
           const rawUrl = url.href.split("?")[0];
@@ -162,25 +164,21 @@ self.addEventListener("fetch", (event) => {
             });
           }
         } catch (err) {
-          console.warn("[SW] Offline cache check notice:", err);
+          console.warn("[SW] Offline audio cache check notice:", err);
         }
 
-        // B. Not in offline cache: fetch from network directly at full line speed (40+ Mbps)
-        try {
-          const netRes = await fetch(request);
-          if (netRes) return netRes;
-        } catch (netErr) {
-          console.warn("[SW] Network audio stream error:", netErr);
+        // 3. If online and same-origin, fetch directly from network
+        if (navigator.onLine) {
+          try {
+            const netRes = await fetch(request);
+            if (netRes) return netRes;
+          } catch (e) {}
         }
 
-        // C. Network truly offline: return CORS-compliant offline response (never breaks browser audio element)
-        return new Response("Audio stream offline", {
-          status: 503,
-          statusText: "Service Unavailable",
-          headers: {
-            "Content-Type": "text/plain",
-            "Access-Control-Allow-Origin": "*"
-          }
+        // 4. Return clean 404 for missing offline tracks without breaking audio tag
+        return new Response(null, {
+          status: 404,
+          statusText: "Not Found in Offline Cache"
         });
       })()
     );

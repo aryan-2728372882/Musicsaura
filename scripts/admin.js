@@ -759,7 +759,7 @@ function renderUsersTable() {
     tr.innerHTML = `
       <td>
         <div class="user-row">
-          <img class="user-avatar" src="${avatarUrl}" alt="" onerror="this.src='assets/logo.png'">
+          <img class="user-avatar" referrerpolicy="no-referrer" src="${avatarUrl}" alt="" onerror="this.src='assets/logo.png'">
           <div>
             <div class="user-name-cell">${escapeHtml(u.displayName || "User")}</div>
             <div class="user-email-cell">${escapeHtml(u.email || "")}</div>

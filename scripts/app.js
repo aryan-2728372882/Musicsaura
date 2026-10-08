@@ -1426,9 +1426,43 @@ player.subscribe((state) => {
 });
 
 /* ── AUTH & USER PROFILE ── */
+function generateNavAvatar(nameOrEmail, size = 56) {
+  const text = (nameOrEmail || "Listener").trim();
+  const clean = text.replace(/@.*$/, "").trim();
+  const parts = clean.split(/[\s._-]+/).filter(Boolean);
+  let initials = "U";
+  if (parts.length >= 2) {
+    initials = (parts[0][0] + parts[1][0]).toUpperCase();
+  } else if (parts.length === 1 && parts[0].length > 0) {
+    initials = parts[0].slice(0, Math.min(2, parts[0].length)).toUpperCase();
+  }
+
+  const palettes = [
+    ["#8a5cf6", "#6366f1"],
+    ["#ec4899", "#8b5cf6"],
+    ["#3b82f6", "#06b6d4"],
+    ["#10b981", "#3b82f6"],
+    ["#f59e0b", "#ef4444"],
+    ["#8b5cf6", "#d946ef"],
+    ["#06b6d4", "#3b82f6"]
+  ];
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = text.charCodeAt(i) + ((hash << 5) - hash);
+  const [col1, col2] = palettes[Math.abs(hash) % palettes.length];
+  const fontSize = Math.round(size * 0.42);
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+    `<defs><linearGradient id="gn" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="${col1}"/><stop offset="100%" stop-color="${col2}"/></linearGradient></defs>` +
+    `<circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}" fill="url(#gn)"/>` +
+    `<text x="50%" y="50%" font-size="${fontSize}" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="700" fill="#ffffff" text-anchor="middle" dominant-baseline="central">${initials}</text>` +
+    `</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 onAuthStateChanged(auth, (user) => {
   if (!user) {
     if (navAvatar) {
+      navAvatar.referrerPolicy = "no-referrer";
       navAvatar.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56'%3E%3Ccircle cx='28' cy='28' r='28' fill='%238a5cf6'/%3E%3Ctext x='50%25' y='50%25' font-size='26' fill='white' text-anchor='middle' dy='.35em'%3E👤%3C/text%3E%3C/svg%3E`;
     }
     if (profileBtn) {
@@ -1437,10 +1471,16 @@ onAuthStateChanged(auth, (user) => {
     return;
   }
 
-  const initial = (user.displayName?.[0] || user.email?.[0] || "U").toUpperCase();
-  const fallback = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56'%3E%3Ccircle cx='28' cy='28' r='28' fill='%238a5cf6'/%3E%3Ctext x='50%25' y='50%25' font-size='24' fill='white' text-anchor='middle' dy='.35em'%3E${initial}%3C/text%3E%3C/svg%3E`;
+  const fallback = generateNavAvatar(user.displayName || user.email, 56);
 
-  if (navAvatar) navAvatar.src = user.photoURL || fallback;
+  if (navAvatar) {
+    navAvatar.referrerPolicy = "no-referrer";
+    navAvatar.onerror = () => {
+      navAvatar.onerror = null;
+      navAvatar.src = fallback;
+    };
+    navAvatar.src = user.photoURL || fallback;
+  }
   if (profileBtn) {
     profileBtn.onclick = () => {
       location.href = isAdmin(user.email) ? "admin-dashboard.html" : "user-dashboard.html";

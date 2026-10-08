@@ -129,7 +129,10 @@ export function normalizeUrl(url) {
   clean = clean.replace(/\.webm(?=[\?&#]|$)/gi, "").replace(/%2Ewebm(?=[\?&#]|$)/gi, "");
 
   try {
-    const u = new URL(clean);
+    let decoded;
+    try { decoded = decodeURI(clean); } catch { decoded = clean; }
+    const encoded = encodeURI(decoded);
+    const u = new URL(encoded);
     const host = u.hostname.toLowerCase();
     if (host.includes("dropbox.com")) {
       if (host === "www.dropbox.com") u.hostname = "dl.dropboxusercontent.com";
@@ -705,12 +708,30 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
   try {
     const playPromise = standbyDeck.play();
     if (playPromise !== undefined) {
-      await playPromise.catch((err) => {
+      await playPromise.catch(async (err) => {
         console.warn("[Player] Standby play error:", err);
+        // Opportunistic CORS recovery: retry without CORS restrictions if remote CDN rejected
+        if (standbyDeck.hasAttribute("crossOrigin") || standbyDeck.crossOrigin) {
+          standbyDeck.removeAttribute("crossOrigin");
+          standbyDeck.crossOrigin = null;
+          standbyDeck.load();
+          await standbyDeck.play().catch((e2) => {
+            console.warn("[Player] Standby no-CORS retry failed:", e2);
+          });
+        }
       });
     }
   } catch (err) {
     console.warn("[Player] Standby play exception:", err);
+  }
+
+  // Safety: If standbyDeck failed completely to start, abort transition to prevent silencing activeDeck!
+  if (standbyDeck.paused && standbyDeck.currentTime === 0) {
+    console.warn("[Player] Standby deck could not start audio stream. Aborting transition to protect current playback.");
+    activeDeck.volume = masterVolume;
+    isTransitioning = false;
+    player.next(false);
+    return;
   }
 
   if (useCrossfade) {
@@ -928,6 +949,24 @@ function bindDeckEvents(deck) {
   });
 
   deck.addEventListener("error", () => {
+    // Opportunistic CORS Fallback: If track failed under strict CORS ("anonymous"),
+    // strip crossOrigin and retry immediately so the audio element can play as opaque media.
+    if (deck.hasAttribute("crossOrigin") || deck.crossOrigin) {
+      console.warn(`[Player] ${deck === activeDeck ? "Active" : "Standby"} deck CORS/media error. Retrying without CORS restriction...`);
+      deck.removeAttribute("crossOrigin");
+      deck.crossOrigin = null;
+      const retrySrc = deck.src;
+      if (retrySrc) {
+        deck.load();
+        if (deck === activeDeck && !userPaused) {
+          deck.play().catch((err) => {
+            console.warn("[Player] Post-CORS retry play warning:", err);
+          });
+        }
+        return; // Retrying cleanly without CORS mode
+      }
+    }
+
     if (deck !== activeDeck) return;
     advancingTrack = false;
     isTransitioning = false;
@@ -1094,8 +1133,15 @@ export const player = {
     try {
       const playPromise = activeDeck.play();
       if (playPromise !== undefined) {
-        playPromise.catch((err) => {
+        playPromise.catch(async (err) => {
           console.warn("[Player] Direct play gesture warning:", err);
+          if (activeDeck.hasAttribute("crossOrigin") || activeDeck.crossOrigin) {
+            console.warn("[Player] Retrying direct play without CORS restrictions...");
+            activeDeck.removeAttribute("crossOrigin");
+            activeDeck.crossOrigin = null;
+            activeDeck.load();
+            await activeDeck.play().catch(() => {});
+          }
           updateUI();
         });
       }
