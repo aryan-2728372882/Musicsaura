@@ -655,6 +655,7 @@ async function armStandbyDeck() {
     standbyDeck.preload = "auto";
     standbyDeck.load();
   }
+  try { standbyDeck.currentTime = 0; } catch {}
 }
 
 let transitioningTargetSong = null;
@@ -675,6 +676,7 @@ function finalizeTransitionImmediately() {
   const prevActive = activeDeck;
   activeDeck = standbyDeck;
   standbyDeck = prevActive;
+  try { standbyDeck.currentTime = 0; } catch {}
 
   audio = activeDeck;
   window._musicsaura_audio = activeDeck;
@@ -749,6 +751,12 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     standbyDeck.load();
   }
 
+  // CRITICAL: Guarantee standbyDeck starts at 0:00 (prevents jumping to middle of song from previous track offset)
+  try { standbyDeck.currentTime = 0; } catch {}
+  standbyDeck.addEventListener("loadedmetadata", () => {
+    try { standbyDeck.currentTime = 0; } catch {}
+  }, { once: true });
+
   standbyDeck.playbackRate = playbackRate;
 
   if (crossfadeTimer) {
@@ -769,15 +777,22 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
   // Play standbyDeck WHILE activeDeck is currently outputting sound.
   // OS audio session never drops to 0 active streams, preventing Doze from suspending Chrome background JS!
   try {
+    try { standbyDeck.currentTime = 0; } catch {}
     const playPromise = standbyDeck.play();
     if (playPromise !== undefined) {
-      await playPromise.catch(async (err) => {
+      await playPromise.then(() => {
+        // Enforce that incoming track starts from 0:00
+        if (standbyDeck.currentTime > 1.0) {
+          try { standbyDeck.currentTime = 0; } catch {}
+        }
+      }).catch(async (err) => {
         console.warn("[Player] Standby play error:", err);
         // Opportunistic CORS recovery: retry without CORS restrictions if remote CDN rejected
         if (standbyDeck.hasAttribute("crossOrigin") || standbyDeck.crossOrigin) {
           standbyDeck.removeAttribute("crossOrigin");
           standbyDeck.crossOrigin = null;
           standbyDeck.load();
+          try { standbyDeck.currentTime = 0; } catch {}
           await standbyDeck.play().catch((e2) => {
             console.warn("[Player] Standby no-CORS retry failed:", e2);
           });
@@ -1250,19 +1265,34 @@ export const player = {
       activeDeck.src = src;
     }
 
+    // CRITICAL: Guarantee activeDeck starts at 0:00 (prevents jumping to middle of track from previous song)
+    try { activeDeck.currentTime = 0; } catch {}
+    activeDeck.addEventListener("loadedmetadata", () => {
+      try { activeDeck.currentTime = 0; } catch {}
+    }, { once: true });
+
     activeDeck.playbackRate = playbackRate;
     activeDeck.volume = masterVolume;
+
+    const playSongTimestamp = Date.now();
 
     try {
       const playPromise = activeDeck.play();
       if (playPromise !== undefined) {
-        playPromise.catch(async (err) => {
+        playPromise.then(() => {
+          // Guard: if track somehow jumped ahead at playback start, reset to 0:00
+          const elapsed = (Date.now() - playSongTimestamp) / 1000;
+          if (activeDeck.currentTime > 2.0 && activeDeck.currentTime > elapsed + 1.5) {
+            try { activeDeck.currentTime = 0; } catch {}
+          }
+        }).catch(async (err) => {
           console.warn("[Player] Direct play gesture warning:", err);
           if (activeDeck.hasAttribute("crossOrigin") || activeDeck.crossOrigin) {
             console.warn("[Player] Retrying direct play without CORS restrictions...");
             activeDeck.removeAttribute("crossOrigin");
             activeDeck.crossOrigin = null;
             activeDeck.load();
+            try { activeDeck.currentTime = 0; } catch {}
             await activeDeck.play().catch(() => {});
           }
           updateUI();
@@ -1285,9 +1315,13 @@ export const player = {
     getOfflineAudioBlobUrl(song.link).then((blobUrl) => {
       if (blobUrl && requestGeneration === playbackGeneration && activeDeck.src !== blobUrl) {
         if (!userPaused) {
+          const songElapsedSeconds = (Date.now() - playSongTimestamp) / 1000;
+          // Guard against stale currentTime from previous track!
+          // Only preserve position if activeDeck.currentTime is within the actual elapsed playback time (+ 2s tolerance)
           const cur = activeDeck.currentTime || 0;
+          const safeCur = (cur > 0 && cur <= (songElapsedSeconds + 2)) ? cur : 0;
           activeDeck.src = blobUrl;
-          if (cur > 0) activeDeck.currentTime = cur;
+          try { activeDeck.currentTime = safeCur; } catch {}
           activeDeck.play().catch((e) => console.warn("[Player] Offline blob play error:", e));
           updateUI();
         }
