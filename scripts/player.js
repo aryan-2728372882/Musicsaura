@@ -657,6 +657,57 @@ async function armStandbyDeck() {
   }
 }
 
+let transitioningTargetSong = null;
+let transitioningTargetIndex = null;
+
+function finalizeTransitionImmediately() {
+  if (!isTransitioning) return;
+  if (crossfadeTimer) {
+    clearInterval(crossfadeTimer);
+    crossfadeTimer = null;
+  }
+
+  activeDeck.pause();
+  activeDeck.currentTime = 0;
+  activeDeck.volume = masterVolume;
+  standbyDeck.volume = masterVolume;
+
+  const prevActive = activeDeck;
+  activeDeck = standbyDeck;
+  standbyDeck = prevActive;
+
+  audio = activeDeck;
+  window._musicsaura_audio = activeDeck;
+
+  if (transitioningTargetSong) {
+    currentSong = transitioningTargetSong;
+    currentIndex = transitioningTargetIndex !== null && transitioningTargetIndex >= 0 ? transitioningTargetIndex : currentIndex;
+  }
+  userPaused = false;
+  advancingTrack = false;
+  isTransitioning = false;
+  transitioningTargetSong = null;
+  transitioningTargetIndex = null;
+
+  flushStatsToFirebase().catch(() => {});
+  hasRecordedStat    = false;
+  accumulatedPlaySec = 0;
+  playSessionStart   = Date.now();
+
+  updateMediaSession(currentSong);
+  updateUI();
+  updateProgress();
+  armStandbyDeck();
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && isTransitioning) {
+      finalizeTransitionImmediately();
+    }
+  });
+}
+
 // ─── DUAL-DECK EQUAL-POWER TRANSITION ENGINE ───────────────────────
 // Studio Equal-Power DJ Crossfade: Constant acoustic loudness across whole blend (cos² + sin² = 1)
 // Starts standbyDeck.play() WHILE activeDeck is playing to prevent Android 14/15/16 background Doze freeze!
@@ -677,6 +728,17 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     targetIndex = candidate.index;
   }
 
+  // If screen is locked / document is hidden, background setInterval is throttled or suspended.
+  // Transition directly on activeDeck to maintain uninterrupted Android Audio Focus!
+  if (document.hidden) {
+    isTransitioning = false;
+    advancingTrack = false;
+    player.playSong(targetSong, null, targetIndex);
+    return;
+  }
+
+  transitioningTargetSong = targetSong;
+  transitioningTargetIndex = targetIndex;
   isTransitioning = true;
   advancingTrack = true;
 
@@ -726,11 +788,14 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     console.warn("[Player] Standby play exception:", err);
   }
 
-  // Safety: If standbyDeck failed completely to start, abort transition to prevent silencing activeDeck!
+  // Safety: If standbyDeck failed completely to start, abort transition to protect current playback!
   if (standbyDeck.paused && standbyDeck.currentTime === 0) {
     console.warn("[Player] Standby deck could not start audio stream. Aborting transition to protect current playback.");
     activeDeck.volume = masterVolume;
     isTransitioning = false;
+    advancingTrack = false;
+    transitioningTargetSong = null;
+    transitioningTargetIndex = null;
     standbyDeck.pause();
     standbyDeck.removeAttribute("src");
     standbyDeck.load();
@@ -743,7 +808,25 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     let switchedMetaAtMidpoint = false;
 
     await new Promise((resolve) => {
+      const watchdog = setTimeout(() => {
+        if (crossfadeTimer) {
+          clearInterval(crossfadeTimer);
+          crossfadeTimer = null;
+        }
+        resolve();
+      }, fadeDurationMs + 1500);
+
       crossfadeTimer = setInterval(() => {
+        if (document.hidden) {
+          clearTimeout(watchdog);
+          if (crossfadeTimer) {
+            clearInterval(crossfadeTimer);
+            crossfadeTimer = null;
+          }
+          resolve();
+          return;
+        }
+
         const elapsed = performance.now() - startTime;
         const progress = clamp(elapsed / fadeDurationMs, 0, 1);
 
@@ -767,6 +850,7 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
         }
 
         if (progress >= 1) {
+          clearTimeout(watchdog);
           clearInterval(crossfadeTimer);
           crossfadeTimer = null;
           resolve();
@@ -794,6 +878,8 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
   userPaused = false;
   advancingTrack = false;
   isTransitioning = false;
+  transitioningTargetSong = null;
+  transitioningTargetIndex = null;
 
   flushStatsToFirebase().catch(() => {});
   hasRecordedStat    = false;
@@ -927,6 +1013,14 @@ function bindDeckEvents(deck) {
         return; // Play to the very end of last song
       }
 
+      // If document is hidden (screen locked / tab in background):
+      // Do NOT start a dual-deck 15-second crossfade with background setInterval!
+      // The current track on activeDeck will play smoothly to completion,
+      // and the native 'ended' event listener will advance seamlessly on activeDeck.
+      if (document.hidden) {
+        return;
+      }
+
       const fadeSec = crossfadeSeconds > 0 ? Math.min(crossfadeSeconds, Math.floor(dur / 2)) : 0.35;
       const remaining = dur - cur;
       const songKey = currentSong?.id || currentSong?.link;
@@ -939,7 +1033,16 @@ function bindDeckEvents(deck) {
 
   deck.addEventListener("ended", () => {
     if (deck !== activeDeck) return;
-    if (advancingTrack || isTransitioning) return;
+
+    // Reset any pending transition state if activeDeck reached completion
+    if (crossfadeTimer) {
+      clearInterval(crossfadeTimer);
+      crossfadeTimer = null;
+    }
+    isTransitioning = false;
+    advancingTrack = false;
+    transitioningTargetSong = null;
+    transitioningTargetIndex = null;
 
     flushStatsToFirebase();
     isBuffering = false;
@@ -1116,8 +1219,8 @@ export const player = {
       currentIndex = index;
     }
 
-    // Only crossfade if NOT a direct user card click and already playing
-    if (!isDirectSelection && !activeDeck.paused && activeDeck.currentTime > 1.2 && crossfadeSeconds > 0 && !isTransitioning) {
+    // Only crossfade if NOT a direct user card click and already playing and screen is visible
+    if (!isDirectSelection && !activeDeck.paused && activeDeck.currentTime > 1.2 && crossfadeSeconds > 0 && !isTransitioning && !document.hidden) {
       triggerDeckTransition(Math.min(crossfadeSeconds, 3.0), song, currentIndex);
       return;
     }
@@ -1128,6 +1231,9 @@ export const player = {
       crossfadeTimer = null;
     }
     isTransitioning = false;
+    advancingTrack = false;
+    transitioningTargetSong = null;
+    transitioningTargetIndex = null;
     standbyDeck.pause();
     standbyDeck.currentTime = 0;
     standbyDeck.volume = masterVolume;
@@ -1194,6 +1300,10 @@ export const player = {
     if (!currentSong && playlist.length > 0) {
       return player.playSong(playlist[currentIndex]);
     }
+    // If current track is finished and not repeatMode 'one', advance to next track (prevents stuck loop)
+    if ((activeDeck.ended || (activeDeck.duration > 0 && activeDeck.currentTime >= activeDeck.duration - 0.5)) && repeatMode !== "one") {
+      return player.next(true);
+    }
     userPaused = false;
     try {
       const p = activeDeck.play();
@@ -1211,6 +1321,9 @@ export const player = {
       crossfadeTimer = null;
     }
     isTransitioning = false;
+    advancingTrack = false;
+    transitioningTargetSong = null;
+    transitioningTargetIndex = null;
     activeDeck.pause();
     standbyDeck.pause();
     activeDeck.volume = masterVolume;
@@ -1250,7 +1363,7 @@ export const player = {
     const nextSong = playlist[nextIdx];
     if (!nextSong) return;
 
-    if (!activeDeck.paused && activeDeck.currentTime > 1.0 && crossfadeSeconds > 0 && !isTransitioning) {
+    if (!activeDeck.paused && activeDeck.currentTime > 1.0 && crossfadeSeconds > 0 && !isTransitioning && !document.hidden) {
       triggerDeckTransition(Math.min(crossfadeSeconds, 2.5), nextSong, nextIdx);
     } else {
       player.playSong(nextSong, null, nextIdx);
@@ -1276,6 +1389,9 @@ export const player = {
       crossfadeTimer = null;
     }
     isTransitioning = false;
+    advancingTrack = false;
+    transitioningTargetSong = null;
+    transitioningTargetIndex = null;
     standbyDeck.pause();
     standbyDeck.currentTime = 0;
     standbyDeck.volume = masterVolume;
