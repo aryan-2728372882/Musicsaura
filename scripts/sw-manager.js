@@ -11,7 +11,7 @@
 
   if (!("serviceWorker" in navigator) || !isSecureContext) return;
 
-  const SW_URL = "/service-worker.js?build=92";
+  const SW_URL = "/service-worker.js?build=93";
   let reloadedForControllerChange = false;
 
   window.addEventListener("load", async () => {
