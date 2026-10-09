@@ -729,15 +729,6 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     targetIndex = candidate.index;
   }
 
-  // If screen is locked / document is hidden, background setInterval is throttled or suspended.
-  // Transition directly on activeDeck to maintain uninterrupted Android Audio Focus!
-  if (document.hidden) {
-    isTransitioning = false;
-    advancingTrack = false;
-    player.playSong(targetSong, null, targetIndex);
-    return;
-  }
-
   transitioningTargetSong = targetSong;
   transitioningTargetIndex = targetIndex;
   isTransitioning = true;
@@ -828,19 +819,9 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
           crossfadeTimer = null;
         }
         resolve();
-      }, fadeDurationMs + 1500);
+      }, fadeDurationMs + 2000);
 
       crossfadeTimer = setInterval(() => {
-        if (document.hidden) {
-          clearTimeout(watchdog);
-          if (crossfadeTimer) {
-            clearInterval(crossfadeTimer);
-            crossfadeTimer = null;
-          }
-          resolve();
-          return;
-        }
-
         const elapsed = performance.now() - startTime;
         const progress = clamp(elapsed / fadeDurationMs, 0, 1);
 
@@ -1027,18 +1008,6 @@ function bindDeckEvents(deck) {
         return; // Play to the very end of last song
       }
 
-      // If document is hidden (screen locked / tab in background):
-      // Do NOT start a dual-deck 15-second crossfade with background setInterval!
-      // The current track on activeDeck will play smoothly to completion,
-      // and the native 'ended' event listener will advance seamlessly on activeDeck.
-      if (document.hidden) {
-        if (dur - cur <= 0.35 && !advancingTrack) {
-          advancingTrack = true;
-          player.next(true);
-        }
-        return;
-      }
-
       const fadeSec = crossfadeSeconds > 0 ? Math.min(crossfadeSeconds, Math.floor(dur / 2)) : 0.35;
       const remaining = dur - cur;
       const songKey = currentSong?.id || currentSong?.link;
@@ -1052,12 +1021,14 @@ function bindDeckEvents(deck) {
   deck.addEventListener("ended", () => {
     if (deck !== activeDeck) return;
 
-    // Reset any pending transition state if activeDeck reached completion
     if (crossfadeTimer) {
       clearInterval(crossfadeTimer);
       crossfadeTimer = null;
     }
-    isTransitioning = false;
+    if (isTransitioning) {
+      finalizeTransitionImmediately();
+      return;
+    }
     advancingTrack = false;
     transitioningTargetSong = null;
     transitioningTargetIndex = null;
@@ -1237,8 +1208,8 @@ export const player = {
       currentIndex = index;
     }
 
-    // Only crossfade if NOT a direct user card click and already playing and screen is visible
-    if (!isDirectSelection && !activeDeck.paused && activeDeck.currentTime > 1.2 && crossfadeSeconds > 0 && !isTransitioning && !document.hidden) {
+    // Only crossfade if NOT a direct user card click and already playing
+    if (!isDirectSelection && !activeDeck.paused && activeDeck.currentTime > 1.2 && crossfadeSeconds > 0 && !isTransitioning) {
       triggerDeckTransition(Math.min(crossfadeSeconds, 3.0), song, currentIndex);
       return;
     }
@@ -1376,7 +1347,7 @@ export const player = {
     const nextSong = playlist[nextIdx];
     if (!nextSong) return;
 
-    if (!activeDeck.paused && activeDeck.currentTime > 1.0 && crossfadeSeconds > 0 && !isTransitioning && !document.hidden) {
+    if (!activeDeck.paused && activeDeck.currentTime > 1.0 && crossfadeSeconds > 0 && !isTransitioning) {
       triggerDeckTransition(Math.min(crossfadeSeconds, 2.5), nextSong, nextIdx);
     } else {
       player.playSong(nextSong, null, nextIdx);
