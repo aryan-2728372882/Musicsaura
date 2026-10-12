@@ -11,7 +11,7 @@
 
   if (!("serviceWorker" in navigator) || !isSecureContext) return;
 
-  const SW_URL = "/service-worker.js?build=94";
+  const SW_URL = "/service-worker.js?build=95";
   let reloadedForControllerChange = false;
 
   window.addEventListener("load", async () => {
@@ -22,8 +22,15 @@
         window.location.reload();
       });
       const reg = await navigator.serviceWorker.register(SW_URL);
-      await reg.update();
+      await reg.update().catch(() => {});
       console.log("[SW] Registered successfully:", reg.scope);
+
+      // Check for updates on visibility and focus change
+      const checkUpdate = () => { reg.update().catch(() => {}); };
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) checkUpdate();
+      });
+      window.addEventListener("focus", checkUpdate);
 
       // Check for updates on load and periodically
       reg.addEventListener("updatefound", () => {

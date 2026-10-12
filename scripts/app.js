@@ -1472,7 +1472,10 @@ onAuthStateChanged(auth, (user) => {
     return;
   }
 
-  const fallback = generateNavAvatar(user.displayName || user.email, 56);
+  const displayName = user.displayName || user.providerData?.find(p => p.displayName)?.displayName || "";
+  const email = user.email || user.providerData?.find(p => p.email)?.email || "";
+  const fallback = generateNavAvatar(displayName || email, 56);
+  const photo = user.photoURL || user.providerData?.find(p => p.photoURL)?.photoURL || user.providerData?.[0]?.photoURL || null;
 
   if (navAvatar) {
     navAvatar.referrerPolicy = "no-referrer";
@@ -1480,7 +1483,7 @@ onAuthStateChanged(auth, (user) => {
       navAvatar.onerror = null;
       navAvatar.src = fallback;
     };
-    navAvatar.src = user.photoURL || fallback;
+    navAvatar.src = photo || fallback;
   }
   if (profileBtn) {
     profileBtn.onclick = () => {

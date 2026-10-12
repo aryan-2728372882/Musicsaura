@@ -26,6 +26,8 @@ window._musicsaura_audio = activeDeck;
 let isTransitioning = false;
 let crossfadeTimer = null;
 let lastTransitionTriggeredTrack = null;
+let transitionSessionId = 0;
+let transitionPromiseResolver = null;
 
 // In-Memory Offline Blob URL Cache for 0ms synchronous background track transitions
 const offlineBlobUrlCache = new Map();
@@ -661,42 +663,78 @@ async function armStandbyDeck() {
 let transitioningTargetSong = null;
 let transitioningTargetIndex = null;
 
-function finalizeTransitionImmediately() {
-  if (!isTransitioning) return;
+function cancelAnyTransition() {
   if (crossfadeTimer) {
     clearInterval(crossfadeTimer);
     crossfadeTimer = null;
   }
-
-  // Ensure incoming standbyDeck is playing and at full masterVolume
-  standbyDeck.volume = masterVolume;
+  if (transitionPromiseResolver) {
+    const r = transitionPromiseResolver;
+    transitionPromiseResolver = null;
+    try { r(); } catch {}
+  }
+  isTransitioning = false;
+  transitionSessionId++;
+  advancingTrack = false;
+  transitioningTargetSong = null;
+  transitioningTargetIndex = null;
   try {
-    const p = standbyDeck.play();
+    standbyDeck.pause();
+    standbyDeck.removeAttribute("src");
+    standbyDeck.load();
+  } catch {}
+  standbyDeck.volume = masterVolume;
+}
+
+function finalizeTransition(outgoingDeck, incomingDeck, targetSong, targetIndex) {
+  if (!isTransitioning) return;
+  isTransitioning = false;
+  transitionSessionId++; // Invalidate running crossfade watchdog / intervals
+
+  if (crossfadeTimer) {
+    clearInterval(crossfadeTimer);
+    crossfadeTimer = null;
+  }
+  if (transitionPromiseResolver) {
+    const r = transitionPromiseResolver;
+    transitionPromiseResolver = null;
+    try { r(); } catch {}
+  }
+
+  // 1. Cleanly stop and disarm outgoing deck so it holds no old track offset or memory
+  try {
+    outgoingDeck.pause();
+    outgoingDeck.currentTime = 0;
+    outgoingDeck.removeAttribute("src");
+    outgoingDeck.load();
+  } catch {}
+  outgoingDeck.volume = masterVolume;
+
+  // 2. Guarantee incoming deck plays at full masterVolume
+  incomingDeck.volume = masterVolume;
+  try {
+    const p = incomingDeck.play();
     if (p !== undefined) p.catch(() => {});
   } catch {}
 
-  // Pause outgoing activeDeck
-  activeDeck.pause();
-  activeDeck.currentTime = 0;
-  activeDeck.volume = masterVolume;
-
-  const prevActive = activeDeck;
-  activeDeck = standbyDeck;
-  standbyDeck = prevActive;
-  try { standbyDeck.currentTime = 0; } catch {}
-
+  // 3. Swap deck pointers
+  activeDeck = incomingDeck;
+  standbyDeck = outgoingDeck;
   audio = activeDeck;
   window._musicsaura_audio = activeDeck;
 
-  if (transitioningTargetSong) {
-    currentSong = transitioningTargetSong;
-    currentIndex = transitioningTargetIndex !== null && transitioningTargetIndex >= 0 ? transitioningTargetIndex : currentIndex;
+  if (targetSong) {
+    currentSong = targetSong;
+    currentIndex = targetIndex !== null && targetIndex >= 0 ? targetIndex : currentIndex;
   }
+
   userPaused = false;
   advancingTrack = false;
-  isTransitioning = false;
   transitioningTargetSong = null;
   transitioningTargetIndex = null;
+  standbySong = null;
+  standbyIndex = -1;
+  lastTransitionTriggeredTrack = currentSong?.id || currentSong?.link;
 
   flushStatsToFirebase().catch(() => {});
   hasRecordedStat    = false;
@@ -706,7 +744,11 @@ function finalizeTransitionImmediately() {
   updateMediaSession(currentSong);
   updateUI();
   updateProgress();
-  armStandbyDeck();
+}
+
+function finalizeTransitionImmediately() {
+  if (!isTransitioning) return;
+  finalizeTransition(activeDeck, standbyDeck, transitioningTargetSong, transitioningTargetIndex);
 }
 
 // ─── DUAL-DECK EQUAL-POWER TRANSITION ENGINE ───────────────────────
@@ -729,25 +771,30 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     targetIndex = candidate.index;
   }
 
+  const thisSession = ++transitionSessionId;
   transitioningTargetSong = targetSong;
   transitioningTargetIndex = targetIndex;
   isTransitioning = true;
   advancingTrack = true;
 
-  // Ensure standbyDeck is prepared with target song
+  const outgoingDeck = activeDeck;
+  const incomingDeck = standbyDeck;
+
+  // Prepare incoming deck with the resolved source
   const targetSrc = await resolveAudioSource(targetSong);
-  if (standbyDeck.src !== targetSrc) {
-    standbyDeck.src = targetSrc;
-    standbyDeck.load();
+  if (thisSession !== transitionSessionId) return;
+
+  if (incomingDeck.src !== targetSrc) {
+    incomingDeck.src = targetSrc;
+    incomingDeck.load();
   }
 
-  // CRITICAL: Guarantee standbyDeck starts at 0:00 (prevents jumping to middle of song from previous track offset)
-  try { standbyDeck.currentTime = 0; } catch {}
-  standbyDeck.addEventListener("loadedmetadata", () => {
-    try { standbyDeck.currentTime = 0; } catch {}
+  try { incomingDeck.currentTime = 0; } catch {}
+  incomingDeck.addEventListener("loadedmetadata", () => {
+    try { incomingDeck.currentTime = 0; } catch {}
   }, { once: true });
 
-  standbyDeck.playbackRate = playbackRate;
+  incomingDeck.playbackRate = playbackRate;
 
   if (crossfadeTimer) {
     clearInterval(crossfadeTimer);
@@ -755,35 +802,31 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
   }
 
   const durationSec = Math.max(0, fadeSec);
-  const useCrossfade = durationSec > 0.4 && !activeDeck.paused;
+  const useCrossfade = durationSec > 0.4 && !outgoingDeck.paused;
 
   if (useCrossfade) {
-    standbyDeck.volume = 0;
+    incomingDeck.volume = 0;
   } else {
-    standbyDeck.volume = masterVolume;
+    incomingDeck.volume = masterVolume;
   }
 
-  // 🚀 CRITICAL FOR ANDROID 14/15/16 LOCKSCREEN KEEP-ALIVE:
-  // Play standbyDeck WHILE activeDeck is currently outputting sound.
-  // OS audio session never drops to 0 active streams, preventing Doze from suspending Chrome background JS!
+  // Play incomingDeck while outgoingDeck continues outputting sound
   try {
-    try { standbyDeck.currentTime = 0; } catch {}
-    const playPromise = standbyDeck.play();
+    try { incomingDeck.currentTime = 0; } catch {}
+    const playPromise = incomingDeck.play();
     if (playPromise !== undefined) {
       await playPromise.then(() => {
-        // Enforce that incoming track starts from 0:00
-        if (standbyDeck.currentTime > 1.0) {
-          try { standbyDeck.currentTime = 0; } catch {}
+        if (incomingDeck.currentTime > 1.5) {
+          try { incomingDeck.currentTime = 0; } catch {}
         }
       }).catch(async (err) => {
         console.warn("[Player] Standby play error:", err);
-        // Opportunistic CORS recovery: retry without CORS restrictions if remote CDN rejected
-        if (standbyDeck.hasAttribute("crossOrigin") || standbyDeck.crossOrigin) {
-          standbyDeck.removeAttribute("crossOrigin");
-          standbyDeck.crossOrigin = null;
-          standbyDeck.load();
-          try { standbyDeck.currentTime = 0; } catch {}
-          await standbyDeck.play().catch((e2) => {
+        if (incomingDeck.hasAttribute("crossOrigin") || incomingDeck.crossOrigin) {
+          incomingDeck.removeAttribute("crossOrigin");
+          incomingDeck.crossOrigin = null;
+          incomingDeck.load();
+          try { incomingDeck.currentTime = 0; } catch {}
+          await incomingDeck.play().catch((e2) => {
             console.warn("[Player] Standby no-CORS retry failed:", e2);
           });
         }
@@ -793,17 +836,21 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     console.warn("[Player] Standby play exception:", err);
   }
 
-  // Safety: If standbyDeck failed completely to start, abort transition to protect current playback!
-  if (standbyDeck.paused && standbyDeck.currentTime === 0) {
+  if (thisSession !== transitionSessionId) return;
+
+  // Safety: If standby deck failed completely to start, abort transition to protect current playback
+  if (incomingDeck.paused && incomingDeck.currentTime === 0) {
     console.warn("[Player] Standby deck could not start audio stream. Aborting transition to protect current playback.");
-    activeDeck.volume = masterVolume;
+    outgoingDeck.volume = masterVolume;
     isTransitioning = false;
     advancingTrack = false;
     transitioningTargetSong = null;
     transitioningTargetIndex = null;
-    standbyDeck.pause();
-    standbyDeck.removeAttribute("src");
-    standbyDeck.load();
+    try {
+      incomingDeck.pause();
+      incomingDeck.removeAttribute("src");
+      incomingDeck.load();
+    } catch {}
     return;
   }
 
@@ -813,29 +860,43 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     let switchedMetaAtMidpoint = false;
 
     await new Promise((resolve) => {
-      const watchdog = setTimeout(() => {
-        if (crossfadeTimer) {
-          clearInterval(crossfadeTimer);
-          crossfadeTimer = null;
+      let resolved = false;
+      const doResolve = () => {
+        if (!resolved) {
+          resolved = true;
+          if (crossfadeTimer) {
+            clearInterval(crossfadeTimer);
+            crossfadeTimer = null;
+          }
+          resolve();
         }
-        resolve();
-      }, fadeDurationMs + 2000);
+      };
+
+      transitionPromiseResolver = doResolve;
+
+      const watchdog = setTimeout(() => {
+        doResolve();
+      }, fadeDurationMs + 1500);
 
       crossfadeTimer = setInterval(() => {
+        if (thisSession !== transitionSessionId || !isTransitioning) {
+          clearTimeout(watchdog);
+          doResolve();
+          return;
+        }
+
         const elapsed = performance.now() - startTime;
         const progress = clamp(elapsed / fadeDurationMs, 0, 1);
 
-        // Studio Raised Cosine / Hann Window Blend (15s Studio Transition):
-        // Ending song: Audio starts going down smoothly from 100% to 0% in its final 15 seconds
-        // Starting song: Audio increases smoothly from 0% up to 100%
-        // Linear amplitude sum remains constant at 1.0 (zero clipping, zero dip, silky radio transition)
+        // Raised Cosine / Hann Window Blend:
+        // Outgoing decreases from 100% to 0%
+        // Incoming increases from 0% to 100%
         const outFactor = 0.5 * (1 + Math.cos(progress * Math.PI));
         const inFactor  = 0.5 * (1 - Math.cos(progress * Math.PI));
 
-        activeDeck.volume  = clamp(outFactor * masterVolume, 0, 1);
-        standbyDeck.volume = clamp(inFactor * masterVolume, 0, 1);
+        outgoingDeck.volume = clamp(outFactor * masterVolume, 0, 1);
+        incomingDeck.volume = clamp(inFactor * masterVolume, 0, 1);
 
-        // Seamlessly switch player title, artist, artwork & lockscreen notification at midpoint (when incoming song becomes dominant)
         if (progress >= 0.5 && !switchedMetaAtMidpoint) {
           switchedMetaAtMidpoint = true;
           currentSong = targetSong;
@@ -846,47 +907,16 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
 
         if (progress >= 1) {
           clearTimeout(watchdog);
-          clearInterval(crossfadeTimer);
-          crossfadeTimer = null;
-          resolve();
+          doResolve();
         }
       }, 25);
     });
   }
 
-  // Finalize switch
-  activeDeck.pause();
-  activeDeck.currentTime = 0;
-  activeDeck.volume = masterVolume;
-  standbyDeck.volume = masterVolume;
-
-  // Swap active and standby deck pointers
-  const prevActive = activeDeck;
-  activeDeck = standbyDeck;
-  standbyDeck = prevActive;
-
-  audio = activeDeck;
-  window._musicsaura_audio = activeDeck;
-
-  currentSong = targetSong;
-  currentIndex = targetIndex !== null && targetIndex >= 0 ? targetIndex : currentIndex;
-  userPaused = false;
-  advancingTrack = false;
-  isTransitioning = false;
-  transitioningTargetSong = null;
-  transitioningTargetIndex = null;
-
-  flushStatsToFirebase().catch(() => {});
-  hasRecordedStat    = false;
-  accumulatedPlaySec = 0;
-  playSessionStart   = Date.now();
-
-  updateMediaSession(currentSong);
-  updateUI();
-  updateProgress();
-
-  // Immediately arm the new standby deck for the subsequent track
-  armStandbyDeck();
+  // Finalize switch ONLY if this transition session has not already been finalized
+  if (thisSession === transitionSessionId && isTransitioning) {
+    finalizeTransition(outgoingDeck, incomingDeck, targetSong, targetIndex);
+  }
 }
 
 // ─── PERSISTENT DUAL-DECK AUDIO EVENT BINDINGS ─────────────────────
@@ -1008,12 +1038,12 @@ function bindDeckEvents(deck) {
         return; // Play to the very end of last song
       }
 
-      const fadeSec = crossfadeSeconds > 0 ? Math.min(crossfadeSeconds, Math.floor(dur / 2)) : 0.35;
+      const fadeSec = crossfadeSeconds > 0 ? Math.min(crossfadeSeconds, Math.floor(dur / 2)) : 0;
       const remaining = dur - cur;
       const songKey = currentSong?.id || currentSong?.link;
-      if (remaining <= fadeSec && remaining > 0 && lastTransitionTriggeredTrack !== songKey) {
+      if (fadeSec > 0 && remaining <= fadeSec && remaining > 0 && lastTransitionTriggeredTrack !== songKey) {
         lastTransitionTriggeredTrack = songKey;
-        triggerDeckTransition(crossfadeSeconds > 0 ? fadeSec : 0);
+        triggerDeckTransition(fadeSec);
       }
     }
   });
@@ -1215,22 +1245,12 @@ export const player = {
     }
 
     // Direct playback initiation: cancel any running crossfade timer immediately
-    if (crossfadeTimer) {
-      clearInterval(crossfadeTimer);
-      crossfadeTimer = null;
-    }
-    isTransitioning = false;
-    advancingTrack = false;
-    transitioningTargetSong = null;
-    transitioningTargetIndex = null;
-    standbyDeck.pause();
-    standbyDeck.currentTime = 0;
-    standbyDeck.volume = masterVolume;
+    cancelAnyTransition();
 
     currentSong = song;
     userPaused = false;
     prewarmedTrackUrl = null;
-    lastTransitionTriggeredTrack = null;
+    lastTransitionTriggeredTrack = currentSong?.id || currentSong?.link;
 
     // Fast synchronous source resolution: preserves mobile user gesture activation for line-speed playback
     const src = resolveAudioSourceSync(song);
@@ -1248,18 +1268,21 @@ export const player = {
     activeDeck.playbackRate = playbackRate;
     activeDeck.volume = masterVolume;
 
-    const playSongTimestamp = Date.now();
-
     try {
       const playPromise = activeDeck.play();
       if (playPromise !== undefined) {
-        playPromise.catch(async (err) => {
+        playPromise.then(() => {
+          if (activeDeck.currentTime > 1.5) {
+            try { activeDeck.currentTime = 0; } catch {}
+          }
+        }).catch(async (err) => {
           console.warn("[Player] Direct play warning:", err);
           if (activeDeck.hasAttribute("crossOrigin") || activeDeck.crossOrigin) {
             console.warn("[Player] Retrying direct play without CORS restrictions...");
             activeDeck.removeAttribute("crossOrigin");
             activeDeck.crossOrigin = null;
             activeDeck.load();
+            try { activeDeck.currentTime = 0; } catch {}
             await activeDeck.play().catch(() => {});
           }
           updateUI();
@@ -1300,18 +1323,9 @@ export const player = {
 
   pause() {
     userPaused = true;
-    if (crossfadeTimer) {
-      clearInterval(crossfadeTimer);
-      crossfadeTimer = null;
-    }
-    isTransitioning = false;
-    advancingTrack = false;
-    transitioningTargetSong = null;
-    transitioningTargetIndex = null;
+    cancelAnyTransition();
     activeDeck.pause();
-    standbyDeck.pause();
     activeDeck.volume = masterVolume;
-    standbyDeck.volume = masterVolume;
     updateUI();
   },
 
@@ -1368,17 +1382,7 @@ export const player = {
 
   seek(seconds) {
     if (!Number.isFinite(activeDeck.duration) || activeDeck.duration <= 0) return;
-    if (crossfadeTimer) {
-      clearInterval(crossfadeTimer);
-      crossfadeTimer = null;
-    }
-    isTransitioning = false;
-    advancingTrack = false;
-    transitioningTargetSong = null;
-    transitioningTargetIndex = null;
-    standbyDeck.pause();
-    standbyDeck.currentTime = 0;
-    standbyDeck.volume = masterVolume;
+    cancelAnyTransition();
     activeDeck.volume = masterVolume;
 
     const clamped = clamp(seconds, 0, activeDeck.duration);

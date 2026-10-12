@@ -157,22 +157,26 @@ onAuthStateChanged(auth, async (user) => {
     return;
   }
 
-  const displayName = user.displayName || "";
-  const email = user.email || "";
+  const displayName = user.displayName || user.providerData?.find(p => p.displayName)?.displayName || "";
+  const email = user.email || user.providerData?.find(p => p.email)?.email || "";
   const nameAvatar = generateNameAvatar(displayName || email, 100);
 
   if (nameEl) nameEl.textContent = displayName || email?.split("@")[0] || "MusicsAura Listener";
   if (emailEl) emailEl.textContent = email;
   if (newNameEl) newNameEl.value = displayName;
 
-  if (avatarEl) {
+  const setAvatar = (photoUrl) => {
+    if (!avatarEl) return;
     avatarEl.referrerPolicy = "no-referrer";
     avatarEl.onerror = () => {
       avatarEl.onerror = null;
       avatarEl.src = nameAvatar;
     };
-    avatarEl.src = user.photoURL || nameAvatar;
-  }
+    avatarEl.src = photoUrl || nameAvatar;
+  };
+
+  const initialPhoto = user.photoURL || user.providerData?.find(p => p.photoURL)?.photoURL || user.providerData?.[0]?.photoURL || null;
+  setAvatar(initialPhoto);
 
   try {
     const snap = await getDoc(doc(db, "users", user.uid));
@@ -181,14 +185,14 @@ onAuthStateChanged(auth, async (user) => {
       if (minutesEl) minutesEl.textContent = Math.round(d.minutesListened || 0).toLocaleString();
       if (songsEl) songsEl.textContent = (d.songsPlayed || 0).toLocaleString();
 
-      const bestPhoto = user.photoURL || d.photoURL;
+      const bestPhoto = initialPhoto || d.photoURL;
       if (bestPhoto && avatarEl && avatarEl.src !== bestPhoto) {
-        avatarEl.src = bestPhoto;
+        setAvatar(bestPhoto);
       }
 
       // Keep Firestore user doc photo in sync with Google Auth
-      if (user.photoURL && (!d.photoURL || d.photoURL !== user.photoURL)) {
-        updateDoc(doc(db, "users", user.uid), { photoURL: user.photoURL }).catch(() => {});
+      if (initialPhoto && (!d.photoURL || d.photoURL !== initialPhoto)) {
+        updateDoc(doc(db, "users", user.uid), { photoURL: initialPhoto }).catch(() => {});
       }
     }
   } catch {}
