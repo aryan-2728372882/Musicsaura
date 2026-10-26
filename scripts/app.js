@@ -21,8 +21,6 @@ const mobileSearchClearBtn = document.getElementById("mobile-search-clear-btn");
 const profileBtn           = document.getElementById("profile-btn");
 const navAvatar            = document.getElementById("nav-avatar");
 const genrePills           = document.querySelectorAll(".genre-pill");
-const filterDownloadedBtn    = document.getElementById("filter-downloaded");
-const filterDownloadedText   = document.getElementById("filter-downloaded-text");
 const offlineModeBanner      = document.getElementById("offline-mode-banner");
 const offlineModeCount       = document.getElementById("offline-mode-count");
 
@@ -113,10 +111,8 @@ let activeGenre = DEFAULT_GENRE;
 let searchTimer = null;
 let firestoreSongs = [];
 
-let isManualDownloadedFilter = false;
-
 export function isOfflineFilterActive() {
-  return !navigator.onLine || isManualDownloadedFilter;
+  return !navigator.onLine;
 }
 
 export function getSongGenre(song) {
@@ -169,10 +165,6 @@ export function isSongOffline(song) {
 }
 
 function updateDownloadBadge() {
-  const list = getOfflineSongs();
-  if (filterDownloadedText) {
-    filterDownloadedText.textContent = list.length > 0 ? `Downloaded (${list.length})` : "Downloaded";
-  }
   updateOfflineBanner();
 }
 
@@ -180,16 +172,8 @@ function updateOfflineBanner() {
   const offlineSongs = getOfflineSongs();
   const count = offlineSongs.length;
 
-  if (filterDownloadedText) {
-    filterDownloadedText.textContent = count > 0 ? `Downloaded (${count})` : "Downloaded";
-  }
-
-  if (filterDownloadedBtn) {
-    filterDownloadedBtn.classList.toggle("active", isOfflineFilterActive());
-  }
-
   if (offlineModeBanner) {
-    if (isOfflineFilterActive()) {
+    if (!navigator.onLine) {
       offlineModeBanner.style.display = "flex";
       if (offlineModeCount) {
         offlineModeCount.textContent = `${count} track${count === 1 ? "" : "s"} saved`;
@@ -961,28 +945,13 @@ function selectGenre(genre) {
   renderGenre(genre);
 }
 
-function renderGenre(genre) {
-  if (!genre) genre = DEFAULT_GENRE;
-
+export function getSongsForSection(genre) {
   if (genre === "favorites") {
     let favs = getFavorites().map((s) => normalizeSong(s, s.genre || "favorites", "fav"));
     if (isOfflineFilterActive()) {
       favs = favs.filter(isSongOffline);
-      renderSongList(
-        grid,
-        favs,
-        "No downloaded songs in Favorites yet. Tap the heart and download icons while online to listen offline!"
-      );
-    } else {
-      renderSongList(
-        grid,
-        favs,
-        "No favorite songs yet! Tap the heart icon on any song to add it here."
-      );
     }
-    updateHeroBanner(favs);
-    updateOfflineBanner();
-    return;
+    return favs;
   }
 
   let songs = [...(songsByGenre[genre] || [])];
@@ -1002,8 +971,39 @@ function renderGenre(genre) {
   }
 
   if (isOfflineFilterActive()) {
+    return songs.filter(isSongOffline);
+  }
+  return songs;
+}
+
+function renderGenre(genre) {
+  if (!genre) genre = DEFAULT_GENRE;
+
+  if (genre === "favorites") {
+    const favs = getSongsForSection("favorites");
+    if (isOfflineFilterActive()) {
+      renderSongList(
+        grid,
+        favs,
+        "No downloaded songs in Favorites yet. Tap the heart and download icons while online to listen offline!"
+      );
+    } else {
+      renderSongList(
+        grid,
+        favs,
+        "No favorite songs yet! Tap the heart icon on any song to add it here."
+      );
+    }
+    updateHeroBanner(favs);
+    updateOfflineBanner();
+    return;
+  }
+
+  const songs = getSongsForSection(genre);
+
+  if (isOfflineFilterActive()) {
     // OFFLINE / DOWNLOADED FILTER: Show ONLY downloaded songs in this specific section!
-    const downloadedInGenre = songs.filter(isSongOffline);
+    const offlineSongs = getOfflineSongs();
     const totalOffline = offlineSongs.length;
     const genreTitle = GENRE_TITLES[genre] || `${genre.toUpperCase()}`;
 
@@ -1014,8 +1014,8 @@ function renderGenre(genre) {
       emptyMsg += ` Tap the ⚡ icon on any song while online to download it for offline play.`;
     }
 
-    renderSongList(grid, downloadedInGenre, emptyMsg);
-    updateHeroBanner(downloadedInGenre);
+    renderSongList(grid, songs, emptyMsg);
+    updateHeroBanner(songs);
   } else {
     // ONLINE: Show ALL songs in this genre section!
     const emptyMsg = `No songs available in ${GENRE_TITLES[genre] || genre}.`;
@@ -1243,12 +1243,12 @@ if (audioFxModal) {
 if (crossfadeSlider && crossfadeVal) {
   const currentCrossfade = player.getState().crossfadeSeconds;
   crossfadeSlider.value = currentCrossfade;
-  crossfadeVal.textContent = currentCrossfade === 0 ? "0s (Gapless)" : currentCrossfade === 15 ? "15s (Studio Fade)" : `${currentCrossfade}s`;
+  crossfadeVal.textContent = currentCrossfade === 0 ? "0s (Gapless)" : currentCrossfade === 5 ? "5s (Apple Default)" : `${currentCrossfade}s`;
 
   crossfadeSlider.addEventListener("input", (e) => {
     const sec = parseInt(e.target.value, 10);
     crossfadeSlider.value = sec;
-    crossfadeVal.textContent = sec === 0 ? "0s (Gapless)" : sec === 15 ? "15s (Studio Fade)" : `${sec}s`;
+    crossfadeVal.textContent = sec === 0 ? "0s (Gapless)" : sec === 5 ? "5s (Apple Default)" : `${sec}s`;
     player.setCrossfade(sec);
   });
 }
@@ -1413,22 +1413,30 @@ genrePills.forEach((pill) => {
   });
 });
 
-if (filterDownloadedBtn) {
-  filterDownloadedBtn.addEventListener("click", () => {
-    if (!navigator.onLine) {
-      player.showToast("📶 Offline mode active — Showing downloaded songs", 2500);
-      return;
+/* ── AUTO-ADVANCE TO NEXT SECTION (Apple Music Seamless Flow) ── */
+const GENRE_CYCLE = ["hindi", "punjabi", "haryanvi", "rap", "bhojpuri"];
+
+player.setSectionAdvancer((fromGenre) => {
+  const currentG = fromGenre || activeGenre || "hindi";
+  let currIdx = GENRE_CYCLE.indexOf(currentG);
+  if (currIdx < 0) currIdx = 0;
+
+  for (let step = 1; step <= GENRE_CYCLE.length; step++) {
+    const nextIdx = (currIdx + step) % GENRE_CYCLE.length;
+    const nextGenre = GENRE_CYCLE[nextIdx];
+    const candidateSongs = getSongsForSection(nextGenre);
+    if (candidateSongs && candidateSongs.length > 0) {
+      selectGenre(nextGenre);
+      player.showToast(`🎶 Next Section: ${GENRE_TITLES[nextGenre] || nextGenre}`, 3000);
+      return {
+        songs: candidateSongs,
+        genre: nextGenre,
+        index: 0
+      };
     }
-    isManualDownloadedFilter = !isManualDownloadedFilter;
-    if (isManualDownloadedFilter) {
-      player.showToast("⚡ Filter: Showing downloaded songs only", 2000);
-    } else {
-      player.showToast("🌐 Showing all songs across sections", 2000);
-    }
-    updateOfflineBanner();
-    renderGenre(activeGenre);
-  });
-}
+  }
+  return null;
+});
 
 // ── NETWORK CHANGE DETECTORS (ONLINE / OFFLINE) ──
 window.addEventListener("online", () => {
@@ -1441,6 +1449,7 @@ window.addEventListener("online", () => {
 window.addEventListener("offline", () => {
   console.log("[App] Network offline. Filtering to downloaded songs only.");
   updateOfflineBanner();
+  prewarmAllOfflineTracks();
   player.showToast("📶 Offline mode — Showing downloaded songs only", 3000);
   renderGenre(activeGenre);
 });
@@ -1630,13 +1639,6 @@ onAuthStateChanged(auth, (user) => {
       location.href = isAdmin(user.email) ? "admin-dashboard.html" : "user-dashboard.html";
     };
   }
-});
-
-/* ── ONLINE / OFFLINE DETECTOR ── */
-window.addEventListener("offline", () => {
-  player.showToast("✈️ Offline Mode: Switched to In-App Downloads", 3500);
-  prewarmAllOfflineTracks();
-  selectGenre("offline");
 });
 
 /* ── INITIALIZATION ── */

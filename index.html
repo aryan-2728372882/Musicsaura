@@ -110,10 +110,6 @@
           <span class="material-icons" style="font-size:0.95rem;color:var(--rose);margin-right:2px">favorite</span>
           Favorites
         </button>
-        <button class="genre-pill download-filter-pill" id="filter-downloaded" title="Toggle between All Songs and Downloaded Only">
-          <span class="material-icons" style="font-size:0.95rem;color:var(--cyan);margin-right:2px">offline_pin</span>
-          <span id="filter-downloaded-text">Downloaded</span>
-        </button>
       </div>
     </nav>
 
@@ -334,15 +330,16 @@
       <!-- Crossfade Controller -->
       <div class="fx-section" style="margin-bottom:0.8rem">
         <div class="fx-section-header">
-          <span>🎚️ Studio Crossfade Transition</span>
-          <strong id="crossfade-val" style="color:var(--violet-light)">15s</strong>
+          <span>🎚️ Apple-Style Crossfade & Gapless Transition</span>
+          <strong id="crossfade-val" style="color:var(--violet-light)">5s</strong>
         </div>
-        <input type="range" id="crossfade-slider" min="0" max="20" step="1" value="15" class="fx-slider">
+        <input type="range" id="crossfade-slider" min="0" max="12" step="1" value="5" class="fx-slider">
         <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-muted)">
           <span>0s (Gapless)</span>
-          <span>5s</span>
-          <span>15s (Studio Fade)</span>
-          <span>20s (Max)</span>
+          <span>3s</span>
+          <span>5s (Apple Default)</span>
+          <span>8s</span>
+          <span>12s</span>
         </div>
       </div>
 

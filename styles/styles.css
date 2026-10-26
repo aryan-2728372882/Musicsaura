@@ -514,23 +514,6 @@ body.page-scroll {
   background: #fff;
 }
 
-.genre-pill.download-filter-pill {
-  border-color: rgba(6, 182, 212, 0.35);
-  margin-left: auto;
-}
-
-.genre-pill.download-filter-pill:hover {
-  border-color: var(--cyan);
-  background: rgba(6, 182, 212, 0.12);
-}
-
-.genre-pill.download-filter-pill.active {
-  background: linear-gradient(135deg, rgba(6, 182, 212, 0.3), rgba(6, 182, 212, 0.15));
-  color: var(--cyan);
-  border-color: var(--cyan);
-  box-shadow: 0 0 16px rgba(6, 182, 212, 0.4);
-}
-
 .offline-mode-indicator {
   display: flex;
   align-items: center;
