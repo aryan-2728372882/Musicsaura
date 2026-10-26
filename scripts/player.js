@@ -5,7 +5,7 @@ import {
   auth, db,
   doc, updateDoc, increment, serverTimestamp
 } from "./firebase-config.js";
-import { getTrackBlobFromStorage, saveTrackToStorage } from "./storage-db.js";
+import { getTrackBlobFromStorage, saveTrackToStorage, getAllPersistedTracks } from "./storage-db.js";
 
 // ─── UNIFIED HIGH-PERFORMANCE AUDIO ENGINE ─────────────────────────
 // Dual-Deck Studio Architecture for 100% Android 14/15/16 Lockscreen Playback & True Equal-Power DJ Crossfade
@@ -272,7 +272,13 @@ function releaseWakeLock() {
 function initMediaSession() {
   if (!("mediaSession" in navigator)) return;
 
-  navigator.mediaSession.setActionHandler("play", () => player.play());
+  navigator.mediaSession.setActionHandler("play", () => {
+    if (wasInterruptedBySystem) {
+      resumeAfterInterruption();
+    } else {
+      player.play();
+    }
+  });
   navigator.mediaSession.setActionHandler("pause", () => player.pause());
   navigator.mediaSession.setActionHandler("previoustrack", () => player.prev());
   navigator.mediaSession.setActionHandler("nexttrack", () => player.next());
@@ -481,21 +487,28 @@ function updateProgress() {
   }
 }
 
-export async function getOfflineAudioBlobUrl(link) {
-  if (!link) return null;
-  const rawTarget = link.split("?")[0];
-  if (offlineBlobUrlCache.has(rawTarget)) {
-    return offlineBlobUrlCache.get(rawTarget);
-  }
-  if (offlineBlobUrlCache.has(link)) {
-    return offlineBlobUrlCache.get(link);
-  }
+export async function getOfflineAudioBlobUrl(songOrLink, optionalId = null) {
+  if (!songOrLink) return null;
+  const link = typeof songOrLink === "string" ? songOrLink : (songOrLink.link || "");
+  const id = typeof songOrLink === "object" ? (songOrLink.id || songOrLink.link) : (optionalId || link);
+  const song = typeof songOrLink === "object" ? songOrLink : null;
+
+  const rawTarget = link ? link.split("?")[0] : "";
+  const rawId = id ? String(id).split("?")[0] : "";
+
+  if (rawTarget && offlineBlobUrlCache.has(rawTarget)) return offlineBlobUrlCache.get(rawTarget);
+  if (link && offlineBlobUrlCache.has(link)) return offlineBlobUrlCache.get(link);
+  if (id && offlineBlobUrlCache.has(id)) return offlineBlobUrlCache.get(id);
+  if (rawId && offlineBlobUrlCache.has(rawId)) return offlineBlobUrlCache.get(rawId);
+
   try {
-    const blob = await getTrackBlobFromStorage(link);
+    const blob = await getTrackBlobFromStorage(id || link, song || { id, link });
     if (blob && blob.size > 10240) {
       const bUrl = URL.createObjectURL(blob);
-      offlineBlobUrlCache.set(rawTarget, bUrl);
-      offlineBlobUrlCache.set(link, bUrl);
+      if (rawTarget) offlineBlobUrlCache.set(rawTarget, bUrl);
+      if (link) offlineBlobUrlCache.set(link, bUrl);
+      if (id) offlineBlobUrlCache.set(id, bUrl);
+      if (rawId) offlineBlobUrlCache.set(rawId, bUrl);
       return bUrl;
     }
   } catch (e) {
@@ -508,30 +521,37 @@ function prewarmNextSongOfflineBlob() {
   if (!playlist || playlist.length <= 1) return;
   const nextIdx = (currentIndex + 1) % playlist.length;
   const nextSong = playlist[nextIdx];
-  if (nextSong && nextSong.link) {
-    const rawTarget = nextSong.link.split("?")[0];
-    if (!offlineBlobUrlCache.has(rawTarget) && !offlineBlobUrlCache.has(nextSong.link)) {
-      getOfflineAudioBlobUrl(nextSong.link).catch(() => {});
-    }
+  if (nextSong) {
+    getOfflineAudioBlobUrl(nextSong).catch(() => {});
   }
 }
 
-export function prewarmAllOfflineTracks() {
+export async function prewarmAllOfflineTracks() {
   try {
+    // 1. Prewarm all persisted tracks directly from permanent IndexedDB
+    const persisted = await getAllPersistedTracks();
+    if (persisted && persisted.length > 0) {
+      persisted.forEach((t) => {
+        if (t) getOfflineAudioBlobUrl(t).catch(() => {});
+      });
+    }
+
+    // 2. Also prewarm from localStorage offline catalogue
     const list = JSON.parse(localStorage.getItem("musicsaura_offline_songs") || "[]");
     list.forEach((s) => {
-      if (s && s.link) {
-        getOfflineAudioBlobUrl(s.link).catch(() => {});
-      }
+      if (s) getOfflineAudioBlobUrl(s).catch(() => {});
     });
-  } catch {}
+  } catch (err) {
+    console.warn("[Player] prewarmAllOfflineTracks notice:", err);
+  }
 }
 
 if (typeof window !== "undefined") {
+  prewarmAllOfflineTracks();
   if (document.readyState === "loading") {
-    window.addEventListener("DOMContentLoaded", () => setTimeout(prewarmAllOfflineTracks, 300));
+    window.addEventListener("DOMContentLoaded", () => setTimeout(prewarmAllOfflineTracks, 200));
   } else {
-    setTimeout(prewarmAllOfflineTracks, 300);
+    setTimeout(prewarmAllOfflineTracks, 200);
   }
 }
 
@@ -591,26 +611,33 @@ function clearStallWatchdog() {
 // ─── DUAL-DECK AUDIO SOURCE RESOLVER & STANDBY PRELOADER ───────────
 function resolveAudioSourceSync(song) {
   if (!song || !song.link) return "";
+  const id = song.id || song.link;
   const cleanUrl = normalizeUrl(song.link);
   const rawTarget = cleanUrl.split("?")[0];
-  const cachedBlobUrl = offlineBlobUrlCache.get(rawTarget) || offlineBlobUrlCache.get(cleanUrl) || offlineBlobUrlCache.get(song.link);
+  const rawId = id ? String(id).split("?")[0] : "";
+
+  const cachedBlobUrl =
+    (id ? offlineBlobUrlCache.get(id) : null) ||
+    (rawId ? offlineBlobUrlCache.get(rawId) : null) ||
+    offlineBlobUrlCache.get(rawTarget) ||
+    offlineBlobUrlCache.get(cleanUrl) ||
+    offlineBlobUrlCache.get(song.link);
+
   if (cachedBlobUrl) return cachedBlobUrl;
   return cleanUrl;
 }
 
 async function resolveAudioSource(song) {
   if (!song || !song.link) return "";
-  const cleanUrl = normalizeUrl(song.link);
-  const rawTarget = cleanUrl.split("?")[0];
-  const cachedBlobUrl = offlineBlobUrlCache.get(rawTarget) || offlineBlobUrlCache.get(cleanUrl) || offlineBlobUrlCache.get(song.link);
-  if (cachedBlobUrl) return cachedBlobUrl;
+  const syncSrc = resolveAudioSourceSync(song);
+  if (syncSrc && syncSrc.startsWith("blob:")) return syncSrc;
 
   try {
-    const blobUrl = await getOfflineAudioBlobUrl(song.link);
+    const blobUrl = await getOfflineAudioBlobUrl(song);
     if (blobUrl) return blobUrl;
   } catch {}
 
-  return cleanUrl;
+  return syncSrc;
 }
 
 function getNextTrackCandidate() {
@@ -919,6 +946,110 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
   }
 }
 
+// ─── AUDIO FOCUS & BLUETOOTH / CALL INTERRUPTION RECOVERY ────────
+let wasInterruptedBySystem = false;
+let interruptedTrack       = null;
+let interruptedPosition    = 0;
+let interruptedTimestamp   = 0;
+let interruptionWatchdog   = null;
+
+async function recoverAudioPipeline(deck, targetTime = null) {
+  const pos = targetTime !== null && targetTime > 0 ? targetTime : (deck.currentTime || 0);
+  const currentSrc = deck.src;
+  if (!currentSrc) return;
+
+  console.log("[Player] Refreshing audio pipeline to rebind Bluetooth A2DP channel at", formatTime(pos));
+
+  // 1. Force audio output sink re-route to system default (the active Bluetooth earbuds)
+  if (typeof deck.setSinkId === "function") {
+    try {
+      await deck.setSinkId("");
+    } catch (e) {
+      console.warn("[Player] setSinkId re-route notice:", e);
+    }
+  }
+
+  // 2. Unlock/resume Web Audio if suspended
+  unlockAudioContext();
+
+  // 3. Re-prime the media decoder: Reload the source to tear down dead AudioTrack and re-open fresh A2DP channel
+  try {
+    deck.pause();
+    deck.load();
+    if (pos > 0) {
+      deck.addEventListener("loadedmetadata", () => {
+        try { deck.currentTime = pos; } catch {}
+      }, { once: true });
+      setTimeout(() => {
+        try {
+          if (Math.abs(deck.currentTime - pos) > 1) {
+            deck.currentTime = pos;
+          }
+        } catch {}
+      }, 150);
+    }
+  } catch (err) {
+    console.warn("[Player] Pipeline reload notice:", err);
+  }
+}
+
+async function resumeAfterInterruption() {
+  if (!wasInterruptedBySystem || userPaused || !currentSong) return;
+
+  const resumePos = interruptedPosition || activeDeck.currentTime || 0;
+  console.log("[Player] Interruption ended / Audio focus restored! Auto-resuming:", currentSong.title, "at", formatTime(resumePos));
+
+  wasInterruptedBySystem = false;
+  interruptedTrack = null;
+  clearInterval(interruptionWatchdog);
+  interruptionWatchdog = null;
+
+  await recoverAudioPipeline(activeDeck, resumePos);
+
+  try {
+    const playPromise = activeDeck.play();
+    if (playPromise !== undefined) {
+      await playPromise;
+      console.log("[Player] Auto-resume successful via Bluetooth A2DP channel!");
+      player.showToast(`▶️ Resumed: ${currentSong.title}`, 2500);
+    }
+  } catch (err) {
+    console.warn("[Player] Auto-resume play blocked by OS gesture policy:", err);
+    player.showToast(`📞 Call ended. Tap to resume "${currentSong.title}"`, 5000);
+
+    const oneTapResume = () => {
+      document.removeEventListener("click", oneTapResume);
+      document.removeEventListener("touchend", oneTapResume);
+      if (activeDeck.paused && !userPaused && currentSong) {
+        activeDeck.play().then(() => {
+          player.showToast(`▶️ Resumed: ${currentSong.title}`, 2000);
+        }).catch(() => {});
+      }
+    };
+    document.addEventListener("click", oneTapResume, { once: true });
+    document.addEventListener("touchend", oneTapResume, { once: true });
+  }
+
+  updateMediaSession(currentSong);
+  updateUI();
+}
+
+function startInterruptionWatchdog() {
+  if (interruptionWatchdog) return;
+  interruptionWatchdog = setInterval(() => {
+    if (!wasInterruptedBySystem || userPaused || !currentSong) {
+      clearInterval(interruptionWatchdog);
+      interruptionWatchdog = null;
+      return;
+    }
+
+    // If app becomes visible or active again while interrupted, attempt resume
+    if (!document.hidden && document.visibilityState === "visible") {
+      resumeAfterInterruption();
+    }
+  }, 2000);
+}
+
 // ─── PERSISTENT DUAL-DECK AUDIO EVENT BINDINGS ─────────────────────
 function bindDeckEvents(deck) {
   deck.addEventListener("loadstart", () => {
@@ -962,6 +1093,10 @@ function bindDeckEvents(deck) {
 
   deck.addEventListener("playing", () => {
     if (deck === activeDeck) {
+      wasInterruptedBySystem = false;
+      interruptedTrack = null;
+      clearInterval(interruptionWatchdog);
+      interruptionWatchdog = null;
       advancingTrack = false;
       isBuffering = false;
       clearStallWatchdog();
@@ -975,6 +1110,21 @@ function bindDeckEvents(deck) {
 
   deck.addEventListener("pause", () => {
     if (deck === activeDeck && !isTransitioning) {
+      if (!userPaused && currentSong && !deck.ended) {
+        // Paused by external interruption (incoming phone call / audio focus loss)
+        wasInterruptedBySystem = true;
+        interruptedTrack = currentSong;
+        interruptedPosition = deck.currentTime || 0;
+        interruptedTimestamp = Date.now();
+        console.log("[Player] Audio stream interrupted by system/phone call at", formatTime(interruptedPosition));
+        startInterruptionWatchdog();
+      } else if (userPaused) {
+        wasInterruptedBySystem = false;
+        interruptedTrack = null;
+        clearInterval(interruptionWatchdog);
+        interruptionWatchdog = null;
+      }
+
       if (userPaused) advancingTrack = false;
       isBuffering = false;
       clearStallWatchdog();
@@ -1075,7 +1225,7 @@ function bindDeckEvents(deck) {
     }
   });
 
-  deck.addEventListener("error", () => {
+  deck.addEventListener("error", async () => {
     // Opportunistic CORS Fallback: If track failed under strict CORS ("anonymous"),
     // strip crossOrigin and retry immediately so the audio element can play as opaque media.
     if (deck.hasAttribute("crossOrigin") || deck.crossOrigin) {
@@ -1100,6 +1250,28 @@ function bindDeckEvents(deck) {
     console.warn("[Player] Active deck error:", deck.error);
     isBuffering = false;
     clearStallWatchdog();
+
+    // Offline storage recovery: If server fails, check if we have a locally downloaded offline blob!
+    if (currentSong) {
+      try {
+        const offlineUrl = await getOfflineAudioBlobUrl(currentSong);
+        if (offlineUrl && deck.src !== offlineUrl) {
+          console.warn("[Player] Network stream failed, but offline copy found! Seamlessly recovering with offline blob:", currentSong.title);
+          deck.removeAttribute("crossOrigin");
+          deck.crossOrigin = null;
+          deck.src = offlineUrl;
+          deck.load();
+          if (!userPaused) {
+            deck.play().catch(() => {});
+          }
+          player.showToast(`📱 Playing "${currentSong.title}" from offline storage`, 2500);
+          updateUI();
+          return; // Successfully recovered from local offline storage!
+        }
+      } catch (offlineErr) {
+        console.warn("[Player] Offline recovery attempt notice:", offlineErr);
+      }
+    }
 
     deck.pause();
     deck.removeAttribute("src");
@@ -1259,6 +1431,22 @@ export const player = {
       activeDeck.src = src;
     }
 
+    // Asynchronous offline blob verification: If the track is stored in downloads, swap to verified local blob
+    if (!src.startsWith("blob:") && isSongStoredOffline(song)) {
+      getOfflineAudioBlobUrl(song).then((blobUrl) => {
+        if (blobUrl && activeDeck.src !== blobUrl && (currentSong?.id || currentSong?.link) === (song.id || song.link)) {
+          console.log("[Player] Async resolved offline blob for downloaded track:", song.title);
+          const curTime = activeDeck.currentTime || 0;
+          const wasPlaying = !activeDeck.paused;
+          activeDeck.src = blobUrl;
+          if (curTime > 0) activeDeck.currentTime = curTime;
+          if (wasPlaying || !userPaused) {
+            activeDeck.play().catch(() => {});
+          }
+        }
+      });
+    }
+
     // CRITICAL: Guarantee activeDeck starts at 0:00 (prevents jumping to middle of track from previous song)
     try { activeDeck.currentTime = 0; } catch {}
     activeDeck.addEventListener("loadedmetadata", () => {
@@ -1304,6 +1492,10 @@ export const player = {
 
   play() {
     unlockAudioContext();
+    if (wasInterruptedBySystem) {
+      resumeAfterInterruption();
+      return;
+    }
     if (!currentSong && playlist.length > 0) {
       return player.playSong(playlist[currentIndex]);
     }
@@ -1312,6 +1504,17 @@ export const player = {
       return player.next(true);
     }
     userPaused = false;
+    wasInterruptedBySystem = false;
+
+    // If audio element is in an empty or stalled state from external interruption, recover pipeline before playing
+    if (activeDeck.networkState === HTMLMediaElement.NETWORK_EMPTY || activeDeck.readyState === 0) {
+      recoverAudioPipeline(activeDeck).then(() => {
+        activeDeck.play().catch((err) => console.warn("Play error:", err));
+        updateUI();
+      });
+      return;
+    }
+
     try {
       const p = activeDeck.play();
       if (p !== undefined) p.catch(() => {});
@@ -1323,6 +1526,9 @@ export const player = {
 
   pause() {
     userPaused = true;
+    wasInterruptedBySystem = false;
+    clearInterval(interruptionWatchdog);
+    interruptionWatchdog = null;
     cancelAnyTransition();
     activeDeck.pause();
     activeDeck.volume = masterVolume;
@@ -1605,6 +1811,13 @@ document.addEventListener("visibilitychange", () => {
       navigator.mediaSession.playbackState = "playing";
     }
   } else {
+    // If returning to the app from a phone call / system interruption, auto-resume smoothly
+    if (wasInterruptedBySystem && !userPaused && currentSong) {
+      setTimeout(() => {
+        resumeAfterInterruption();
+      }, 350);
+    }
+
     if (!activeDeck.paused) {
       acquireWakeLock();
       updateMediaSession(currentSong);
@@ -1613,3 +1826,31 @@ document.addEventListener("visibilitychange", () => {
     }
   }
 });
+
+window.addEventListener("focus", () => {
+  if (wasInterruptedBySystem && !userPaused && currentSong) {
+    setTimeout(() => {
+      resumeAfterInterruption();
+    }, 350);
+  }
+});
+
+// Bluetooth Earbuds Connect / Disconnect / Call Profile Switch listener
+if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener === "function") {
+  navigator.mediaDevices.addEventListener("devicechange", () => {
+    console.log("[Player] Media device change detected (Bluetooth earbuds / audio route change).");
+
+    // Force re-route sink to default active output device if supported
+    if (typeof activeDeck.setSinkId === "function") {
+      activeDeck.setSinkId("").catch(() => {});
+    }
+
+    // When phone call drops and earbuds switch from HFP back to A2DP media profile
+    if (wasInterruptedBySystem && !userPaused && currentSong) {
+      // 400ms delay allows Android OS Bluetooth A2DP handshake to stabilize before pushing audio stream
+      setTimeout(() => {
+        resumeAfterInterruption();
+      }, 400);
+    }
+  });
+}

@@ -110,9 +110,9 @@
           <span class="material-icons" style="font-size:0.95rem;color:var(--rose);margin-right:2px">favorite</span>
           Favorites
         </button>
-        <button class="genre-pill" data-genre="offline" id="pill-offline">
-          <span class="material-icons" style="font-size:0.95rem;color:var(--cyan);margin-right:2px">download_for_offline</span>
-          In-App Downloads 📥
+        <button class="genre-pill download-filter-pill" id="filter-downloaded" title="Toggle between All Songs and Downloaded Only">
+          <span class="material-icons" style="font-size:0.95rem;color:var(--cyan);margin-right:2px">offline_pin</span>
+          <span id="filter-downloaded-text">Downloaded</span>
         </button>
       </div>
     </nav>
@@ -146,6 +146,15 @@
             <img src="assets/logo.png" alt="Featured Vibe" class="hero-artwork-img" id="hero-img">
           </div>
         </section>
+
+        <!-- OFFLINE STATUS BANNER -->
+        <div id="offline-mode-banner" class="offline-mode-indicator" style="display:none">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="material-icons" style="font-size:1.15rem;color:var(--cyan)">offline_pin</span>
+            <span id="offline-mode-banner-text">Offline Mode • Showing downloaded songs only</span>
+          </div>
+          <span style="font-size:0.8rem;opacity:0.85" id="offline-mode-count"></span>
+        </div>
 
         <!-- SONG GRIDS -->
         <section id="grid" class="song-grid" aria-live="polite"></section>

@@ -21,7 +21,10 @@ const mobileSearchClearBtn = document.getElementById("mobile-search-clear-btn");
 const profileBtn           = document.getElementById("profile-btn");
 const navAvatar            = document.getElementById("nav-avatar");
 const genrePills           = document.querySelectorAll(".genre-pill");
-const pillOffline          = document.getElementById("pill-offline");
+const filterDownloadedBtn    = document.getElementById("filter-downloaded");
+const filterDownloadedText   = document.getElementById("filter-downloaded-text");
+const offlineModeBanner      = document.getElementById("offline-mode-banner");
+const offlineModeCount       = document.getElementById("offline-mode-count");
 
 // Hero Banner Elements
 const heroBanner           = document.getElementById("hero-banner");
@@ -89,6 +92,14 @@ const GENRE_FILES = {
   rap:      "jsons/rap.json",
   bhojpuri: "jsons/bhojpuri.json"
 };
+const GENRE_TITLES = {
+  hindi:    "Hindi Hits",
+  punjabi:  "Punjabi Vibes",
+  haryanvi: "Haryanvi Swag",
+  rap:      "Desi Rap",
+  bhojpuri: "Bhojpuri Hits",
+  favorites:"Favorites"
+};
 const DEFAULT_GENRE        = "hindi";
 const FAVORITES_KEY        = "musicsaura_favorites";
 const OFFLINE_STORAGE_KEY  = "musicsaura_offline_songs";
@@ -101,6 +112,42 @@ const songsByGenre = {};
 let activeGenre = DEFAULT_GENRE;
 let searchTimer = null;
 let firestoreSongs = [];
+
+let isManualDownloadedFilter = false;
+
+export function isOfflineFilterActive() {
+  return !navigator.onLine || isManualDownloadedFilter;
+}
+
+export function getSongGenre(song) {
+  if (!song) return "hindi";
+  let g = (song.genre || "").toLowerCase().trim();
+  if (g && g !== "offline" && g !== "favorites") {
+    if (GENRE_FILES[g]) return g;
+    if (g.includes("punjabi")) return "punjabi";
+    if (g.includes("haryanvi")) return "haryanvi";
+    if (g.includes("rap") || g.includes("hip")) return "rap";
+    if (g.includes("bhojpuri")) return "bhojpuri";
+    if (g.includes("hindi") || g.includes("bollywood")) return "hindi";
+  }
+
+  // Match against raw catalogues
+  const cleanLink = (song.link || "").split("?")[0].toLowerCase().trim();
+  const cleanTitle = (song.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+
+  for (const [genreKey, list] of Object.entries(rawJsonSongs)) {
+    if (Array.isArray(list)) {
+      const match = list.find((s) => {
+        const sLink = (s.link || "").split("?")[0].toLowerCase().trim();
+        const sTitle = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+        return (cleanLink && sLink === cleanLink) || (cleanTitle && sTitle && sTitle === cleanTitle);
+      });
+      if (match) return genreKey;
+    }
+  }
+
+  return "hindi";
+}
 
 /* ── IN-APP OFFLINE STORAGE (PWA SANDBOX) ── */
 export function getOfflineSongs() {
@@ -115,16 +162,41 @@ export function isSongOffline(song) {
   if (!song) return false;
   const list = getOfflineSongs();
   const id = song.id || song.link;
-  return list.some((s) => (s.id || s.link) === id);
+  const rawTarget = song.link ? song.link.split("?")[0] : "";
+  return list.some((s) => {
+    return (s.id || s.link) === id || (rawTarget && s.link && s.link.split("?")[0] === rawTarget);
+  });
 }
 
 function updateDownloadBadge() {
   const list = getOfflineSongs();
-  if (pillOffline) {
-    pillOffline.innerHTML = `
-      <span class="material-icons" style="font-size:0.95rem;color:var(--cyan);margin-right:2px">download_for_offline</span>
-      In-App Downloads 📥 (${list.length})
-    `;
+  if (filterDownloadedText) {
+    filterDownloadedText.textContent = list.length > 0 ? `Downloaded (${list.length})` : "Downloaded";
+  }
+  updateOfflineBanner();
+}
+
+function updateOfflineBanner() {
+  const offlineSongs = getOfflineSongs();
+  const count = offlineSongs.length;
+
+  if (filterDownloadedText) {
+    filterDownloadedText.textContent = count > 0 ? `Downloaded (${count})` : "Downloaded";
+  }
+
+  if (filterDownloadedBtn) {
+    filterDownloadedBtn.classList.toggle("active", isOfflineFilterActive());
+  }
+
+  if (offlineModeBanner) {
+    if (isOfflineFilterActive()) {
+      offlineModeBanner.style.display = "flex";
+      if (offlineModeCount) {
+        offlineModeCount.textContent = `${count} track${count === 1 ? "" : "s"} saved`;
+      }
+    } else {
+      offlineModeBanner.style.display = "none";
+    }
   }
 }
 
@@ -143,30 +215,8 @@ syncOfflineMetadataWithIndexedDB(OFFLINE_STORAGE_KEY).then((restored) => {
   }
 });
 
-// Remove only downloaded records whose remote file was explicitly deleted.
-// The catalogue entry remains visible; it simply cannot resurrect old audio.
-async function purgeDeletedOfflineTracks() {
-  const offlineSongs = getOfflineSongs();
-  const deletedIds = new Set();
-  for (const song of offlineSongs) {
-    if (!song?.link || !song.link.includes("file.garden")) continue;
-    try {
-      const response = await fetch(song.link, { method: "HEAD", cache: "no-store" });
-      if (response.status === 404 || response.status === 410) {
-        const id = song.id || song.link;
-        await deleteTrackFromStorage(id);
-        deletedIds.add(id);
-      }
-    } catch {}
-  }
-  if (deletedIds.size > 0) {
-    const remaining = getOfflineSongs().filter((song) => !deletedIds.has(song.id || song.link));
-    localStorage.setItem(OFFLINE_STORAGE_KEY, JSON.stringify(remaining));
-    updateDownloadBadge();
-  }
-}
+// Downloaded tracks are stored permanently in IndexedDB and never purged on remote network glitches
 
-purgeDeletedOfflineTracks();
 
 export async function toggleOfflineStorage(song) {
   if (!song || !song.link) return;
@@ -182,7 +232,7 @@ export async function toggleOfflineStorage(song) {
       player.showToast(`Removed "${song.title}" from Downloads`);
       updateOfflineIcons(song, "not-downloaded");
       updateDownloadBadge();
-      if (activeGenre === "offline") renderGenre("offline");
+      if (isOfflineFilterActive()) renderGenre(activeGenre);
     } catch (err) {
       console.warn("Error removing offline track:", err);
     }
@@ -310,7 +360,7 @@ async function processDownloadQueue() {
 
       updateOfflineIcons(song, "downloaded");
       updateDownloadBadge();
-      if (activeGenre === "offline") renderGenre("offline");
+      if (isOfflineFilterActive()) renderGenre(activeGenre);
 
       const remaining = downloadQueue.length + activeDownloads.size - 1;
       if (remaining > 0) {
@@ -626,6 +676,24 @@ function rebuildAllCatalogues() {
     songsByGenre[genre] = [...brandNewCommunityUploads, ...raw];
   });
 
+  // Guarantee every downloaded song is merged into its specific genre section
+  const offlineCatalogSongs = getOfflineSongs();
+  offlineCatalogSongs.forEach((offSong) => {
+    if (!offSong || !offSong.link) return;
+    const g = getSongGenre(offSong);
+    if (!songsByGenre[g]) songsByGenre[g] = [];
+    const cleanLink = offSong.link.split("?")[0].toLowerCase().trim();
+    const cleanTitle = (offSong.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+    const exists = songsByGenre[g].some((s) => {
+      const sLink = (s.link || "").split("?")[0].toLowerCase().trim();
+      const sTitle = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+      return (cleanLink && sLink === cleanLink) || (cleanTitle && sTitle && sTitle === cleanTitle);
+    });
+    if (!exists) {
+      songsByGenre[g].push(normalizeSong(offSong, g, "offline_store"));
+    }
+  });
+
   // Rebuild global search index containing ALL songs (strictly unique)
   allSongs = [];
   const globalSeenLinks = new Set();
@@ -894,38 +962,76 @@ function selectGenre(genre) {
 }
 
 function renderGenre(genre) {
+  if (!genre) genre = DEFAULT_GENRE;
+
   if (genre === "favorites") {
-    const favs = getFavorites().map((s) => normalizeSong(s, s.genre || "favorites", "fav"));
-    renderSongList(grid, favs, "No favorite songs yet! Tap the heart icon on any song to add it here.");
+    let favs = getFavorites().map((s) => normalizeSong(s, s.genre || "favorites", "fav"));
+    if (isOfflineFilterActive()) {
+      favs = favs.filter(isSongOffline);
+      renderSongList(
+        grid,
+        favs,
+        "No downloaded songs in Favorites yet. Tap the heart and download icons while online to listen offline!"
+      );
+    } else {
+      renderSongList(
+        grid,
+        favs,
+        "No favorite songs yet! Tap the heart icon on any song to add it here."
+      );
+    }
     updateHeroBanner(favs);
+    updateOfflineBanner();
     return;
   }
 
-  if (genre === "offline") {
-    const offList = getOfflineSongs().map((s) => normalizeSong(s, s.genre || "offline", "offline"));
-    renderSongList(grid, offList, "No songs downloaded in App Storage yet. Tap the ⚡ icon on any song to download it for offline play (even on Airplane Mode)!");
-    updateHeroBanner(offList);
+  let songs = [...(songsByGenre[genre] || [])];
 
-    // Auto-recover from IndexedDB if PWA standalone / OS evicted temporary localStorage
-    syncOfflineMetadataWithIndexedDB(OFFLINE_STORAGE_KEY).then((syncedList) => {
-      if (syncedList && syncedList.length > offList.length && activeGenre === "offline") {
-        const fullList = syncedList.map((s) => normalizeSong(s, s.genre || "offline", "offline"));
-        renderSongList(grid, fullList, "No songs downloaded in App Storage yet. Tap the ⚡ icon on any song to download it for offline play (even on Airplane Mode)!");
-        updateHeroBanner(fullList);
-        updateDownloadBadge();
+  // Guarantee all downloaded songs belonging to this genre are included
+  const offlineSongs = getOfflineSongs();
+  const offlineForGenre = offlineSongs.filter((s) => getSongGenre(s) === genre);
+  if (offlineForGenre.length > 0) {
+    const existingLinks = new Set(songs.map((s) => (s.link || "").split("?")[0].toLowerCase().trim()));
+    offlineForGenre.forEach((offSong) => {
+      const cleanLink = (offSong.link || "").split("?")[0].toLowerCase().trim();
+      if (!existingLinks.has(cleanLink)) {
+        songs.push(normalizeSong(offSong, genre, "offline_store"));
+        existingLinks.add(cleanLink);
       }
     });
-    return;
   }
 
-  const songs = songsByGenre[genre] || [];
-  const emptyMsg = "No songs available in this category.";
-  renderSongList(grid, songs, emptyMsg);
-  updateHeroBanner(songs);
+  if (isOfflineFilterActive()) {
+    // OFFLINE / DOWNLOADED FILTER: Show ONLY downloaded songs in this specific section!
+    const downloadedInGenre = songs.filter(isSongOffline);
+    const totalOffline = offlineSongs.length;
+    const genreTitle = GENRE_TITLES[genre] || `${genre.toUpperCase()}`;
+
+    let emptyMsg = `No downloaded songs in ${genreTitle} yet.`;
+    if (totalOffline > 0) {
+      emptyMsg += ` 🎧 You have ${totalOffline} downloaded track(s) in other categories!`;
+    } else {
+      emptyMsg += ` Tap the ⚡ icon on any song while online to download it for offline play.`;
+    }
+
+    renderSongList(grid, downloadedInGenre, emptyMsg);
+    updateHeroBanner(downloadedInGenre);
+  } else {
+    // ONLINE: Show ALL songs in this genre section!
+    const emptyMsg = `No songs available in ${GENRE_TITLES[genre] || genre}.`;
+    renderSongList(grid, songs, emptyMsg);
+    updateHeroBanner(songs);
+  }
+
+  updateOfflineBanner();
 }
 
 /* ── SEARCH ENGINE ── */
 function getAllSearchableSongs() {
+  if (isOfflineFilterActive()) {
+    return getOfflineSongs().map((s) => normalizeSong(s, getSongGenre(s), "offline"));
+  }
+
   if (allSongs && allSongs.length > 0) return allSongs;
   const list = [];
   const seen = new Set();
@@ -933,7 +1039,7 @@ function getAllSearchableSongs() {
   getOfflineSongs().forEach((s) => {
     if (s && s.link && !seen.has(s.link)) {
       seen.add(s.link);
-      const norm = normalizeSong(s, s.genre || "offline", "offline");
+      const norm = normalizeSong(s, getSongGenre(s), "offline");
       if (norm) list.push(norm);
     }
   });
@@ -1301,8 +1407,42 @@ if (sleepModal) {
 /* ── GENRE PILL CLICKS ── */
 genrePills.forEach((pill) => {
   pill.addEventListener("click", () => {
-    selectGenre(pill.dataset.genre);
+    if (pill.dataset.genre) {
+      selectGenre(pill.dataset.genre);
+    }
   });
+});
+
+if (filterDownloadedBtn) {
+  filterDownloadedBtn.addEventListener("click", () => {
+    if (!navigator.onLine) {
+      player.showToast("📶 Offline mode active — Showing downloaded songs", 2500);
+      return;
+    }
+    isManualDownloadedFilter = !isManualDownloadedFilter;
+    if (isManualDownloadedFilter) {
+      player.showToast("⚡ Filter: Showing downloaded songs only", 2000);
+    } else {
+      player.showToast("🌐 Showing all songs across sections", 2000);
+    }
+    updateOfflineBanner();
+    renderGenre(activeGenre);
+  });
+}
+
+// ── NETWORK CHANGE DETECTORS (ONLINE / OFFLINE) ──
+window.addEventListener("online", () => {
+  console.log("[App] Network online. Restoring all songs across sections.");
+  updateOfflineBanner();
+  player.showToast("🌐 Connected to internet — All songs available", 2500);
+  renderGenre(activeGenre);
+});
+
+window.addEventListener("offline", () => {
+  console.log("[App] Network offline. Filtering to downloaded songs only.");
+  updateOfflineBanner();
+  player.showToast("📶 Offline mode — Showing downloaded songs only", 3000);
+  renderGenre(activeGenre);
 });
 
 /* ── SEARCH INPUT EVENTS ── */
@@ -1499,11 +1639,6 @@ window.addEventListener("offline", () => {
   selectGenre("offline");
 });
 
-window.addEventListener("online", () => {
-  player.showToast("🌐 Connected to Internet", 2500);
-  subscribeToFirestoreSongs();
-});
-
 /* ── INITIALIZATION ── */
 (async () => {
   try {
@@ -1513,10 +1648,12 @@ window.addEventListener("online", () => {
 
     grid.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading catalogue...</div>';
 
-    // 1. If completely offline on launch, jump straight to In-App Downloads!
+    // 1. If completely offline on launch, render downloaded songs in their respective sections
     if (!navigator.onLine) {
-      selectGenre("offline");
-      player.showToast("✈️ Offline Mode: Playing from In-App Storage", 3500);
+      console.log("[App] Booting offline. Rendering downloaded songs in their respective sections.");
+      rebuildAllCatalogues();
+      renderGenre(DEFAULT_GENRE);
+      player.showToast("✈️ Offline Mode: Showing downloaded songs in their sections", 3500);
       return;
     }
 
