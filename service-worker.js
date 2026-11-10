@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v98";
+const APP_SHELL_CACHE = "musicsaura-shell-v99";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -126,14 +126,12 @@ self.addEventListener("fetch", (event) => {
     url.hostname.includes("file.garden");
 
   if (isAudio) {
-    // 1. Explicit download or online external streaming:
-    // ALWAYS bypass SW completely! Allows browser's native C++ streaming pipeline to stream directly
-    // at full line speed (40+ Mbps) with hardware range requests (206) and zero SW CORS/503 interference.
-    if (url.searchParams.has("_dl") || (navigator.onLine && !url.origin.includes(self.location.origin))) {
+    // 1. Explicit download workers bypass SW to avoid socket contention
+    if (url.searchParams.has("_dl")) {
       return;
     }
 
-    // 2. Offline playback or same-origin audio: check In-App Offline Storage
+    // 2. Offline-First Audio Delivery: Check Cache API first (for offline songs & background-prefetched streams)
     event.respondWith(
       (async () => {
         try {
@@ -167,12 +165,13 @@ self.addEventListener("fetch", (event) => {
           console.warn("[SW] Offline audio cache check notice:", err);
         }
 
-        // 3. If online and same-origin, fetch directly from network
+        // 3. If online, fetch from remote server
         if (navigator.onLine) {
           try {
-            const netRes = await fetch(request);
-            if (netRes) return netRes;
-          } catch (e) {}
+            return await fetch(request);
+          } catch (netErr) {
+            console.warn("[SW] Online audio fetch error:", netErr);
+          }
         }
 
         // 4. Return clean 404 for missing offline tracks without breaking audio tag

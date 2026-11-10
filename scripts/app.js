@@ -1426,8 +1426,6 @@ player.setSectionAdvancer((fromGenre) => {
     const nextGenre = GENRE_CYCLE[nextIdx];
     const candidateSongs = getSongsForSection(nextGenre);
     if (candidateSongs && candidateSongs.length > 0) {
-      selectGenre(nextGenre);
-      player.showToast(`🎶 Next Section: ${GENRE_TITLES[nextGenre] || nextGenre}`, 3000);
       return {
         songs: candidateSongs,
         genre: nextGenre,
@@ -1436,6 +1434,12 @@ player.setSectionAdvancer((fromGenre) => {
     }
   }
   return null;
+});
+
+// Update the active genre pill and view when section transition executes
+player.onSectionChange((nextGenre) => {
+  selectGenre(nextGenre);
+  player.showToast(`🎶 Next Section: ${GENRE_TITLES[nextGenre] || nextGenre}`, 3000);
 });
 
 // ── NETWORK CHANGE DETECTORS (ONLINE / OFFLINE) ──
