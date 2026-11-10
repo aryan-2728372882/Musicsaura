@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v99";
+const APP_SHELL_CACHE = "musicsaura-shell-v100";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -36,7 +36,6 @@ self.addEventListener("install", (event) => {
   self.skipWaiting();
   event.waitUntil(
     caches.open(APP_SHELL_CACHE).then(async (cache) => {
-      console.log("[SW] Pre-caching all essential app assets for offline playback...");
       await Promise.allSettled(
         PRECACHE_ASSETS.map(async (asset) => {
           try {
@@ -48,7 +47,7 @@ self.addEventListener("install", (event) => {
               await cache.put(fullUrl, res);
             }
           } catch (err) {
-            console.warn("[SW] Notice precaching asset:", asset, err);
+            // Silently skip if optional asset fails
           }
         })
       );
@@ -63,7 +62,6 @@ self.addEventListener("activate", (event) => {
       return Promise.all(
         names.map((name) => {
           if (name !== APP_SHELL_CACHE && name !== OFFLINE_PWA_STORAGE) {
-            console.log("[SW] Purging stale cache:", name);
             return caches.delete(name);
           }
         })

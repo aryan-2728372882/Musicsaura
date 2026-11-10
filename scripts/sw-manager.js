@@ -11,7 +11,7 @@
 
   if (!("serviceWorker" in navigator) || !isSecureContext) return;
 
-  const SW_URL = "/service-worker.js?build=95";
+  const SW_URL = "/service-worker.js?build=100";
   let reloadedForControllerChange = false;
 
   window.addEventListener("load", async () => {
@@ -23,7 +23,6 @@
       });
       const reg = await navigator.serviceWorker.register(SW_URL);
       await reg.update().catch(() => {});
-      console.log("[SW] Registered successfully:", reg.scope);
 
       // Check for updates on visibility and focus change
       const checkUpdate = () => { reg.update().catch(() => {}); };
@@ -38,19 +37,17 @@
         if (!newWorker) return;
         newWorker.addEventListener("statechange", () => {
           if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-            console.log("[SW] New version ready.");
             newWorker.postMessage({ type: "SKIP_WAITING" });
           }
         });
       });
+
       // Request permanent storage persistence to prevent auto-eviction of downloaded songs
       if (navigator.storage && navigator.storage.persist) {
-        navigator.storage.persist().then((granted) => {
-          console.log("[SW] Storage persistence status:", granted ? "Persistent" : "Best-effort");
-        }).catch(() => {});
+        navigator.storage.persist().catch(() => {});
       }
     } catch (err) {
-      console.warn("[SW] Registration failed:", err);
+      // Silent error handling
     }
   });
 })();

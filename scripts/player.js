@@ -1247,16 +1247,6 @@ function startInterruptionWatchdog() {
     resumeAfterInterruption();
   }, 2500);
 }
-      interruptionWatchdog = null;
-      return;
-    }
-
-    // If app becomes visible or active again while interrupted, attempt resume
-    if (!document.hidden && document.visibilityState === "visible") {
-      resumeAfterInterruption();
-    }
-  }, 2000);
-}
 
 // ─── PERSISTENT DUAL-DECK AUDIO EVENT BINDINGS ─────────────────────
 function bindDeckEvents(deck) {
