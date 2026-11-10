@@ -86,6 +86,7 @@ const fsOfflineText        = document.getElementById("fs-offline-text");
 const GENRE_FILES = {
   hindi:    "jsons/hindi.json",
   punjabi:  "jsons/punjabi.json",
+  vibe:     "jsons/vibe.json",
   haryanvi: "jsons/haryanvi.json",
   rap:      "jsons/rap.json",
   bhojpuri: "jsons/bhojpuri.json"
@@ -93,6 +94,7 @@ const GENRE_FILES = {
 const GENRE_TITLES = {
   hindi:    "Hindi Hits",
   punjabi:  "Punjabi Vibes",
+  vibe:     "Vibe / Dance",
   haryanvi: "Haryanvi Swag",
   rap:      "Desi Rap",
   bhojpuri: "Bhojpuri Hits",
@@ -965,7 +967,12 @@ function selectGenre(genre) {
 
 export function getSongsForSection(genre) {
   if (genre === "queue") {
-    let queueSongs = [...(player.getState().playlist || [])];
+    const { playlist = [], currentIndex = 0, currentSong = null, userQueue = [] } = player.getState();
+    const upcoming = playlist.length > 0 ? playlist.slice(currentIndex + (currentSong ? 1 : 0)) : [];
+    let queueSongs = currentSong ? [currentSong, ...userQueue, ...upcoming] : [...userQueue, ...upcoming];
+    if (queueSongs.length === 0 && playlist.length > 0) {
+      queueSongs = [...playlist];
+    }
     if (isOfflineFilterActive()) {
       queueSongs = queueSongs.filter(isSongOffline);
     }
@@ -1289,12 +1296,12 @@ if (audioFxModal) {
 if (crossfadeSlider && crossfadeVal) {
   const currentCrossfade = player.getState().crossfadeSeconds;
   crossfadeSlider.value = currentCrossfade;
-  crossfadeVal.textContent = currentCrossfade === 0 ? "0s (Gapless)" : currentCrossfade === 12 ? "12s (Default)" : `${currentCrossfade}s`;
+  crossfadeVal.textContent = currentCrossfade === -1 ? "Off" : currentCrossfade === 0 ? "0s (Gapless)" : currentCrossfade === 12 ? "12s (Default)" : `${currentCrossfade}s`;
 
   crossfadeSlider.addEventListener("input", (e) => {
     const sec = parseInt(e.target.value, 10);
     crossfadeSlider.value = sec;
-    crossfadeVal.textContent = sec === 0 ? "0s (Gapless)" : sec === 12 ? "12s (Default)" : `${sec}s`;
+    crossfadeVal.textContent = sec === -1 ? "Off" : sec === 0 ? "0s (Gapless)" : sec === 12 ? "12s (Default)" : `${sec}s`;
     player.setCrossfade(sec);
   });
 }
@@ -1381,54 +1388,111 @@ document.querySelectorAll(".speed-btn").forEach((btn) => {
 /* ── QUEUE DRAWER MANAGEMENT ── */
 function updateQueueDrawer() {
   if (!queueListEl) return;
-  const { playlist, currentIndex } = player.getState();
+  const { playlist = [], currentIndex = 0, userQueue = [] } = player.getState();
 
-  if (queueCountEl) queueCountEl.textContent = `${playlist.length}`;
+  const totalCount = userQueue.length + playlist.length;
+  if (queueCountEl) queueCountEl.textContent = `${totalCount}`;
 
-  if (!playlist.length) {
-    queueListEl.innerHTML = `<div class="empty-state">Queue is empty. Select a song to start listening!</div>`;
+  if (!userQueue.length && !playlist.length) {
+    queueListEl.innerHTML = `<div class="empty-state">Queue is empty. Tap the queue icon on any song to add tracks!</div>`;
     return;
   }
 
   const frag = document.createDocumentFragment();
-  playlist.forEach((song, idx) => {
-    const item = document.createElement("div");
-    item.className = "queue-item";
-    if (idx === currentIndex) item.classList.add("is-active");
 
-    const isOff = isSongOffline(song);
-    const offBadge = isOff
-      ? '<span class="material-icons" style="font-size:0.85rem;color:var(--cyan);vertical-align:middle;margin-left:4px" title="Downloaded in App Storage">offline_pin</span>'
-      : '';
+  // 1. PRIORITY QUEUE SECTION (Tracks explicitly added by user)
+  if (userQueue.length > 0) {
+    const qHeader = document.createElement("div");
+    qHeader.style.cssText = "font-size:0.75rem;font-weight:700;color:var(--violet-light);padding:0.6rem 0.6rem 0.3rem;text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;gap:6px";
+    qHeader.innerHTML = `<span class="material-icons" style="font-size:0.95rem">bolt</span> Priority Queue (Plays Next)`;
+    frag.appendChild(qHeader);
 
-    item.innerHTML = `
-      <div class="queue-num">${idx === currentIndex ? '<span class="material-icons" style="font-size:1rem;color:var(--violet)">volume_up</span>' : idx + 1}</div>
-      <img src="${escapeHtml(song.thumbnail || "assets/logo.png")}" alt="" class="queue-thumb" onerror="this.src='assets/logo.png'">
-      <div class="queue-meta">
-        <div class="queue-title">${escapeHtml(song.title)} ${offBadge}</div>
-        <div class="queue-artist">${escapeHtml(song.artist || "Unknown")}</div>
-      </div>
-      <button class="icon-btn queue-remove-btn" style="width:28px;height:28px;margin-left:auto;opacity:0.6;background:transparent;border:none;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;justify-content:center" title="Remove from Queue" aria-label="Remove from Queue">
-        <span class="material-icons" style="font-size:1.05rem">close</span>
-      </button>
-    `;
+    userQueue.forEach((song, qIdx) => {
+      const item = document.createElement("div");
+      item.className = "queue-item priority-queue-item";
+      const isOff = isSongOffline(song);
+      const offBadge = isOff
+        ? '<span class="material-icons" style="font-size:0.85rem;color:var(--cyan);vertical-align:middle;margin-left:4px" title="Downloaded in App Storage">offline_pin</span>'
+        : '';
 
-    item.addEventListener("click", (e) => {
-      if (e.target.closest(".queue-remove-btn")) {
-        e.stopPropagation();
-        player.removeFromQueue(idx);
-        updateQueueDrawer();
-        if (activeGenre === "queue") {
-          renderGenre("queue");
+      item.innerHTML = `
+        <div class="queue-num" style="color:var(--violet-light);font-size:0.75rem;font-weight:700">Q${qIdx + 1}</div>
+        <img src="${escapeHtml(song.thumbnail || "assets/logo.png")}" alt="" class="queue-thumb" onerror="this.src='assets/logo.png'">
+        <div class="queue-meta">
+          <div class="queue-title">${escapeHtml(song.title)} ${offBadge}</div>
+          <div class="queue-artist">${escapeHtml(song.artist || "Unknown")}</div>
+        </div>
+        <button class="icon-btn queue-remove-btn" style="width:28px;height:28px;margin-left:auto;opacity:0.6;background:transparent;border:none;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;justify-content:center" title="Remove from Priority Queue" aria-label="Remove from Priority Queue">
+          <span class="material-icons" style="font-size:1.05rem">close</span>
+        </button>
+      `;
+
+      item.addEventListener("click", (e) => {
+        if (e.target.closest(".queue-remove-btn")) {
+          e.stopPropagation();
+          player.removeFromUserQueue(qIdx);
+          updateQueueDrawer();
+          if (activeGenre === "queue") {
+            renderGenre("queue");
+          }
+          return;
         }
-        return;
-      }
-      player.playSong(song, playlist, idx, true);
-      updateQueueDrawer();
-    });
+        player.playSong(song, null, currentIndex, true);
+        updateQueueDrawer();
+      });
 
-    frag.appendChild(item);
-  });
+      frag.appendChild(item);
+    });
+  }
+
+  // 2. PLAYLIST QUEUE SECTION (Default tracks from current playlist)
+  if (playlist.length > 0) {
+    if (userQueue.length > 0) {
+      const pHeader = document.createElement("div");
+      pHeader.style.cssText = "font-size:0.75rem;font-weight:700;color:var(--text-muted);padding:0.7rem 0.6rem 0.3rem;text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;gap:6px";
+      pHeader.innerHTML = `<span class="material-icons" style="font-size:0.95rem">playlist_play</span> Playing Next from Playlist`;
+      frag.appendChild(pHeader);
+    }
+
+    playlist.forEach((song, idx) => {
+      const item = document.createElement("div");
+      item.className = "queue-item";
+      if (idx === currentIndex) item.classList.add("is-active");
+
+      const isOff = isSongOffline(song);
+      const offBadge = isOff
+        ? '<span class="material-icons" style="font-size:0.85rem;color:var(--cyan);vertical-align:middle;margin-left:4px" title="Downloaded in App Storage">offline_pin</span>'
+        : '';
+
+      item.innerHTML = `
+        <div class="queue-num">${idx === currentIndex ? '<span class="material-icons" style="font-size:1rem;color:var(--violet)">volume_up</span>' : idx + 1}</div>
+        <img src="${escapeHtml(song.thumbnail || "assets/logo.png")}" alt="" class="queue-thumb" onerror="this.src='assets/logo.png'">
+        <div class="queue-meta">
+          <div class="queue-title">${escapeHtml(song.title)} ${offBadge}</div>
+          <div class="queue-artist">${escapeHtml(song.artist || "Unknown")}</div>
+        </div>
+        <button class="icon-btn queue-remove-btn" style="width:28px;height:28px;margin-left:auto;opacity:0.6;background:transparent;border:none;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;justify-content:center" title="Remove from Queue" aria-label="Remove from Queue">
+          <span class="material-icons" style="font-size:1.05rem">close</span>
+        </button>
+      `;
+
+      item.addEventListener("click", (e) => {
+        if (e.target.closest(".queue-remove-btn")) {
+          e.stopPropagation();
+          player.removeFromQueue(idx);
+          updateQueueDrawer();
+          if (activeGenre === "queue") {
+            renderGenre("queue");
+          }
+          return;
+        }
+        player.playSong(song, playlist, idx, true);
+        updateQueueDrawer();
+      });
+
+      frag.appendChild(item);
+    });
+  }
 
   queueListEl.replaceChildren(frag);
 }
@@ -1477,7 +1541,7 @@ genrePills.forEach((pill) => {
 });
 
 /* ── AUTO-ADVANCE TO NEXT SECTION (Apple Music Seamless Flow) ── */
-const GENRE_CYCLE = ["hindi", "punjabi", "haryanvi", "rap", "bhojpuri"];
+const GENRE_CYCLE = ["hindi", "punjabi", "vibe", "haryanvi", "rap", "bhojpuri"];
 
 player.setSectionAdvancer((fromGenre) => {
   const currentG = fromGenre || activeGenre || "hindi";

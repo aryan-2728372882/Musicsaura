@@ -1474,6 +1474,14 @@ body.page-scroll {
   border-left: 3px solid var(--violet);
 }
 
+.queue-item.priority-queue-item {
+  background: rgba(139, 92, 246, 0.08);
+  border-left: 3px solid var(--violet-light);
+}
+.queue-item.priority-queue-item:hover {
+  background: rgba(139, 92, 246, 0.16);
+}
+
 .queue-num {
   font-size: 0.8rem;
   color: var(--text-muted);

@@ -75,13 +75,13 @@ let isSeeking         = false;
 let userPaused        = false;
 let playbackGeneration = 0;
 
-// Audio Configuration (12s Apple Music Standard Crossfade & Gapless Default)
+// Audio Configuration (12s Apple Music Standard Crossfade & Gapless Default, -1 is Off)
 const savedCrossfade = localStorage.getItem(CROSSFADE_STORAGE_KEY);
 let crossfadeSeconds = 12;
-if (savedCrossfade !== null && savedCrossfade !== "5") {
+if (savedCrossfade !== null) {
   const parsed = parseFloat(savedCrossfade);
   if (!isNaN(parsed)) {
-    crossfadeSeconds = clamp(parsed, 0, 12);
+    crossfadeSeconds = clamp(parsed, -1, 12);
   }
 }
 localStorage.setItem(CROSSFADE_STORAGE_KEY, String(crossfadeSeconds));
@@ -443,10 +443,13 @@ window.addEventListener("pagehide", () => {
 });
 
 let isBuffering          = false;
-let isUnderrunCushioning  = false;
+let isCushionBuffering    = false;
+let cushionCheckInterval  = null;
 let stallWatchdogTimer    = null;
 let stallCount            = 0;
 let advancingTrack       = false;
+let hasPlayerEverBeenShown = false;
+let userQueue             = [];
 
 function getBufferedAhead(deck) {
   try {
@@ -459,12 +462,55 @@ function getBufferedAhead(deck) {
         return end - cur;
       }
     }
-    if (deck.buffered.start(0) <= cur + 0.3) {
+    if (deck.buffered.start(0) <= cur + 0.5) {
       return Math.max(0, deck.buffered.end(0) - cur);
     }
     return 0;
   } catch {
     return 0;
+  }
+}
+
+function startCushionBuffering(deck) {
+  if (isCushionBuffering || userPaused || !currentSong) return;
+  isCushionBuffering = true;
+  isBuffering = true;
+  updateUI();
+
+  try { deck.pause(); } catch {}
+
+  if (cushionCheckInterval) clearInterval(cushionCheckInterval);
+  cushionCheckInterval = setInterval(() => {
+    if (!isCushionBuffering || userPaused || !currentSong) {
+      clearInterval(cushionCheckInterval);
+      cushionCheckInterval = null;
+      return;
+    }
+
+    const ahead = getBufferedAhead(deck);
+    const dur = deck.duration;
+    const cur = deck.currentTime;
+    const rem = Number.isFinite(dur) && dur > 0 ? (dur - cur) : 10;
+
+    // Buffer at least 4.0 seconds cushion (or until rest of track is buffered)
+    if (ahead >= 4.0 || ahead >= rem) {
+      clearInterval(cushionCheckInterval);
+      cushionCheckInterval = null;
+      isCushionBuffering = false;
+      isBuffering = false;
+      updateUI();
+      if (!userPaused) {
+        deck.play().catch(() => {});
+      }
+    }
+  }, 200);
+}
+
+function stopCushionBuffering() {
+  isCushionBuffering = false;
+  if (cushionCheckInterval) {
+    clearInterval(cushionCheckInterval);
+    cushionCheckInterval = null;
   }
 }
 
@@ -478,8 +524,9 @@ function emitStateChange() {
 
 function updateUI() {
   if (playerEl) {
-    playerEl.hidden = !currentSong;
-    if (currentSong) playerEl.classList.add("visible");
+    if (currentSong) hasPlayerEverBeenShown = true;
+    playerEl.hidden = !hasPlayerEverBeenShown;
+    if (hasPlayerEverBeenShown) playerEl.classList.add("visible");
   }
 
   if (titleEl)  titleEl.textContent  = currentSong?.title || "Select a track";
@@ -762,10 +809,20 @@ async function resolveAudioSource(song) {
 let sectionAdvancer = null;
 
 function getNextTrackCandidate() {
-  if (repeatMode === "one" && playlist && playlist[currentIndex]) {
-    return { song: playlist[currentIndex], index: currentIndex };
+  if (repeatMode === "one" && currentSong) {
+    return { song: currentSong, index: currentIndex, isRepeatOne: true };
   }
 
+  // 1. PRIORITY QUEUE: Explicit user-queued songs take highest priority!
+  if (userQueue.length > 0) {
+    return {
+      song: userQueue[0],
+      index: currentIndex, // Retain playlist index so natural playlist flow resumes after priority queue
+      isUserQueue: true
+    };
+  }
+
+  // 2. Shuffle mode
   if (isShuffle && playlist && playlist.length > 0) {
     let randIdx = Math.floor(Math.random() * playlist.length);
     if (playlist.length > 1 && randIdx === currentIndex) {
@@ -774,19 +831,19 @@ function getNextTrackCandidate() {
     return { song: playlist[randIdx], index: randIdx };
   }
 
+  // 3. Normal sequential advance in current playlist
   const nextIdx = currentIndex + 1;
   if (playlist && nextIdx < playlist.length) {
     return { song: playlist[nextIdx], index: nextIdx };
   }
 
-  // Current playlist/section reached the end!
-  // If repeat mode is 'all' and no section advancer, repeat current section
+  // 4. Current playlist reached end: Repeat all
   if (repeatMode === "all" && !sectionAdvancer && playlist && playlist.length > 0) {
     return { song: playlist[0], index: 0 };
   }
 
-  // ── AUTO-ADVANCE TO NEXT SECTION (e.g. Hindi Hits -> Punjabi Vibes -> Haryanvi Swag -> Desi Rap -> Bhojpuri Hits)
-  if (sectionAdvancer) {
+  // 5. AUTO-ADVANCE TO NEXT SECTION (Only if currently actively playing a track, never when idle!)
+  if (sectionAdvancer && currentSong) {
     const adv = sectionAdvancer(currentSong?.genre);
     if (adv && adv.songs && adv.songs.length > 0) {
       return {
@@ -807,6 +864,7 @@ function getNextTrackCandidate() {
 
 let standbySong = null;
 let standbyIndex = -1;
+let standbyIsUserQueue = false;
 
 async function armStandbyDeck() {
   if (isTransitioning) return;
@@ -814,6 +872,7 @@ async function armStandbyDeck() {
   if (!candidate || !candidate.song) {
     standbySong = null;
     standbyIndex = -1;
+    standbyIsUserQueue = false;
     return;
   }
 
@@ -824,6 +883,7 @@ async function armStandbyDeck() {
 
   standbySong = candidate.song;
   standbyIndex = candidate.index;
+  standbyIsUserQueue = !!candidate.isUserQueue;
 
   const resolvedUrl = await resolveAudioSource(standbySong);
   if (!resolvedUrl || isTransitioning) return;
@@ -842,6 +902,7 @@ let transitioningTargetSong = null;
 let transitioningTargetIndex = null;
 let transitioningTargetPlaylist = null;
 let transitioningTargetGenre = null;
+let transitioningIsUserQueue = false;
 
 function cancelAnyTransition() {
   if (crossfadeTimer) {
@@ -860,6 +921,7 @@ function cancelAnyTransition() {
   transitioningTargetIndex = null;
   transitioningTargetPlaylist = null;
   transitioningTargetGenre = null;
+  transitioningIsUserQueue = false;
   try {
     standbyDeck.pause();
     standbyDeck.removeAttribute("src");
@@ -868,7 +930,7 @@ function cancelAnyTransition() {
   standbyDeck.volume = masterVolume;
 }
 
-function finalizeTransition(outgoingDeck, incomingDeck, targetSong, targetIndex, nextPlaylist = null, nextGenre = null) {
+function finalizeTransition(outgoingDeck, incomingDeck, targetSong, targetIndex, nextPlaylist = null, nextGenre = null, isUserQueue = false) {
   if (!isTransitioning && outgoingDeck === activeDeck && incomingDeck !== standbyDeck) return;
   isTransitioning = false;
   transitionSessionId++; // Invalidate running crossfade watchdog / intervals
@@ -909,12 +971,19 @@ function finalizeTransition(outgoingDeck, incomingDeck, targetSong, targetIndex,
     playlist = [...nextPlaylist];
     originalList = [...nextPlaylist];
     currentIndex = targetIndex !== null && targetIndex >= 0 ? targetIndex : 0;
-  } else if (targetIndex !== null && targetIndex >= 0) {
+  } else if (!isUserQueue && !transitioningIsUserQueue && targetIndex !== null && targetIndex >= 0) {
     currentIndex = targetIndex;
   }
 
   if (targetSong) {
     currentSong = targetSong;
+  }
+
+  // Consume from userQueue if this transition was for a queued song
+  if (isUserQueue || transitioningIsUserQueue) {
+    const qIdx = userQueue.findIndex((s) => (s.id || s.link) === (targetSong?.id || targetSong?.link));
+    if (qIdx >= 0) userQueue.splice(qIdx, 1);
+    else if (userQueue.length > 0) userQueue.shift();
   }
 
   userPaused = false;
@@ -923,8 +992,10 @@ function finalizeTransition(outgoingDeck, incomingDeck, targetSong, targetIndex,
   transitioningTargetIndex = null;
   transitioningTargetPlaylist = null;
   transitioningTargetGenre = null;
+  transitioningIsUserQueue = false;
   standbySong = null;
   standbyIndex = -1;
+  standbyIsUserQueue = false;
   transitionTriggeredForSongId = null; // CRITICAL: Reset for next song!
 
   flushStatsToFirebase().catch(() => {});
@@ -949,18 +1020,19 @@ function finalizeTransition(outgoingDeck, incomingDeck, targetSong, targetIndex,
 
 function finalizeTransitionImmediately() {
   if (!isTransitioning) return;
-  finalizeTransition(activeDeck, standbyDeck, transitioningTargetSong, transitioningTargetIndex, transitioningTargetPlaylist, transitioningTargetGenre);
+  finalizeTransition(activeDeck, standbyDeck, transitioningTargetSong, transitioningTargetIndex, transitioningTargetPlaylist, transitioningTargetGenre, transitioningIsUserQueue);
 }
 
 // ─── APPLE MUSIC EQUAL-POWER CROSSFADE & GAPLESS ENGINE ───────────
 // Equal-Power Sine/Cosine Curve: Constant acoustic energy: cos²(p*π/2) + sin²(p*π/2) = 1
-async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedNextIndex = null, forcedNextPlaylist = null, forcedNextGenre = null) {
+async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedNextIndex = null, forcedNextPlaylist = null, forcedNextGenre = null, forcedIsUserQueue = false) {
   if (isTransitioning) return;
 
   let targetSong = forcedNextSong;
   let targetIndex = forcedNextIndex;
   let targetPlaylist = forcedNextPlaylist;
   let targetGenre = forcedNextGenre;
+  let targetIsUserQueue = forcedIsUserQueue;
 
   if (!targetSong) {
     const candidate = getNextTrackCandidate();
@@ -972,6 +1044,7 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     targetIndex = candidate.index;
     targetPlaylist = candidate.nextPlaylist || null;
     targetGenre = candidate.nextGenre || null;
+    targetIsUserQueue = !!candidate.isUserQueue;
   }
 
   const thisSession = ++transitionSessionId;
@@ -979,6 +1052,7 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
   transitioningTargetIndex = targetIndex;
   transitioningTargetPlaylist = targetPlaylist;
   transitioningTargetGenre = targetGenre;
+  transitioningIsUserQueue = targetIsUserQueue;
   isTransitioning = true;
   advancingTrack = true;
 
@@ -1100,7 +1174,7 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
 
   // Finalize switch
   if (thisSession === transitionSessionId && isTransitioning) {
-    finalizeTransition(outgoingDeck, incomingDeck, targetSong, targetIndex, targetPlaylist, targetGenre);
+    finalizeTransition(outgoingDeck, incomingDeck, targetSong, targetIndex, targetPlaylist, targetGenre, targetIsUserQueue);
   }
 }
 
@@ -1254,8 +1328,8 @@ function bindDeckEvents(deck) {
   deck.addEventListener("waiting", () => {
     if (deck === activeDeck) {
       isBuffering = true;
-      isUnderrunCushioning = true;
       updateUI();
+      startCushionBuffering(deck);
       startStallWatchdog();
     }
   });
@@ -1264,6 +1338,7 @@ function bindDeckEvents(deck) {
     if (deck === activeDeck) {
       isBuffering = true;
       updateUI();
+      startCushionBuffering(deck);
       startStallWatchdog();
     }
   });
@@ -1271,7 +1346,7 @@ function bindDeckEvents(deck) {
   deck.addEventListener("canplay", () => {
     if (deck === activeDeck) {
       clearStallWatchdog();
-      if (!isUnderrunCushioning) {
+      if (!isCushionBuffering) {
         isBuffering = false;
         updateUI();
       }
@@ -1280,7 +1355,7 @@ function bindDeckEvents(deck) {
 
   deck.addEventListener("canplaythrough", () => {
     if (deck === activeDeck) {
-      isUnderrunCushioning = false;
+      stopCushionBuffering();
       isBuffering = false;
       clearStallWatchdog();
       updateUI();
@@ -1295,7 +1370,7 @@ function bindDeckEvents(deck) {
       interruptionWatchdog = null;
       advancingTrack = false;
       isBuffering = false;
-      isUnderrunCushioning = false;
+      stopCushionBuffering();
       clearStallWatchdog();
       userPaused = false;
       playSessionStart = Date.now();
@@ -1307,6 +1382,10 @@ function bindDeckEvents(deck) {
 
   deck.addEventListener("pause", () => {
     if (deck === activeDeck && !isTransitioning) {
+      if (isCushionBuffering) {
+        // Paused intentionally to accumulate buffer cushion — not a user pause or system interruption
+        return;
+      }
       if (!userPaused && currentSong && !deck.ended) {
         // Paused by external interruption (incoming phone call / audio focus loss)
         wasInterruptedBySystem = true;
@@ -1349,12 +1428,14 @@ function bindDeckEvents(deck) {
   deck.addEventListener("progress", () => {
     if (deck === activeDeck && deck.buffered.length > 0) {
       clearStallWatchdog();
-      if (isUnderrunCushioning) {
+      if (isCushionBuffering) {
         const ahead = getBufferedAhead(deck);
-        const rem = Number.isFinite(deck.duration) ? (deck.duration - deck.currentTime) : 10;
-        // Require 3.0s buffer cushion (or until track ends) before resuming, avoiding rapid stutter on 100kbps
-        if (ahead >= 3.0 || ahead >= rem) {
-          isUnderrunCushioning = false;
+        const dur = deck.duration;
+        const cur = deck.currentTime;
+        const rem = Number.isFinite(dur) && dur > 0 ? (dur - cur) : 10;
+        // Require 4.0s buffer cushion (or until track ends) before resuming, avoiding rapid stutter on 540kbps
+        if (ahead >= 4.0 || ahead >= rem) {
+          stopCushionBuffering();
           isBuffering = false;
           updateUI();
           if (!userPaused) {
@@ -1369,6 +1450,12 @@ function bindDeckEvents(deck) {
     if (deck !== activeDeck) return;
     updateProgress();
     updatePositionState();
+
+    if (crossfadeSeconds === -1) {
+      // Crossfade and gapless are both completely disabled by user
+      // Track will play to 100% natural end and advance on 'ended' event
+      return;
+    }
 
     // Auto-advance / Studio crossfade check
     const dur = deck.duration;
@@ -1481,10 +1568,10 @@ function bindDeckEvents(deck) {
       return;
     }
 
-    // GAPLESS BACKUP: If standby deck is armed and ready, transition INSTANTLY with 0ms silence
-    if (standbySong && standbyDeck.src && standbyDeck.readyState >= 2) {
+    // GAPLESS BACKUP: If standby deck is armed and ready, transition INSTANTLY with 0ms silence (only if crossfade/gapless is not OFF)
+    if (crossfadeSeconds !== -1 && standbySong && standbyDeck.src && standbyDeck.readyState >= 2) {
       console.log("[Player] Deck ended: Instant switch to pre-buffered standby deck:", standbySong.title);
-      finalizeTransition(activeDeck, standbyDeck, standbySong, standbyIndex, transitioningTargetPlaylist, transitioningTargetGenre);
+      finalizeTransition(activeDeck, standbyDeck, standbySong, standbyIndex, transitioningTargetPlaylist, transitioningTargetGenre, standbyIsUserQueue);
       standbyDeck.volume = masterVolume;
       standbyDeck.play().catch(() => {});
       return;
@@ -1600,6 +1687,7 @@ export const player = {
       duration: activeDeck.duration || 0,
       playlist,
       currentIndex,
+      userQueue: [...userQueue],
       repeatMode,
       isShuffle,
       volume: masterVolume,
@@ -1621,19 +1709,13 @@ export const player = {
   },
 
   addToQueue(song) {
-    if (!song) return 0;
+    if (!song || !song.link) return 0;
     const cleanSong = { ...song };
-    if (!playlist || playlist.length === 0) {
-      playlist = [cleanSong];
-      originalList = [cleanSong];
-      currentIndex = 0;
-    } else {
-      playlist.push(cleanSong);
-      originalList.push(cleanSong);
-    }
+    userQueue.push(cleanSong);
+    armStandbyDeck();
     emitStateChange();
     updateUI();
-    return playlist.length;
+    return userQueue.length;
   },
 
   removeFromQueue(index) {
@@ -1645,8 +1727,22 @@ export const player = {
     } else if (index < currentIndex) {
       currentIndex = Math.max(0, currentIndex - 1);
     }
+    armStandbyDeck();
     emitStateChange();
     updateUI();
+  },
+
+  removeFromUserQueue(index) {
+    if (index >= 0 && index < userQueue.length) {
+      userQueue.splice(index, 1);
+      armStandbyDeck();
+      emitStateChange();
+      updateUI();
+    }
+  },
+
+  getUserQueue() {
+    return [...userQueue];
   },
 
   prefetchAudioStream(link) {
@@ -1706,6 +1802,12 @@ export const player = {
 
   playSong(song, playlistContext = null, index = null, isDirectSelection = false) {
     if (!song || !song.link) return;
+
+    // If this song was in userQueue, remove it from the priority queue
+    const qIdx = userQueue.findIndex((s) => (s.id || s.link) === (song.id || song.link));
+    if (qIdx >= 0) {
+      userQueue.splice(qIdx, 1);
+    }
 
     unlockBothDecks();
 
@@ -1814,8 +1916,15 @@ export const player = {
       resumeAfterInterruption();
       return;
     }
-    if (!currentSong && playlist.length > 0) {
-      return player.playSong(playlist[currentIndex]);
+    if (!currentSong) {
+      if (userQueue.length > 0) {
+        const queuedSong = userQueue.shift();
+        return player.playSong(queuedSong, null, 0, true);
+      }
+      if (playlist.length > 0) {
+        return player.playSong(playlist[currentIndex]);
+      }
+      return;
     }
     // If current track is finished and not repeatMode 'one', advance to next track (prevents stuck loop)
     if ((activeDeck.ended || (activeDeck.duration > 0 && activeDeck.currentTime >= activeDeck.duration - 0.5)) && repeatMode !== "one") {
@@ -1847,6 +1956,7 @@ export const player = {
     wasInterruptedBySystem = false;
     clearInterval(interruptionWatchdog);
     interruptionWatchdog = null;
+    stopCushionBuffering();
     cancelAnyTransition();
     activeDeck.pause();
     activeDeck.volume = masterVolume;
@@ -1862,10 +1972,10 @@ export const player = {
   },
 
   next(isAuto = false) {
-    if (!playlist.length) return;
+    if (!playlist.length && !userQueue.length) return;
     if (!isAuto) userPaused = false;
 
-    if (repeatMode === "off" && !sectionAdvancer && currentIndex >= playlist.length - 1 && isAuto) {
+    if (repeatMode === "off" && !sectionAdvancer && currentIndex >= playlist.length - 1 && userQueue.length === 0 && isAuto) {
       player.pause();
       advancingTrack = false;
       return;
@@ -1873,6 +1983,16 @@ export const player = {
 
     const candidate = getNextTrackCandidate();
     if (!candidate || !candidate.song) return;
+
+    if (candidate.isUserQueue) {
+      const queuedSong = userQueue.shift();
+      if (!activeDeck.paused && activeDeck.currentTime > 1.0 && crossfadeSeconds > 0 && !isTransitioning) {
+        triggerDeckTransition(Math.min(crossfadeSeconds, 2.5), queuedSong, currentIndex, null, null, true);
+      } else {
+        player.playSong(queuedSong, null, currentIndex);
+      }
+      return;
+    }
 
     const nextSong = candidate.song;
     const nextIdx = candidate.index;
@@ -1902,6 +2022,7 @@ export const player = {
 
   seek(seconds) {
     if (!Number.isFinite(activeDeck.duration) || activeDeck.duration <= 0) return;
+    stopCushionBuffering();
     cancelAnyTransition();
     activeDeck.volume = masterVolume;
 
@@ -1937,10 +2058,18 @@ export const player = {
   },
 
   setCrossfade(sec) {
-    crossfadeSeconds = clamp(parseFloat(sec) || 0, 0, 12);
-    localStorage.setItem(CROSSFADE_STORAGE_KEY, String(crossfadeSeconds));
-    player.showToast(crossfadeSeconds === 0 ? "⚡ Gapless playback active (0s)" : `🎚️ Apple-Style Crossfade Active: ${crossfadeSeconds}s`);
+    const parsed = parseFloat(sec);
+    if (parsed === -1) {
+      crossfadeSeconds = -1;
+      localStorage.setItem(CROSSFADE_STORAGE_KEY, "-1");
+      player.showToast("🛑 Crossfade & Gapless OFF (Standard Playback)");
+    } else {
+      crossfadeSeconds = clamp(parsed || 0, 0, 12);
+      localStorage.setItem(CROSSFADE_STORAGE_KEY, String(crossfadeSeconds));
+      player.showToast(crossfadeSeconds === 0 ? "⚡ Gapless playback active (0s)" : `🎚️ Crossfade Active: ${crossfadeSeconds}s`);
+    }
     armStandbyDeck();
+    emitStateChange();
   },
 
   setPlaybackSpeed(speed) {

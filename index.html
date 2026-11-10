@@ -97,6 +97,9 @@
         <button class="genre-pill" data-genre="punjabi">
           <span class="pill-dot"></span>Punjabi Vibes
         </button>
+        <button class="genre-pill" data-genre="vibe">
+          <span class="pill-dot"></span>Vibe / Dance
+        </button>
         <button class="genre-pill" data-genre="haryanvi">
           <span class="pill-dot"></span>Haryanvi Swag
         </button>
@@ -334,12 +337,13 @@
       <!-- Crossfade Controller -->
       <div class="fx-section" style="margin-bottom:0.8rem">
         <div class="fx-section-header">
-          <span>🎚️ Apple-Style Crossfade & Gapless Transition</span>
+          <span>🎚️ Crossfade & Gapless Transition</span>
           <strong id="crossfade-val" style="color:var(--violet-light)">12s (Default)</strong>
         </div>
-        <input type="range" id="crossfade-slider" min="0" max="12" step="1" value="12" class="fx-slider">
+        <input type="range" id="crossfade-slider" min="-1" max="12" step="1" value="12" class="fx-slider">
         <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-muted)">
-          <span>0s (Gapless)</span>
+          <span>Off</span>
+          <span>0s</span>
           <span>3s</span>
           <span>6s</span>
           <span>9s</span>
