@@ -96,7 +96,8 @@ const GENRE_TITLES = {
   haryanvi: "Haryanvi Swag",
   rap:      "Desi Rap",
   bhojpuri: "Bhojpuri Hits",
-  favorites:"Favorites"
+  favorites:"Favorites",
+  queue:    "Playing Queue"
 };
 const DEFAULT_GENRE        = "hindi";
 const FAVORITES_KEY        = "musicsaura_favorites";
@@ -849,6 +850,9 @@ function createCard(song, index) {
       <button class="card-fav-btn ${isFav ? "active" : ""}" aria-label="Favorite" title="${isFav ? "Remove Favorite" : "Favorite"}">
         <span class="material-icons">${isFav ? "favorite" : "favorite_border"}</span>
       </button>
+      <button class="card-fav-btn card-queue-btn" style="top:auto;bottom:8px;left:8px;background:rgba(12,12,22,0.85);color:var(--violet-light)" aria-label="Add to Queue" title="Add to Queue">
+        <span class="material-icons" style="font-size:1.15rem">queue_music</span>
+      </button>
       <button class="card-fav-btn card-offline-btn ${offClass}" style="top:auto;bottom:8px;right:8px;background:rgba(12,12,22,0.85);color:${(isOff || isDownloading || isQueued) ? "var(--cyan)" : "var(--text-muted)"}" aria-label="Offline Storage" title="${offTitle}">
         <span class="material-icons" style="font-size:1.1rem">${offIcon}</span>
       </button>
@@ -860,11 +864,25 @@ function createCard(song, index) {
   `;
 
   // Favorite button click
-  const favBtn = el.querySelector(".card-fav-btn:not(.card-offline-btn)");
+  const favBtn = el.querySelector(".card-fav-btn:not(.card-offline-btn):not(.card-queue-btn)");
   if (favBtn) {
     favBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       toggleFavorite(song);
+    });
+  }
+
+  // Add to Queue button click
+  const queueBtn = el.querySelector(".card-queue-btn");
+  if (queueBtn) {
+    queueBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      player.addToQueue(song);
+      player.showToast(`➕ Added "${song.title}" to Queue!`, 2000);
+      if (activeGenre === "queue") {
+        renderGenre("queue");
+      }
+      updateQueueDrawer();
     });
   }
 
@@ -946,6 +964,14 @@ function selectGenre(genre) {
 }
 
 export function getSongsForSection(genre) {
+  if (genre === "queue") {
+    let queueSongs = [...(player.getState().playlist || [])];
+    if (isOfflineFilterActive()) {
+      queueSongs = queueSongs.filter(isSongOffline);
+    }
+    return queueSongs;
+  }
+
   if (genre === "favorites") {
     let favs = getFavorites().map((s) => normalizeSong(s, s.genre || "favorites", "fav"));
     if (isOfflineFilterActive()) {
@@ -978,6 +1004,26 @@ export function getSongsForSection(genre) {
 
 function renderGenre(genre) {
   if (!genre) genre = DEFAULT_GENRE;
+
+  if (genre === "queue") {
+    const queueSongs = getSongsForSection("queue");
+    if (isOfflineFilterActive()) {
+      renderSongList(
+        grid,
+        queueSongs,
+        "No downloaded songs in Queue yet. Downloaded songs in queue will appear here even without internet!"
+      );
+    } else {
+      renderSongList(
+        grid,
+        queueSongs,
+        "Queue is empty! Tap the queue icon on any song thumbnail to add tracks straight to your queue."
+      );
+    }
+    updateHeroBanner(queueSongs);
+    updateOfflineBanner();
+    return;
+  }
 
   if (genre === "favorites") {
     const favs = getSongsForSection("favorites");
@@ -1243,12 +1289,12 @@ if (audioFxModal) {
 if (crossfadeSlider && crossfadeVal) {
   const currentCrossfade = player.getState().crossfadeSeconds;
   crossfadeSlider.value = currentCrossfade;
-  crossfadeVal.textContent = currentCrossfade === 0 ? "0s (Gapless)" : currentCrossfade === 5 ? "5s (Apple Default)" : `${currentCrossfade}s`;
+  crossfadeVal.textContent = currentCrossfade === 0 ? "0s (Gapless)" : currentCrossfade === 12 ? "12s (Default)" : `${currentCrossfade}s`;
 
   crossfadeSlider.addEventListener("input", (e) => {
     const sec = parseInt(e.target.value, 10);
     crossfadeSlider.value = sec;
-    crossfadeVal.textContent = sec === 0 ? "0s (Gapless)" : sec === 5 ? "5s (Apple Default)" : `${sec}s`;
+    crossfadeVal.textContent = sec === 0 ? "0s (Gapless)" : sec === 12 ? "12s (Default)" : `${sec}s`;
     player.setCrossfade(sec);
   });
 }
@@ -1350,16 +1396,33 @@ function updateQueueDrawer() {
     item.className = "queue-item";
     if (idx === currentIndex) item.classList.add("is-active");
 
+    const isOff = isSongOffline(song);
+    const offBadge = isOff
+      ? '<span class="material-icons" style="font-size:0.85rem;color:var(--cyan);vertical-align:middle;margin-left:4px" title="Downloaded in App Storage">offline_pin</span>'
+      : '';
+
     item.innerHTML = `
       <div class="queue-num">${idx === currentIndex ? '<span class="material-icons" style="font-size:1rem;color:var(--violet)">volume_up</span>' : idx + 1}</div>
       <img src="${escapeHtml(song.thumbnail || "assets/logo.png")}" alt="" class="queue-thumb" onerror="this.src='assets/logo.png'">
       <div class="queue-meta">
-        <div class="queue-title">${escapeHtml(song.title)}</div>
+        <div class="queue-title">${escapeHtml(song.title)} ${offBadge}</div>
         <div class="queue-artist">${escapeHtml(song.artist || "Unknown")}</div>
       </div>
+      <button class="icon-btn queue-remove-btn" style="width:28px;height:28px;margin-left:auto;opacity:0.6;background:transparent;border:none;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;justify-content:center" title="Remove from Queue" aria-label="Remove from Queue">
+        <span class="material-icons" style="font-size:1.05rem">close</span>
+      </button>
     `;
 
-    item.addEventListener("click", () => {
+    item.addEventListener("click", (e) => {
+      if (e.target.closest(".queue-remove-btn")) {
+        e.stopPropagation();
+        player.removeFromQueue(idx);
+        updateQueueDrawer();
+        if (activeGenre === "queue") {
+          renderGenre("queue");
+        }
+        return;
+      }
       player.playSong(song, playlist, idx, true);
       updateQueueDrawer();
     });

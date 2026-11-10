@@ -785,6 +785,22 @@ body.page-scroll {
   color: var(--rose);
 }
 
+.card-queue-btn {
+  position: absolute;
+  top: auto !important;
+  bottom: 8px !important;
+  left: 8px !important;
+  right: auto !important;
+  background: rgba(12, 12, 22, 0.85);
+  color: var(--violet-light);
+}
+
+.card-queue-btn:hover {
+  transform: scale(1.15);
+  color: #ffffff;
+  background: var(--violet);
+}
+
 .card-info {
   margin-top: 0.65rem;
   display: flex;

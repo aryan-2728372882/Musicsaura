@@ -75,10 +75,10 @@ let isSeeking         = false;
 let userPaused        = false;
 let playbackGeneration = 0;
 
-// Audio Configuration (5s Apple Music Standard Crossfade)
+// Audio Configuration (12s Apple Music Standard Crossfade & Gapless Default)
 const savedCrossfade = localStorage.getItem(CROSSFADE_STORAGE_KEY);
-let crossfadeSeconds = 5;
-if (savedCrossfade !== null) {
+let crossfadeSeconds = 12;
+if (savedCrossfade !== null && savedCrossfade !== "5") {
   const parsed = parseFloat(savedCrossfade);
   if (!isNaN(parsed)) {
     crossfadeSeconds = clamp(parsed, 0, 12);
@@ -1618,6 +1618,35 @@ export const player = {
       playlist = [...songs];
       currentIndex = startIndex;
     }
+  },
+
+  addToQueue(song) {
+    if (!song) return 0;
+    const cleanSong = { ...song };
+    if (!playlist || playlist.length === 0) {
+      playlist = [cleanSong];
+      originalList = [cleanSong];
+      currentIndex = 0;
+    } else {
+      playlist.push(cleanSong);
+      originalList.push(cleanSong);
+    }
+    emitStateChange();
+    updateUI();
+    return playlist.length;
+  },
+
+  removeFromQueue(index) {
+    if (!playlist || index < 0 || index >= playlist.length) return;
+    playlist.splice(index, 1);
+    originalList.splice(index, 1);
+    if (currentIndex >= playlist.length) {
+      currentIndex = Math.max(0, playlist.length - 1);
+    } else if (index < currentIndex) {
+      currentIndex = Math.max(0, currentIndex - 1);
+    }
+    emitStateChange();
+    updateUI();
   },
 
   prefetchAudioStream(link) {
