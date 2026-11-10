@@ -53,6 +53,7 @@ let endApproachingTicker = null;
 let transitionSessionId = 0;
 let transitionPromiseResolver = null;
 let onSectionChangeHandler = null;
+let sectionAdvancer = null;
 
 // In-Memory Offline Blob URL Cache for 0ms synchronous background track transitions
 const offlineBlobUrlCache = new Map();
@@ -852,13 +853,27 @@ function getNextTrackCandidate() {
     return { song: playlist[randIdx], index: randIdx };
   }
 
-  // 3. Normal sequential advance in current playlist
+  // 3. Normal sequential advance in current playlist: ALL songs in section play in order
   const nextIdx = currentIndex + 1;
   if (playlist && nextIdx < playlist.length) {
     return { song: playlist[nextIdx], index: nextIdx };
   }
 
-  // 4. Current playlist reached end: Repeat all within current playlist
+  // 4. ALL SONGS IN CURRENT SECTION HAVE COMPLETED!
+  // Advance to the next section when section advancer is available
+  if (sectionAdvancer && currentSong) {
+    const adv = sectionAdvancer(currentSong?.genre);
+    if (adv && adv.songs && adv.songs.length > 0) {
+      return {
+        song: adv.songs[adv.index || 0],
+        index: adv.index || 0,
+        nextPlaylist: adv.songs,
+        nextGenre: adv.genre
+      };
+    }
+  }
+
+  // 5. Current playlist reached end: Repeat all within current playlist if repeatMode is all
   if (repeatMode === "all" && playlist && playlist.length > 0) {
     return { song: playlist[0], index: 0 };
   }
@@ -1451,8 +1466,8 @@ function bindDeckEvents(deck) {
         }
         return;
       }
-      if (repeatMode === "off" && currentIndex >= playlist.length - 1) {
-        return; // Play to the very end of last song if repeat is off
+      if (repeatMode === "off" && !sectionAdvancer && currentIndex >= playlist.length - 1) {
+        return; // Play to the very end of last song if repeat is off and no section advancer
       }
 
       // Constrain crossfade: max 12s and max 10% of track length, strictly requiring at least 85% elapsed
@@ -1925,7 +1940,7 @@ export const player = {
     if (!playlist.length && !userQueue.length) return;
     if (!isAuto) userPaused = false;
 
-    if (repeatMode === "off" && currentIndex >= playlist.length - 1 && userQueue.length === 0 && isAuto) {
+    if (repeatMode === "off" && !sectionAdvancer && currentIndex >= playlist.length - 1 && userQueue.length === 0 && isAuto) {
       player.pause();
       advancingTrack = false;
       return;
@@ -1953,6 +1968,9 @@ export const player = {
     } else {
       if (nextPlaylist && Array.isArray(nextPlaylist) && nextPlaylist.length > 0) {
         player.setPlaylist(nextPlaylist, nextIdx);
+      }
+      if (candidate.nextGenre && typeof onSectionChangeHandler === "function") {
+        try { onSectionChangeHandler(candidate.nextGenre); } catch {}
       }
       player.playSong(nextSong, nextPlaylist, nextIdx);
     }

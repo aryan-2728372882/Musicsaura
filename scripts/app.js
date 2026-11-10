@@ -1572,6 +1572,34 @@ genrePills.forEach((pill) => {
   });
 });
 
+// ── AUTO-ADVANCE TO NEXT SECTION WHEN ALL SONGS IN CURRENT SECTION END ──
+const GENRE_CYCLE = ["hindi", "punjabi", "vibe", "haryanvi", "rap", "bhojpuri"];
+
+player.setSectionAdvancer((fromGenre) => {
+  const currentG = fromGenre || activeGenre || "hindi";
+  let currIdx = GENRE_CYCLE.indexOf(currentG);
+  if (currIdx < 0) currIdx = 0;
+
+  for (let step = 1; step <= GENRE_CYCLE.length; step++) {
+    const nextIdx = (currIdx + step) % GENRE_CYCLE.length;
+    const nextGenre = GENRE_CYCLE[nextIdx];
+    const candidateSongs = getSongsForSection(nextGenre);
+    if (candidateSongs && candidateSongs.length > 0) {
+      return {
+        songs: candidateSongs,
+        genre: nextGenre,
+        index: 0
+      };
+    }
+  }
+  return null;
+});
+
+player.onSectionChange((nextGenre) => {
+  selectGenre(nextGenre);
+  player.showToast(`🎶 Next Section: ${GENRE_TITLES[nextGenre] || nextGenre}`, 3000);
+});
+
 // ── NETWORK CHANGE DETECTORS (ONLINE / OFFLINE) ──
 window.addEventListener("online", () => {
   updateOfflineBanner();
