@@ -443,9 +443,30 @@ window.addEventListener("pagehide", () => {
 });
 
 let isBuffering          = false;
+let isUnderrunCushioning  = false;
 let stallWatchdogTimer    = null;
 let stallCount            = 0;
 let advancingTrack       = false;
+
+function getBufferedAhead(deck) {
+  try {
+    if (!deck || !deck.buffered || deck.buffered.length === 0) return 0;
+    const cur = deck.currentTime || 0;
+    for (let i = 0; i < deck.buffered.length; i++) {
+      const start = deck.buffered.start(i);
+      const end = deck.buffered.end(i);
+      if (cur >= start && cur <= end) {
+        return end - cur;
+      }
+    }
+    if (deck.buffered.start(0) <= cur + 0.3) {
+      return Math.max(0, deck.buffered.end(0) - cur);
+    }
+    return 0;
+  } catch {
+    return 0;
+  }
+}
 
 // ─── UI SYNCHRONIZATION ────────────────────────────────────────────
 function emitStateChange() {
@@ -1233,6 +1254,7 @@ function bindDeckEvents(deck) {
   deck.addEventListener("waiting", () => {
     if (deck === activeDeck) {
       isBuffering = true;
+      isUnderrunCushioning = true;
       updateUI();
       startStallWatchdog();
     }
@@ -1248,14 +1270,17 @@ function bindDeckEvents(deck) {
 
   deck.addEventListener("canplay", () => {
     if (deck === activeDeck) {
-      isBuffering = false;
       clearStallWatchdog();
-      updateUI();
+      if (!isUnderrunCushioning) {
+        isBuffering = false;
+        updateUI();
+      }
     }
   });
 
   deck.addEventListener("canplaythrough", () => {
     if (deck === activeDeck) {
+      isUnderrunCushioning = false;
       isBuffering = false;
       clearStallWatchdog();
       updateUI();
@@ -1270,6 +1295,7 @@ function bindDeckEvents(deck) {
       interruptionWatchdog = null;
       advancingTrack = false;
       isBuffering = false;
+      isUnderrunCushioning = false;
       clearStallWatchdog();
       userPaused = false;
       playSessionStart = Date.now();
@@ -1323,6 +1349,19 @@ function bindDeckEvents(deck) {
   deck.addEventListener("progress", () => {
     if (deck === activeDeck && deck.buffered.length > 0) {
       clearStallWatchdog();
+      if (isUnderrunCushioning) {
+        const ahead = getBufferedAhead(deck);
+        const rem = Number.isFinite(deck.duration) ? (deck.duration - deck.currentTime) : 10;
+        // Require 3.0s buffer cushion (or until track ends) before resuming, avoiding rapid stutter on 100kbps
+        if (ahead >= 3.0 || ahead >= rem) {
+          isUnderrunCushioning = false;
+          isBuffering = false;
+          updateUI();
+          if (!userPaused) {
+            deck.play().catch(() => {});
+          }
+        }
+      }
     }
   });
 
@@ -1684,7 +1723,6 @@ export const player = {
     if (!src.startsWith("blob:") && isSongStoredOffline(song)) {
       getOfflineAudioBlobUrl(song).then((blobUrl) => {
         if (blobUrl && activeDeck.src !== blobUrl && (currentSong?.id || currentSong?.link) === (song.id || song.link)) {
-          console.log("[Player] Async resolved offline blob for downloaded track:", song.title);
           const curTime = activeDeck.currentTime || 0;
           const wasPlaying = !activeDeck.paused;
           activeDeck.src = blobUrl;
@@ -1696,7 +1734,7 @@ export const player = {
       });
     }
 
-    setTimeout(armStandbyDeck, 4000);
+    // Standby deck will arm lazily 35s before song ends (in timeupdate), saving 100% bandwidth for active song
 
     // CRITICAL: Guarantee activeDeck starts at 0:00 (prevents jumping to middle of track from previous song)
     try { activeDeck.currentTime = 0; } catch {}

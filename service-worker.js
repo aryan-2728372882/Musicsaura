@@ -1,14 +1,10 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v101";
+const APP_SHELL_CACHE = "musicsaura-shell-v102";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
   "/",
   "/index.html",
-  "/upload.html",
-  "/auth.html",
-  "/admin-dashboard.html",
-  "/user-dashboard.html",
   "/styles/styles.css",
   "/scripts/app.js",
   "/scripts/player.js",
@@ -18,17 +14,9 @@ const PRECACHE_ASSETS = [
   "/scripts/firebase/firebase-auth.js",
   "/scripts/firebase/firebase-firestore.js",
   "/scripts/sw-manager.js",
-  "/scripts/upload.js",
-  "/scripts/github-sync.js",
   "/manifest.json",
   "/assets/logo.png",
-  "/assets/favicon.ico",
-  "/assets/fonts/material-icons.ttf",
-  "/jsons/hindi.json",
-  "/jsons/punjabi.json",
-  "/jsons/haryanvi.json",
-  "/jsons/rap.json",
-  "/jsons/bhojpuri.json"
+  "/assets/favicon.ico"
 ];
 
 // ─── INSTALL: PRE-CACHE APP SHELL WITH INDEPENDENT FAULT TOLERANCE ─
@@ -66,7 +54,7 @@ self.addEventListener("activate", (event) => {
           }
         })
       );
-    }).then(() => self.clients.claim())
+    })
   );
 });
 
@@ -128,7 +116,14 @@ self.addEventListener("fetch", (event) => {
       return;
     }
 
-    // 2. Offline-First Audio Delivery: Check Cache API first (for offline songs & background-prefetched streams)
+    // 2. Online Direct Streaming:
+    // If online, bypass SW entirely! Native browser audio pipeline streams directly
+    // from remote CDN with zero IPC latency and native TCP socket Range buffer optimization.
+    if (navigator.onLine) {
+      return;
+    }
+
+    // 3. Offline Mode (Airplane Mode): Serve from offline PWA storage
     event.respondWith(
       (async () => {
         try {
@@ -162,16 +157,7 @@ self.addEventListener("fetch", (event) => {
           // Silent cache check
         }
 
-        // 3. If online, fetch from remote server
-        if (navigator.onLine) {
-          try {
-            return await fetch(request);
-          } catch (netErr) {
-            // Network fallback
-          }
-        }
-
-        // 4. Return clean 404 for missing offline tracks without breaking audio tag
+        // Return clean 404 for missing offline tracks without breaking audio tag
         return new Response(null, {
           status: 404,
           statusText: "Not Found in Offline Cache"
