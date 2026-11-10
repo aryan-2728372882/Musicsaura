@@ -1374,6 +1374,17 @@ document.querySelectorAll(".eq-preset-btn").forEach((btn) => {
   });
 });
 
+try {
+  const savedPreset = localStorage.getItem("musicsaura_eq_preset") || "flat";
+  const matchingBtn = document.querySelector(`.eq-preset-btn[data-preset="${savedPreset}"]`);
+  if (matchingBtn) {
+    document.querySelectorAll(".eq-preset-btn").forEach((b) => b.classList.remove("active"));
+    matchingBtn.classList.add("active");
+    if (eqActiveLabel) eqActiveLabel.textContent = matchingBtn.textContent;
+    syncSlidersToPreset(savedPreset);
+  }
+} catch {}
+
 // Speed Buttons
 document.querySelectorAll(".speed-btn").forEach((btn) => {
   btn.addEventListener("click", () => {

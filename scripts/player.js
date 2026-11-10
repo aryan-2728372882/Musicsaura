@@ -17,6 +17,7 @@ const deckB = new Audio();
 
 [deckA, deckB].forEach((d) => {
   d.preload = "auto";
+  d.crossOrigin = "anonymous";
   d.setAttribute("playsinline", "");
   d.setAttribute("webkit-playsinline", "");
   try { d.src = SILENT_AUDIO_WAV; } catch {}
@@ -170,6 +171,32 @@ function toAbsoluteUrl(url) {
 }
 
 // ─── EQUALIZER & AUDIO CONTEXT ─────────────────────────────────────
+let sourceA = null;
+let sourceB = null;
+
+function connectDecksToAudioContext() {
+  if (!audioCtx) initAudioContext();
+  if (!audioCtx || !subBassFilter) return;
+
+  if (!sourceA && deckA) {
+    try {
+      sourceA = audioCtx.createMediaElementSource(deckA);
+      sourceA.connect(subBassFilter);
+    } catch (e) {
+      console.warn("[Player] Source A connect notice:", e);
+    }
+  }
+
+  if (!sourceB && deckB) {
+    try {
+      sourceB = audioCtx.createMediaElementSource(deckB);
+      sourceB.connect(subBassFilter);
+    } catch (e) {
+      console.warn("[Player] Source B connect notice:", e);
+    }
+  }
+}
+
 function initAudioContext() {
   if (audioCtx) return audioCtx;
   try {
@@ -211,6 +238,9 @@ function initAudioContext() {
     presenceFilter.connect(trebleFilter);
     trebleFilter.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
+
+    // Connect both physical decks directly to the equalizer filter chain
+    connectDecksToAudioContext();
 
     try {
       const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
@@ -283,8 +313,11 @@ function unlockBothDecks() {
 
 function unlockAudioContext() {
   if (!audioCtx) initAudioContext();
-  if (audioCtx && (audioCtx.state === "suspended" || audioCtx.state === "interrupted")) {
-    audioCtx.resume().catch(() => {});
+  if (audioCtx) {
+    connectDecksToAudioContext();
+    if (audioCtx.state === "suspended" || audioCtx.state === "interrupted") {
+      audioCtx.resume().catch(() => {});
+    }
   }
 }
 
