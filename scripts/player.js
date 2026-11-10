@@ -444,6 +444,7 @@ window.addEventListener("pagehide", () => {
 
 let isBuffering          = false;
 let isCushionBuffering    = false;
+let isStartingPlayback    = false;
 let cushionCheckInterval  = null;
 let stallWatchdogTimer    = null;
 let stallCount            = 0;
@@ -472,7 +473,10 @@ function getBufferedAhead(deck) {
 }
 
 function startCushionBuffering(deck) {
-  if (isCushionBuffering || userPaused || !currentSong) return;
+  if (isCushionBuffering || userPaused || !currentSong || isStartingPlayback) return;
+  // Never pause the decoder during initial track loading (0:00) — only cushion mid-stream stalls
+  if (!deck.currentTime || deck.currentTime < 1.0) return;
+
   isCushionBuffering = true;
   isBuffering = true;
   updateUI();
@@ -1877,13 +1881,20 @@ export const player = {
     activeDeck.volume = masterVolume;
 
     try {
+      isStartingPlayback = true;
       const playPromise = activeDeck.play();
       if (playPromise !== undefined) {
         playPromise.then(() => {
+          isStartingPlayback = false;
           if (activeDeck.currentTime > 1.5) {
             try { activeDeck.currentTime = 0; } catch {}
           }
         }).catch(async (err) => {
+          isStartingPlayback = false;
+          // Expected browser behavior: play request was superseded by pause or track switch
+          if (err && err.name === "AbortError") {
+            return;
+          }
           console.warn("[Player] Direct play warning:", err);
           if (activeDeck.hasAttribute("crossOrigin") || activeDeck.crossOrigin) {
             console.warn("[Player] Retrying direct play without CORS restrictions...");
@@ -1897,6 +1908,8 @@ export const player = {
         });
       }
     } catch (err) {
+      isStartingPlayback = false;
+      if (err && err.name === "AbortError") return;
       console.warn("[Player] Direct play error:", err);
       updateUI();
     }
@@ -1936,7 +1949,10 @@ export const player = {
     // If audio element has no source or encountered an error, recover pipeline before playing
     if (!activeDeck.src || activeDeck.error) {
       recoverAudioPipeline(activeDeck).then(() => {
-        activeDeck.play().catch((err) => console.warn("Play error:", err));
+        activeDeck.play().catch((err) => {
+          if (err && err.name === "AbortError") return;
+          console.warn("Play error:", err);
+        });
         updateUI();
       });
       return;
@@ -1944,8 +1960,12 @@ export const player = {
 
     try {
       const p = activeDeck.play();
-      if (p !== undefined) p.catch(() => {});
+      if (p !== undefined) p.catch((err) => {
+        if (err && err.name === "AbortError") return;
+        console.warn("Play error:", err);
+      });
     } catch (err) {
+      if (err && err.name === "AbortError") return;
       console.warn("Play error:", err);
     }
     updateUI();
