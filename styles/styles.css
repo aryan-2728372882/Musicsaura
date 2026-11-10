@@ -848,6 +848,12 @@ body.page-scroll {
   display: none !important;
 }
 
+.player-bar.visible {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
 .player-progress-container {
   position: relative;
   width: 100%;

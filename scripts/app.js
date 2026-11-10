@@ -1296,12 +1296,12 @@ if (audioFxModal) {
 if (crossfadeSlider && crossfadeVal) {
   const currentCrossfade = player.getState().crossfadeSeconds;
   crossfadeSlider.value = currentCrossfade;
-  crossfadeVal.textContent = currentCrossfade === -1 ? "Off" : currentCrossfade === 0 ? "0s (Gapless)" : currentCrossfade === 12 ? "12s (Default)" : `${currentCrossfade}s`;
+  crossfadeVal.textContent = currentCrossfade === -1 ? "Off" : currentCrossfade === 0 ? "0s (Gapless)" : currentCrossfade === 12 ? "12s (Default)" : (currentCrossfade === 20 ? "20s (Max)" : `${currentCrossfade}s`);
 
   crossfadeSlider.addEventListener("input", (e) => {
     const sec = parseInt(e.target.value, 10);
     crossfadeSlider.value = sec;
-    crossfadeVal.textContent = sec === -1 ? "Off" : sec === 0 ? "0s (Gapless)" : sec === 12 ? "12s (Default)" : `${sec}s`;
+    crossfadeVal.textContent = sec === -1 ? "Off" : sec === 0 ? "0s (Gapless)" : sec === 12 ? "12s (Default)" : (sec === 20 ? "20s (Max)" : `${sec}s`);
     player.setCrossfade(sec);
   });
 }

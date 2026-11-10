@@ -17,11 +17,29 @@ const deckB = new Audio();
 
 [deckA, deckB].forEach((d) => {
   d.preload = "auto";
-  d.crossOrigin = "anonymous";
   d.setAttribute("playsinline", "");
   d.setAttribute("webkit-playsinline", "");
-  try { d.src = SILENT_AUDIO_WAV; } catch {}
 });
+
+// Resilient CORS Audio Loader: Sets crossOrigin="anonymous" for Web Audio Equalizer & Volume Booster,
+// while skipping crossOrigin for local/blob URLs to prevent browser security mismatches.
+function prepareDeckSource(deck, src) {
+  if (!src) return;
+  const isLocalOrBlob = src.startsWith("blob:") || src.startsWith("data:") || src.startsWith(location.origin);
+  if (isLocalOrBlob) {
+    if (deck.hasAttribute("crossOrigin") || deck.crossOrigin) {
+      deck.removeAttribute("crossOrigin");
+      deck.crossOrigin = null;
+    }
+  } else {
+    if (deck.crossOrigin !== "anonymous") {
+      deck.crossOrigin = "anonymous";
+    }
+  }
+  if (deck.src !== src) {
+    deck.src = src;
+  }
+}
 
 let activeDeck = deckA;
 let standbyDeck = deckB;
@@ -76,13 +94,13 @@ let isSeeking         = false;
 let userPaused        = false;
 let playbackGeneration = 0;
 
-// Audio Configuration (12s Apple Music Standard Crossfade & Gapless Default, -1 is Off)
+// Audio Configuration (12s Apple Music Standard Crossfade & Gapless Default, -1 is Off, max 20s)
 const savedCrossfade = localStorage.getItem(CROSSFADE_STORAGE_KEY);
 let crossfadeSeconds = 12;
 if (savedCrossfade !== null) {
   const parsed = parseFloat(savedCrossfade);
   if (!isNaN(parsed)) {
-    crossfadeSeconds = clamp(parsed, -1, 12);
+    crossfadeSeconds = clamp(parsed, -1, 20);
   }
 }
 localStorage.setItem(CROSSFADE_STORAGE_KEY, String(crossfadeSeconds));
@@ -315,23 +333,6 @@ function unlockBothDecks() {
   unlockAudioContext();
   if (bothDecksUnlocked) return;
   bothDecksUnlocked = true;
-
-  [deckA, deckB].forEach((d) => {
-    try {
-      if (!d.src || d.src === "" || d.src.startsWith("data:")) {
-        d.src = SILENT_AUDIO_WAV;
-      }
-      const p = d.play();
-      if (p !== undefined) {
-        p.then(() => {
-          if (d !== activeDeck) {
-            d.pause();
-            d.currentTime = 0;
-          }
-        }).catch(() => {});
-      }
-    } catch {}
-  });
 }
 
 function unlockAudioContext() {
@@ -529,44 +530,13 @@ function getBufferedAhead(deck) {
 }
 
 function startCushionBuffering(deck) {
-  if (isCushionBuffering || userPaused || !currentSong || isStartingPlayback) return;
-  // Never pause the decoder during initial track loading (0:00) — only cushion mid-stream stalls
-  if (!deck.currentTime || deck.currentTime < 1.0) return;
-
-  isCushionBuffering = true;
+  if (userPaused || !currentSong || isStartingPlayback) return;
   isBuffering = true;
   updateUI();
-
-  try { deck.pause(); } catch {}
-
-  if (cushionCheckInterval) clearInterval(cushionCheckInterval);
-  cushionCheckInterval = setInterval(() => {
-    if (!isCushionBuffering || userPaused || !currentSong) {
-      clearInterval(cushionCheckInterval);
-      cushionCheckInterval = null;
-      return;
-    }
-
-    const ahead = getBufferedAhead(deck);
-    const dur = deck.duration;
-    const cur = deck.currentTime;
-    const rem = Number.isFinite(dur) && dur > 0 ? (dur - cur) : 10;
-
-    // Buffer at least 4.0 seconds cushion (or until rest of track is buffered)
-    if (ahead >= 4.0 || ahead >= rem) {
-      clearInterval(cushionCheckInterval);
-      cushionCheckInterval = null;
-      isCushionBuffering = false;
-      isBuffering = false;
-      updateUI();
-      if (!userPaused) {
-        deck.play().catch(() => {});
-      }
-    }
-  }, 200);
 }
 
 function stopCushionBuffering() {
+  isBuffering = false;
   isCushionBuffering = false;
   if (cushionCheckInterval) {
     clearInterval(cushionCheckInterval);
@@ -584,9 +554,15 @@ function emitStateChange() {
 
 function updateUI() {
   if (playerEl) {
-    if (currentSong) hasPlayerEverBeenShown = true;
-    playerEl.hidden = !hasPlayerEverBeenShown;
-    if (hasPlayerEverBeenShown) playerEl.classList.add("visible");
+    if (currentSong || hasPlayerEverBeenShown) {
+      hasPlayerEverBeenShown = true;
+      playerEl.hidden = false;
+      playerEl.removeAttribute("hidden");
+      playerEl.classList.add("visible");
+      playerEl.style.display = "flex";
+      playerEl.style.visibility = "visible";
+      playerEl.style.opacity = "1";
+    }
   }
 
   if (titleEl)  titleEl.textContent  = currentSong?.title || "Select a track";
@@ -603,18 +579,18 @@ function updateUI() {
   }
 
   if (playBtnIcon) {
-    if (isBuffering && !activeDeck.paused) {
+    if (isBuffering && !userPaused) {
       playBtnIcon.textContent = "refresh";
       if (playBtnEl) playBtnEl.classList.add("is-buffering");
     } else {
-      playBtnIcon.textContent = !activeDeck.paused ? "pause" : "play_arrow";
+      playBtnIcon.textContent = (!activeDeck.paused && !userPaused) ? "pause" : "play_arrow";
       if (playBtnEl) playBtnEl.classList.remove("is-buffering");
     }
   }
 
   const liveWave = document.querySelector(".live-wave-visualizer");
   if (liveWave) {
-    liveWave.classList.toggle("is-buffering", isBuffering && !activeDeck.paused);
+    liveWave.classList.toggle("is-buffering", isBuffering && !userPaused);
   }
 
   if (repeatIcon && repeatBtnEl) {
@@ -949,7 +925,7 @@ async function armStandbyDeck() {
   if (!resolvedUrl || isTransitioning) return;
 
   if (standbyDeck.src !== resolvedUrl) {
-    standbyDeck.src = resolvedUrl;
+    prepareDeckSource(standbyDeck, resolvedUrl);
     standbyDeck.playbackRate = playbackRate;
     standbyDeck.volume = 0;
     standbyDeck.preload = "metadata";
@@ -1124,7 +1100,7 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
   if (thisSession !== transitionSessionId) return;
 
   if (incomingDeck.src !== targetSrc) {
-    incomingDeck.src = targetSrc;
+    prepareDeckSource(incomingDeck, targetSrc);
     incomingDeck.load();
   }
 
@@ -1150,13 +1126,8 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     const playPromise = incomingDeck.play();
     if (playPromise !== undefined) {
       playPromise.catch((err) => {
-        console.warn("[Player] Standby play error:", err);
-        if (incomingDeck.hasAttribute("crossOrigin") || incomingDeck.crossOrigin) {
-          incomingDeck.removeAttribute("crossOrigin");
-          incomingDeck.crossOrigin = null;
-          incomingDeck.load();
-          try { incomingDeck.currentTime = 0; } catch {}
-          return incomingDeck.play().catch(() => {});
+        if (err && err.name !== "AbortError") {
+          console.warn("[Player] Standby play error:", err);
         }
       });
     }
@@ -1406,9 +1377,10 @@ function bindDeckEvents(deck) {
   deck.addEventListener("canplay", () => {
     if (deck === activeDeck) {
       clearStallWatchdog();
-      if (!isCushionBuffering) {
-        isBuffering = false;
-        updateUI();
+      isBuffering = false;
+      updateUI();
+      if (!userPaused && deck.paused) {
+        deck.play().catch(() => {});
       }
     }
   });
@@ -1419,6 +1391,9 @@ function bindDeckEvents(deck) {
       isBuffering = false;
       clearStallWatchdog();
       updateUI();
+      if (!userPaused && deck.paused) {
+        deck.play().catch(() => {});
+      }
     }
   });
 
@@ -1442,10 +1417,6 @@ function bindDeckEvents(deck) {
 
   deck.addEventListener("pause", () => {
     if (deck === activeDeck && !isTransitioning) {
-      if (isCushionBuffering) {
-        // Paused intentionally to accumulate buffer cushion — not a user pause or system interruption
-        return;
-      }
       if (!userPaused && currentSong && !deck.ended) {
         // Paused by external interruption (incoming phone call / audio focus loss)
         wasInterruptedBySystem = true;
@@ -1462,7 +1433,6 @@ function bindDeckEvents(deck) {
       }
 
       if (userPaused) advancingTrack = false;
-      isBuffering = false;
       clearStallWatchdog();
       capturePlaySeconds();
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
@@ -1482,26 +1452,17 @@ function bindDeckEvents(deck) {
     if (deck === activeDeck) {
       isBuffering = false;
       updateUI();
+      if (!userPaused && deck.paused) {
+        deck.play().catch(() => {});
+      }
     }
   });
 
   deck.addEventListener("progress", () => {
     if (deck === activeDeck && deck.buffered.length > 0) {
       clearStallWatchdog();
-      if (isCushionBuffering) {
-        const ahead = getBufferedAhead(deck);
-        const dur = deck.duration;
-        const cur = deck.currentTime;
-        const rem = Number.isFinite(dur) && dur > 0 ? (dur - cur) : 10;
-        // Require 4.0s buffer cushion (or until track ends) before resuming, avoiding rapid stutter on 540kbps
-        if (ahead >= 4.0 || ahead >= rem) {
-          stopCushionBuffering();
-          isBuffering = false;
-          updateUI();
-          if (!userPaused) {
-            deck.play().catch(() => {});
-          }
-        }
+      if (isBuffering && !userPaused && deck.paused) {
+        deck.play().catch(() => {});
       }
     }
   });
@@ -1704,9 +1665,7 @@ function bindDeckEvents(deck) {
     }
 
     deck.pause();
-    deck.removeAttribute("src");
-    deck.load();
-    player.showToast(`⚠️ "${currentSong?.title || "Track"}" is temporarily unavailable on server.`, 3000);
+    player.showToast(`⚠️ Network stream stalled. Tap play to resume "${currentSong?.title || "track"}".`, 3500);
     updateUI();
 
     // Auto-advance cleanly to next track if playlist has more songs
@@ -1906,10 +1865,7 @@ export const player = {
 
     // Fast synchronous source resolution: preserves mobile user gesture activation for line-speed playback
     const src = resolveAudioSourceSync(song);
-
-    if (activeDeck.src !== src) {
-      activeDeck.src = src;
-    }
+    prepareDeckSource(activeDeck, src);
 
     // Asynchronous offline blob verification: If the track is stored in downloads, swap to verified local blob
     if (!src.startsWith("blob:") && isSongStoredOffline(song)) {
@@ -1917,7 +1873,7 @@ export const player = {
         if (blobUrl && activeDeck.src !== blobUrl && (currentSong?.id || currentSong?.link) === (song.id || song.link)) {
           const curTime = activeDeck.currentTime || 0;
           const wasPlaying = !activeDeck.paused;
-          activeDeck.src = blobUrl;
+          prepareDeckSource(activeDeck, blobUrl);
           if (curTime > 0) activeDeck.currentTime = curTime;
           if (wasPlaying || !userPaused) {
             activeDeck.play().catch(() => {});
@@ -1946,21 +1902,13 @@ export const player = {
           if (activeDeck.currentTime > 1.5) {
             try { activeDeck.currentTime = 0; } catch {}
           }
-        }).catch(async (err) => {
+        }).catch((err) => {
           isStartingPlayback = false;
           // Expected browser behavior: play request was superseded by pause or track switch
           if (err && err.name === "AbortError") {
             return;
           }
           console.warn("[Player] Direct play warning:", err);
-          if (activeDeck.hasAttribute("crossOrigin") || activeDeck.crossOrigin) {
-            console.warn("[Player] Retrying direct play without CORS restrictions...");
-            activeDeck.removeAttribute("crossOrigin");
-            activeDeck.crossOrigin = null;
-            activeDeck.load();
-            try { activeDeck.currentTime = 0; } catch {}
-            await activeDeck.play().catch(() => {});
-          }
           updateUI();
         });
       }
@@ -2099,14 +2047,30 @@ export const player = {
 
   seek(seconds) {
     if (!Number.isFinite(activeDeck.duration) || activeDeck.duration <= 0) return;
-    stopCushionBuffering();
     cancelAnyTransition();
     activeDeck.volume = masterVolume;
 
+    const wasPlaying = !activeDeck.paused && !userPaused;
     const clamped = clamp(seconds, 0, activeDeck.duration);
+
+    isBuffering = true;
+    updateUI();
+
     activeDeck.currentTime = clamped;
     updateProgress();
     updatePositionState();
+
+    if (wasPlaying || !userPaused) {
+      userPaused = false;
+      const playPromise = activeDeck.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          if (err && err.name !== "AbortError") {
+            console.warn("[Player] Seek resume notice:", err);
+          }
+        });
+      }
+    }
   },
 
   setVolume(vol) {
@@ -2166,9 +2130,9 @@ export const player = {
       localStorage.setItem(CROSSFADE_STORAGE_KEY, "-1");
       player.showToast("🛑 Crossfade & Gapless OFF (Standard Playback)");
     } else {
-      crossfadeSeconds = clamp(parsed || 0, 0, 12);
+      crossfadeSeconds = clamp(parsed || 0, 0, 20);
       localStorage.setItem(CROSSFADE_STORAGE_KEY, String(crossfadeSeconds));
-      player.showToast(crossfadeSeconds === 0 ? "⚡ Gapless playback active (0s)" : `🎚️ Crossfade Active: ${crossfadeSeconds}s`);
+      player.showToast(crossfadeSeconds === 0 ? "⚡ Gapless playback active (0s)" : (crossfadeSeconds === 12 ? "🎚️ Crossfade: 12s (Default)" : `🎚️ Crossfade Active: ${crossfadeSeconds}s`));
     }
     armStandbyDeck();
     emitStateChange();
