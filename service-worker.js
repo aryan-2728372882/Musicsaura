@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v100";
+const APP_SHELL_CACHE = "musicsaura-shell-v101";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -103,7 +103,6 @@ async function handleAudioRangeRequest(cachedResponse, rangeHeader) {
       headers
     });
   } catch (err) {
-    console.warn("[SW] Range handling notice:", err);
     return cachedResponse;
   }
 }
@@ -160,7 +159,7 @@ self.addEventListener("fetch", (event) => {
             });
           }
         } catch (err) {
-          console.warn("[SW] Offline audio cache check notice:", err);
+          // Silent cache check
         }
 
         // 3. If online, fetch from remote server
@@ -168,7 +167,7 @@ self.addEventListener("fetch", (event) => {
           try {
             return await fetch(request);
           } catch (netErr) {
-            console.warn("[SW] Online audio fetch error:", netErr);
+            // Network fallback
           }
         }
 

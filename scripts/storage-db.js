@@ -16,7 +16,6 @@ export async function requestPersistentStorage() {
       const isPersisted = await navigator.storage.persisted();
       if (!isPersisted) {
         const granted = await navigator.storage.persist();
-        console.log("[StorageDB] Persistent storage permission:", granted ? "GRANTED ✅" : "DENIED ⚠️");
         return granted;
       }
       return isPersisted;

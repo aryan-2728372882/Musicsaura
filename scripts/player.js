@@ -218,7 +218,6 @@ function initAudioContext() {
     } catch {}
 
     audioCtx.onstatechange = () => {
-      console.log("[Player] AudioContext state:", audioCtx.state);
       if (audioCtx.state === "running" && wasInterruptedBySystem && !userPaused && currentSong) {
         setTimeout(() => {
           resumeAfterInterruption();
@@ -639,46 +638,25 @@ function startStallWatchdog() {
   stallWatchdogTimer = setTimeout(async () => {
     if (isBuffering && !activeDeck.paused && !userPaused && currentSong && !isRecoveringStall) {
       stallCount++;
-      console.warn(`[Player] Audio stall detected (count ${stallCount}). Initiating slow-network recovery...`);
-
-      if (stallCount === 1) {
-        player.showToast("📶 Slow connection: Buffering audio stream...", 3500);
-      }
 
       // Check if we have an offline cached blob for this song in storage
       try {
         const offlineUrl = await getOfflineAudioBlobUrl(currentSong);
         if (offlineUrl && activeDeck.src !== offlineUrl) {
-          console.log("[Player] Slow network: Rescued stream with cached offline copy:", currentSong.title);
           const cur = activeDeck.currentTime || 0;
           activeDeck.src = offlineUrl;
           if (cur > 0) activeDeck.currentTime = cur;
           activeDeck.play().catch(() => {});
-          player.showToast("⚡ Resumed from fast local cache", 2500);
           return;
         }
       } catch {}
 
-      // Gentle TCP/TLS socket kick for hung streaming range requests
-      // On mobile networks (cell handovers), HTTP range requests often hang with 0 throughput.
-      // Re-applying currentTime or gently re-seeking by 0.05s re-triggers Chrome's network pipeline
-      if (stallCount >= 2 && Number.isFinite(activeDeck.duration) && activeDeck.duration > 0) {
-        isRecoveringStall = true;
-        const curPos = activeDeck.currentTime || 0;
-        console.log("[Player] Re-priming stalled network socket at", formatTime(curPos));
-        try {
-          activeDeck.currentTime = Math.max(0, curPos - 0.05);
-          setTimeout(() => {
-            try { activeDeck.currentTime = curPos; } catch {}
-            activeDeck.play().catch(() => {});
-            isRecoveringStall = false;
-          }, 200);
-        } catch {
-          isRecoveringStall = false;
-        }
+      // If playback is stalling on slow connection, gently request play() to keep the decoder alive
+      if (!activeDeck.paused && !userPaused) {
+        activeDeck.play().catch(() => {});
       }
     }
-  }, 3500);
+  }, 6000);
 }
 
 function clearStallWatchdog() {
@@ -691,7 +669,7 @@ function clearStallWatchdog() {
 const prefetchInProgress = new Set();
 
 export async function prefetchFullTrackToCache(song) {
-  if (!song || !song.link || !navigator.onLine || !("caches" in window)) return;
+  if (!song || !song.link || !navigator.onLine || !("caches" in window) || isBuffering) return;
   const songUrl = normalizeUrl(song.link);
   if (!songUrl || songUrl.startsWith("blob:") || songUrl.startsWith("data:")) return;
   if (prefetchInProgress.has(songUrl)) return;
@@ -702,7 +680,6 @@ export async function prefetchFullTrackToCache(song) {
     if (matched) return; // Already cached!
 
     prefetchInProgress.add(songUrl);
-    console.log("[Player] Background pre-fetching audio stream for slow-network immunity:", song.title);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout for slow 2G/3G
@@ -720,7 +697,6 @@ export async function prefetchFullTrackToCache(song) {
         await saveTrackToStorage(song, blob);
         // Pre-warm into in-memory blob cache for 0ms instant playback
         getOfflineAudioBlobUrl(song).catch(() => {});
-        console.log(`[Player] Successfully cached "${song.title}" (${Math.round(blob.size / 1024)} KB) for seamless playback!`);
       }
     }
   } catch (err) {
@@ -835,13 +811,10 @@ async function armStandbyDeck() {
     standbyDeck.src = resolvedUrl;
     standbyDeck.playbackRate = playbackRate;
     standbyDeck.volume = 0;
-    standbyDeck.preload = "auto";
+    standbyDeck.preload = "metadata";
     standbyDeck.load();
   }
   try { standbyDeck.currentTime = 0; } catch {}
-
-  // Pre-fetch track data into cache for ultra-slow connection immunity
-  prefetchFullTrackToCache(candidate.song).catch(() => {});
 }
 
 let transitioningTargetSong = null;
@@ -1389,6 +1362,11 @@ function bindDeckEvents(deck) {
       const remaining = dur - cur;
       const songKey = currentSong?.id || currentSong?.link;
 
+      // Pre-warm standby audio buffer near end of track without competing with active playback
+      if (remaining <= Math.max(fadeSec + 8, 15) && standbyDeck.preload !== "auto") {
+        standbyDeck.preload = "auto";
+      }
+
       // ── APPLE MUSIC EQUAL-POWER CROSSFADE TRIGGER ──
       if (fadeSec >= 1.0 && remaining <= fadeSec && remaining > 0.05) {
         if (transitionTriggeredForSongId !== songKey) {
@@ -1718,9 +1696,7 @@ export const player = {
       });
     }
 
-    // Pre-cache full stream in background for slow internet immunity
-    prefetchFullTrackToCache(song).catch(() => {});
-    setTimeout(armStandbyDeck, 2000);
+    setTimeout(armStandbyDeck, 4000);
 
     // CRITICAL: Guarantee activeDeck starts at 0:00 (prevents jumping to middle of track from previous song)
     try { activeDeck.currentTime = 0; } catch {}
