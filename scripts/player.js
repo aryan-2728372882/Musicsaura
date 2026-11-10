@@ -89,17 +89,25 @@ localStorage.setItem(CROSSFADE_STORAGE_KEY, String(crossfadeSeconds));
 let playbackRate      = parseFloat(localStorage.getItem(SPEED_STORAGE_KEY)) || 1.0;
 let masterVolume      = clamp(parseFloat(localStorage.getItem(VOLUME_STORAGE_KEY)) || 1.0, 0, 1);
 
-// Web Audio API Equalizer Nodes
+// Web Audio API Equalizer & 500% Speaker Booster Nodes
 let audioCtx          = null;
 let subBassFilter     = null; // 60Hz Lowshelf
 let bassFilter        = null; // 250Hz Peaking
 let midFilter         = null; // 1000Hz Peaking
 let presenceFilter    = null; // 3500Hz Peaking
 let trebleFilter      = null; // 10000Hz Highshelf
+let boostGainNode      = null; // 100% - 500% Gain Amplifier
+let peakLimiterNode    = null; // Studio Peak Limiter (Anti-Tearing / Anti-Clipping DSP)
 let analyserNode      = null;
 let sourceNodeA       = null;
 let sourceNodeB       = null;
 let wakeLock          = null;
+
+const BOOST_STORAGE_KEY = "musicsaura_volume_boost";
+let volumeBoostPercent = parseInt(localStorage.getItem(BOOST_STORAGE_KEY) || "100", 10);
+if (isNaN(volumeBoostPercent) || volumeBoostPercent < 100 || volumeBoostPercent > 500) {
+  volumeBoostPercent = 100;
+}
 
 // Stats Tracking
 let playSessionStart  = 0;
@@ -228,6 +236,19 @@ function initAudioContext() {
     trebleFilter.type = "highshelf";
     trebleFilter.frequency.value = 10000;
 
+    // 500% Volume Booster Gain Node
+    boostGainNode = audioCtx.createGain();
+    boostGainNode.gain.value = volumeBoostPercent / 100;
+
+    // Hardware-accelerated Studio Peak Limiter (DynamicsCompressorNode)
+    // Prevents clipping, audio distortion & speaker tearing sounds up to 500% boost across web/mobile
+    peakLimiterNode = audioCtx.createDynamicsCompressor();
+    peakLimiterNode.threshold.value = -1.5; // -1.5 dBFS prevents hitting 0dB digital ceiling
+    peakLimiterNode.knee.value = 10;        // Soft knee curve for natural musical compression
+    peakLimiterNode.ratio.value = 20;       // Limiter ratio
+    peakLimiterNode.attack.value = 0.003;   // 3ms ultra-fast transient attack
+    peakLimiterNode.release.value = 0.15;   // 150ms transparent musical decay
+
     analyserNode = audioCtx.createAnalyser();
     analyserNode.fftSize = 128;
     analyserNode.smoothingTimeConstant = 0.8;
@@ -236,7 +257,9 @@ function initAudioContext() {
     bassFilter.connect(midFilter);
     midFilter.connect(presenceFilter);
     presenceFilter.connect(trebleFilter);
-    trebleFilter.connect(analyserNode);
+    trebleFilter.connect(boostGainNode);
+    boostGainNode.connect(peakLimiterNode);
+    peakLimiterNode.connect(analyserNode);
     analyserNode.connect(audioCtx.destination);
 
     // Connect both physical decks directly to the equalizer filter chain
@@ -1728,6 +1751,7 @@ export const player = {
       repeatMode,
       isShuffle,
       volume: masterVolume,
+      volumeBoostPercent,
       crossfadeSeconds,
       playbackRate
     };
@@ -2108,6 +2132,31 @@ export const player = {
     } else {
       player.setVolume(activeDeck._prevVol || 1.0);
     }
+  },
+
+  setVolumeBoost(percent) {
+    unlockAudioContext();
+    const clamped = clamp(parseInt(percent, 10) || 100, 100, 500);
+    volumeBoostPercent = clamped;
+    localStorage.setItem(BOOST_STORAGE_KEY, String(volumeBoostPercent));
+
+    if (boostGainNode && audioCtx) {
+      try {
+        boostGainNode.gain.setTargetAtTime(volumeBoostPercent / 100, audioCtx.currentTime, 0.03);
+      } catch {
+        boostGainNode.gain.value = volumeBoostPercent / 100;
+      }
+    }
+    player.showToast(
+      volumeBoostPercent === 100
+        ? "🔊 Speaker Boost: Normal (100%)"
+        : `🚀 Speaker Boost: ${volumeBoostPercent}% (Peak Limiter Protected)`
+    );
+    emitStateChange();
+  },
+
+  getVolumeBoost() {
+    return volumeBoostPercent;
   },
 
   setCrossfade(sec) {

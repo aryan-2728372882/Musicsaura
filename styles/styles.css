@@ -1199,22 +1199,37 @@ body.page-scroll {
   gap: 0.5rem;
 }
 
-.speed-btn {
+.speed-btn,
+.boost-btn {
   flex: 1;
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text-secondary);
-  padding: 0.5rem;
+  padding: 0.5rem 0.35rem;
   border-radius: var(--radius-sm);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   cursor: pointer;
   text-align: center;
   transition: all var(--ease-fast);
+  white-space: nowrap;
+}
+
+.speed-btn:hover,
+.boost-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .speed-btn.active {
   background: var(--cyan);
   border-color: var(--cyan);
+  color: #07070e;
+  font-weight: 700;
+}
+
+.boost-btn.active {
+  background: var(--emerald);
+  border-color: var(--emerald);
   color: #07070e;
   font-weight: 700;
 }

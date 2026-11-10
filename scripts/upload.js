@@ -1491,8 +1491,33 @@ if (btnSaveGithubToken && inputGithubToken) {
   });
 }
 
-// ─── INITIALIZATION ────────────────────────────────────────────────
-(async () => {
-  await loadExistingRegistry();
-  loadCommunityUploads();
-})();
+// ─── OWNER-ONLY ACCESS GATE (prabhakaraaryan2007@gmail.com) ────────
+onAuthStateChanged(auth, (user) => {
+  const email = (user?.email || user?.providerData?.find(p => p.email)?.email || "").toLowerCase().trim();
+  const isOwner = isAdmin(email);
+
+  if (!user || !isOwner) {
+    document.body.innerHTML = `
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#080811;color:#fff;font-family:'DM Sans',sans-serif;padding:2rem;text-align:center">
+        <div style="max-width:440px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:18px;padding:2.5rem 2rem;box-shadow:0 20px 40px rgba(0,0,0,0.6)">
+          <span class="material-icons" style="font-size:3.5rem;color:#f43f5e;margin-bottom:1rem">lock</span>
+          <h2 style="font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:800;margin-bottom:0.6rem">Owner Access Only</h2>
+          <p style="font-size:0.9rem;color:rgba(255,255,255,0.6);line-height:1.6;margin-bottom:1.5rem">
+            Track Auto-Publisher & Creator Studio is restricted exclusively to <strong>prabhakaraaryan2007@gmail.com</strong>.
+          </p>
+          <a href="index.html" style="display:inline-flex;align-items:center;gap:8px;padding:0.75rem 1.6rem;background:linear-gradient(135deg,#8b5cf6,#ec4899);color:#fff;text-decoration:none;border-radius:999px;font-weight:700;font-size:0.9rem">
+            <span class="material-icons" style="font-size:1.1rem">home</span>
+            Return to Music Player
+          </a>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // Owner verified — initialize Studio
+  (async () => {
+    await loadExistingRegistry();
+    loadCommunityUploads();
+  })();
+});

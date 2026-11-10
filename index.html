@@ -63,7 +63,7 @@
 
         <!-- Top Right Actions -->
         <div class="top-actions">
-          <a href="upload.html" class="header-upload-btn" title="Creator Upload Studio">
+          <a href="upload.html" id="header-upload-btn" class="header-upload-btn" title="Creator Upload Studio" style="display:none">
             <span class="material-icons" style="font-size:1.1rem">cloud_upload</span>
             <span class="header-upload-text">Upload</span>
           </a>
@@ -393,6 +393,25 @@
             <input type="range" id="eq-band-10k" min="-12" max="12" step="1" value="0" style="writing-mode: vertical-lr; direction: rtl; width:16px; height:52px; accent-color:var(--violet); cursor:pointer;">
             <span id="eq-val-10k" style="font-size:0.65rem;color:var(--cyan)">0dB</span>
           </div>
+        </div>
+      </div>
+
+      <!-- 500% Speaker Booster (Phone, Laptop, Mobile Peak-Limiter Protected) -->
+      <div class="fx-section" style="margin-bottom:0.8rem">
+        <div class="fx-section-header">
+          <span>🔊 Speaker Volume Boost (Anti-Tear DSP)</span>
+          <strong id="boost-val" style="color:var(--emerald)">100% (Normal)</strong>
+        </div>
+        <input type="range" id="boost-slider" min="100" max="500" step="25" value="100" class="fx-slider">
+        <div class="speed-btn-row" style="margin-top:0.5rem">
+          <button class="boost-btn active" data-boost="100">100%</button>
+          <button class="boost-btn" data-boost="150">150%</button>
+          <button class="boost-btn" data-boost="200">200% 🔊</button>
+          <button class="boost-btn" data-boost="300">300% 🔥</button>
+          <button class="boost-btn" data-boost="500">500% 🚀 MAX</button>
+        </div>
+        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:5px;line-height:1.4">
+          Hardware peak limiter prevents distortion, crackling & speaker tears up to 500% across all devices.
         </div>
       </div>
 

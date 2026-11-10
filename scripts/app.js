@@ -1396,6 +1396,40 @@ document.querySelectorAll(".speed-btn").forEach((btn) => {
   });
 });
 
+// Speaker Boost (Up to 500% with Peak Limiter Anti-Tear Protection)
+const boostSlider = document.getElementById("boost-slider");
+const boostVal    = document.getElementById("boost-val");
+const boostBtns   = document.querySelectorAll(".boost-btn");
+
+function syncBoostUI(pct) {
+  if (boostSlider) boostSlider.value = pct;
+  if (boostVal) {
+    boostVal.textContent = pct === 100 ? "100% (Normal)" : `${pct}% (${pct >= 300 ? "Max Boost 🔥" : "Amplified 🔊"})`;
+  }
+  boostBtns.forEach((btn) => {
+    btn.classList.toggle("active", parseInt(btn.dataset.boost, 10) === pct);
+  });
+}
+
+if (boostSlider) {
+  const currentBoost = player.getVolumeBoost ? player.getVolumeBoost() : 100;
+  syncBoostUI(currentBoost);
+
+  boostSlider.addEventListener("input", (e) => {
+    const pct = parseInt(e.target.value, 10);
+    syncBoostUI(pct);
+    player.setVolumeBoost(pct);
+  });
+}
+
+boostBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const pct = parseInt(btn.dataset.boost, 10);
+    syncBoostUI(pct);
+    player.setVolumeBoost(pct);
+  });
+});
+
 /* ── QUEUE DRAWER MANAGEMENT ── */
 function updateQueueDrawer() {
   if (!queueListEl) return;
@@ -1752,7 +1786,10 @@ function generateNavAvatar(nameOrEmail, size = 56) {
 }
 
 onAuthStateChanged(auth, (user) => {
+  const uploadBtn = document.getElementById("header-upload-btn") || document.querySelector(".header-upload-btn");
+
   if (!user) {
+    if (uploadBtn) uploadBtn.style.display = "none";
     if (navAvatar) {
       navAvatar.referrerPolicy = "no-referrer";
       navAvatar.src = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56'%3E%3Ccircle cx='28' cy='28' r='28' fill='%238a5cf6'/%3E%3Ctext x='50%25' y='50%25' font-size='26' fill='white' text-anchor='middle' dy='.35em'%3E👤%3C/text%3E%3C/svg%3E`;
@@ -1767,6 +1804,12 @@ onAuthStateChanged(auth, (user) => {
   const email = user.email || user.providerData?.find(p => p.email)?.email || "";
   const fallback = generateNavAvatar(displayName || email, 56);
   const photo = user.photoURL || user.providerData?.find(p => p.photoURL)?.photoURL || user.providerData?.[0]?.photoURL || null;
+
+  // Restrict Creator Studio Upload link exclusively to Owner (prabhakaraaryan2007@gmail.com)
+  const isOwner = isAdmin(email);
+  if (uploadBtn) {
+    uploadBtn.style.display = isOwner ? "inline-flex" : "none";
+  }
 
   if (navAvatar) {
     navAvatar.referrerPolicy = "no-referrer";

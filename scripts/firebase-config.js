@@ -43,8 +43,11 @@ const firebaseConfig = {
   measurementId: "G-GZ0L6GNDCP"
 };
 
-// Admin emails — single source of truth
-export const ADMIN_EMAILS = ["prabhakararyan2007@gmail.com"];
+// Admin emails — single source of truth (Owner: Prabhakar)
+export const ADMIN_EMAILS = [
+  "prabhakaraaryan2007@gmail.com",
+  "prabhakararyan2007@gmail.com"
+];
 export const isAdmin = (email) => !!email && ADMIN_EMAILS.includes(email.toLowerCase().trim());
 
 const app = initializeApp(firebaseConfig);
