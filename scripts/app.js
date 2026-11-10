@@ -220,9 +220,7 @@ export async function toggleOfflineStorage(song) {
       updateOfflineIcons(song, "not-downloaded");
       updateDownloadBadge();
       if (isOfflineFilterActive()) renderGenre(activeGenre);
-    } catch (err) {
-      console.warn("Error removing offline track:", err);
-    }
+    } catch {}
     return;
   }
 
@@ -302,11 +300,8 @@ async function processDownloadQueue() {
               blob = b;
               break;
             }
-          } else {
-            console.warn(`[DownloadQueue] Attempt ${attempts} HTTP status ${res.status} for "${song.title}"`);
           }
-        } catch (fetchErr) {
-          console.warn(`[DownloadQueue] Attempt ${attempts} failed for "${song.title}":`, fetchErr);
+        } catch {
           if (attempts < maxAttempts) {
             await new Promise((r) => setTimeout(r, 1000 * attempts));
           }
@@ -553,7 +548,6 @@ async function loadDeletedSongLinks() {
 async function removeMissingJsonSongsFromFirestore() {
   const loadedGenres = Object.keys(GENRE_FILES).every((genre) => Array.isArray(rawJsonSongs[genre]));
   if (!loadedGenres) {
-    console.warn("Skipping Firestore catalogue reconciliation because a JSON catalogue failed to load.");
     return;
   }
 
@@ -578,11 +572,8 @@ async function removeMissingJsonSongsFromFirestore() {
     });
     if (removals.length) {
       await Promise.all(removals);
-      console.log(`[Catalogue] Removed ${removals.length} JSON-deleted song(s) from Firestore.`);
     }
-  } catch (err) {
-    console.warn("Firestore catalogue reconciliation notice:", err);
-  }
+  } catch {}
 }
 
 function getSongTimestamp(song) {
@@ -723,9 +714,7 @@ async function loadRawJson(genre) {
         .filter((s) => s && s.link);
       return rawJsonSongs[genre];
     }
-  } catch (err) {
-    console.warn(`Failed loading catalogue for ${genre}:`, err);
-  }
+  } catch {}
   return [];
 }
 
@@ -787,9 +776,7 @@ async function subscribeToFirestoreSongs() {
       rebuildAllCatalogues();
       renderGenre(activeGenre);
     }
-  } catch (err) {
-    console.warn("Firestore sync notice (using local catalogue):", err);
-  }
+  } catch {}
 }
 
 /* ── HTML ESCAPER ── */
@@ -1585,49 +1572,13 @@ genrePills.forEach((pill) => {
   });
 });
 
-/* ── AUTO-ADVANCE TO NEXT SECTION (Apple Music Seamless Flow) ── */
-const GENRE_CYCLE = ["hindi", "punjabi", "vibe", "haryanvi", "rap", "bhojpuri"];
-
-player.setSectionAdvancer((fromGenre) => {
-  const currentG = fromGenre || activeGenre || "hindi";
-  let currIdx = GENRE_CYCLE.indexOf(currentG);
-  if (currIdx < 0) currIdx = 0;
-
-  for (let step = 1; step <= GENRE_CYCLE.length; step++) {
-    const nextIdx = (currIdx + step) % GENRE_CYCLE.length;
-    const nextGenre = GENRE_CYCLE[nextIdx];
-    const candidateSongs = getSongsForSection(nextGenre);
-    if (candidateSongs && candidateSongs.length > 0) {
-      return {
-        songs: candidateSongs,
-        genre: nextGenre,
-        index: 0
-      };
-    }
-  }
-  return null;
-});
-
-// Update the active genre pill and view when section transition executes
-player.onSectionChange((nextGenre) => {
-  selectGenre(nextGenre);
-  player.showToast(`🎶 Next Section: ${GENRE_TITLES[nextGenre] || nextGenre}`, 3000);
-});
-
 // ── NETWORK CHANGE DETECTORS (ONLINE / OFFLINE) ──
 window.addEventListener("online", () => {
-  console.log("[App] Network online. Restoring all songs across sections.");
   updateOfflineBanner();
-  player.showToast("🌐 Connected to internet — All songs available", 2500);
-  renderGenre(activeGenre);
 });
 
 window.addEventListener("offline", () => {
-  console.log("[App] Network offline. Filtering to downloaded songs only.");
   updateOfflineBanner();
-  prewarmAllOfflineTracks();
-  player.showToast("📶 Offline mode — Showing downloaded songs only", 3000);
-  renderGenre(activeGenre);
 });
 
 /* ── SEARCH INPUT EVENTS ── */
@@ -1837,7 +1788,6 @@ onAuthStateChanged(auth, (user) => {
 
     // 1. If completely offline on launch, render downloaded songs in their respective sections
     if (!navigator.onLine) {
-      console.log("[App] Booting offline. Rendering downloaded songs in their respective sections.");
       rebuildAllCatalogues();
       renderGenre(DEFAULT_GENRE);
       player.showToast("✈️ Offline Mode: Showing downloaded songs in their sections", 3500);
@@ -1859,8 +1809,7 @@ onAuthStateChanged(auth, (user) => {
     rebuildAllCatalogues();
     renderGenre(DEFAULT_GENRE);
 
-  } catch (err) {
-    console.warn("App init fallback:", err);
+  } catch {
     renderGenre(DEFAULT_GENRE);
   }
 })();
