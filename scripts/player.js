@@ -287,9 +287,7 @@ function initAudioContext() {
 
     audioCtx.onstatechange = () => {
       if (audioCtx.state === "running" && wasInterruptedBySystem && !userPaused && currentSong) {
-        setTimeout(() => {
-          resumeAfterInterruption();
-        }, 350);
+        scheduleResumeAfterInterruption(350);
       }
     };
 
@@ -1191,7 +1189,7 @@ let wasInterruptedBySystem = false;
 let interruptedTrack       = null;
 let interruptedPosition    = 0;
 let interruptedTimestamp   = 0;
-let interruptionWatchdog   = null;
+let resumeDebounceTimer    = null;
 let isResumingFromInterruption = false;
 
 async function recoverAudioPipeline(deck, targetTime = null) {
@@ -1237,48 +1235,25 @@ async function resumeAfterInterruption() {
     await recoverAudioPipeline(activeDeck, resumePos);
   }
 
-  // 5. Attempt immediate resume on existing buffer
+  // 5. Attempt single immediate resume on existing buffer
   let resumed = false;
   try {
     const playPromise = activeDeck.play();
     if (playPromise !== undefined) {
       await playPromise;
       resumed = true;
-      player.showToast(`▶️ Resumed: ${currentSong.title}`, 2500);
     }
   } catch {}
-
-  // 6. If initial play failed, retry with staged delays
-  if (!resumed) {
-    for (const delay of [350, 750, 1200]) {
-      await new Promise((r) => setTimeout(r, delay));
-      if (userPaused || !currentSong || !activeDeck.paused) {
-        resumed = true;
-        break;
-      }
-      try {
-        const p = activeDeck.play();
-        if (p !== undefined) {
-          await p;
-          resumed = true;
-          player.showToast(`▶️ Resumed: ${currentSong.title}`, 2500);
-          break;
-        }
-      } catch {}
-    }
-  }
 
   if (resumed) {
     wasInterruptedBySystem = false;
     interruptedTrack = null;
-    clearInterval(interruptionWatchdog);
-    interruptionWatchdog = null;
+    clearTimeout(resumeDebounceTimer);
     updateMediaSession(currentSong);
     updateUI();
   } else {
-    // If browser gesture policy still blocks automatic resumption, keep system interruption armed
-    // so tapping earbud or screen immediately resumes
-    player.showToast(`📞 Call ended. Tap to resume "${currentSong.title}"`, 5000);
+    // If automatic resumption was blocked (e.g. phone call still active or gesture required),
+    // stay silently paused and arm a single gesture listener without polling or beeping.
     const oneTapResume = () => {
       document.removeEventListener("click", oneTapResume);
       document.removeEventListener("touchend", oneTapResume);
@@ -1286,9 +1261,9 @@ async function resumeAfterInterruption() {
         activeDeck.play().then(() => {
           wasInterruptedBySystem = false;
           interruptedTrack = null;
-          clearInterval(interruptionWatchdog);
-          interruptionWatchdog = null;
-          player.showToast(`▶️ Resumed: ${currentSong.title}`, 2000);
+          clearTimeout(resumeDebounceTimer);
+          updateMediaSession(currentSong);
+          updateUI();
         }).catch(() => {});
       }
     };
@@ -1299,18 +1274,12 @@ async function resumeAfterInterruption() {
   isResumingFromInterruption = false;
 }
 
-function startInterruptionWatchdog() {
-  if (interruptionWatchdog) return;
-  interruptionWatchdog = setInterval(() => {
-    if (!wasInterruptedBySystem || userPaused || !currentSong) {
-      clearInterval(interruptionWatchdog);
-      interruptionWatchdog = null;
-      return;
-    }
-
-    // Attempt resume
+function scheduleResumeAfterInterruption(delay = 350) {
+  if (!wasInterruptedBySystem || userPaused || !currentSong) return;
+  clearTimeout(resumeDebounceTimer);
+  resumeDebounceTimer = setTimeout(() => {
     resumeAfterInterruption();
-  }, 2500);
+  }, delay);
 }
 
 // ─── PERSISTENT DUAL-DECK AUDIO EVENT BINDINGS ─────────────────────
@@ -1367,8 +1336,7 @@ function bindDeckEvents(deck) {
     if (deck === activeDeck) {
       wasInterruptedBySystem = false;
       interruptedTrack = null;
-      clearInterval(interruptionWatchdog);
-      interruptionWatchdog = null;
+      clearTimeout(resumeDebounceTimer);
       advancingTrack = false;
       isBuffering = false;
       stopCushionBuffering();
@@ -1385,16 +1353,15 @@ function bindDeckEvents(deck) {
     if (deck === activeDeck && !isTransitioning) {
       if (!userPaused && currentSong && !deck.ended) {
         // Paused by external interruption (incoming phone call / audio focus loss)
+        // Record interruption state and stay silently paused without polling or beeping
         wasInterruptedBySystem = true;
         interruptedTrack = currentSong;
         interruptedPosition = deck.currentTime || 0;
         interruptedTimestamp = Date.now();
-        startInterruptionWatchdog();
       } else if (userPaused) {
         wasInterruptedBySystem = false;
         interruptedTrack = null;
-        clearInterval(interruptionWatchdog);
-        interruptionWatchdog = null;
+        clearTimeout(resumeDebounceTimer);
       }
 
       if (userPaused) advancingTrack = false;
@@ -1919,8 +1886,7 @@ export const player = {
   pause() {
     userPaused = true;
     wasInterruptedBySystem = false;
-    clearInterval(interruptionWatchdog);
-    interruptionWatchdog = null;
+    clearTimeout(resumeDebounceTimer);
     stopCushionBuffering();
     cancelAnyTransition();
     activeDeck.pause();
@@ -2269,9 +2235,7 @@ document.addEventListener("visibilitychange", () => {
   } else {
     // If returning to the app from a phone call / system interruption, auto-resume smoothly
     if (wasInterruptedBySystem && !userPaused && currentSong) {
-      setTimeout(() => {
-        resumeAfterInterruption();
-      }, 350);
+      scheduleResumeAfterInterruption(350);
     }
 
     if (!activeDeck.paused) {
@@ -2285,9 +2249,7 @@ document.addEventListener("visibilitychange", () => {
 
 window.addEventListener("focus", () => {
   if (wasInterruptedBySystem && !userPaused && currentSong) {
-    setTimeout(() => {
-      resumeAfterInterruption();
-    }, 350);
+    scheduleResumeAfterInterruption(350);
   }
 });
 
@@ -2302,9 +2264,7 @@ if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener ===
     // When phone call drops and earbuds switch from HFP back to A2DP media profile
     if (wasInterruptedBySystem && !userPaused && currentSong) {
       // 400ms delay allows Android OS Bluetooth A2DP handshake to stabilize before pushing audio stream
-      setTimeout(() => {
-        resumeAfterInterruption();
-      }, 400);
+      scheduleResumeAfterInterruption(400);
     }
   });
 }
