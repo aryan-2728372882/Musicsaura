@@ -704,17 +704,37 @@ async function loadRawJson(genre) {
   const file = GENRE_FILES[genre];
   if (!file) return [];
 
+  // 1. Try network fetch with automatic offline caching
   try {
-    const res = await fetch(`${file}?v=${Date.now()}`, { cache: "no-cache" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (Array.isArray(data)) {
-      rawJsonSongs[genre] = data
-        .map((s, i) => normalizeSong(s, genre, `json_${genre}_${i}`))
-        .filter((s) => s && s.link);
-      return rawJsonSongs[genre];
+    const res = await fetch(file);
+    if (res && res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        try {
+          localStorage.setItem(`musicsaura_json_cache_${genre}`, JSON.stringify(data));
+        } catch {}
+        rawJsonSongs[genre] = data
+          .map((s, i) => normalizeSong(s, genre, `json_${genre}_${i}`))
+          .filter((s) => s && s.link);
+        return rawJsonSongs[genre];
+      }
     }
   } catch {}
+
+  // 2. Offline fallback: Restore from permanent local cache
+  try {
+    const cached = localStorage.getItem(`musicsaura_json_cache_${genre}`);
+    if (cached) {
+      const data = JSON.parse(cached);
+      if (Array.isArray(data) && data.length > 0) {
+        rawJsonSongs[genre] = data
+          .map((s, i) => normalizeSong(s, genre, `json_${genre}_${i}`))
+          .filter((s) => s && s.link);
+        return rawJsonSongs[genre];
+      }
+    }
+  } catch {}
+
   return [];
 }
 
@@ -917,7 +937,25 @@ function renderSongList(container, songs, emptyMsg = "No tracks available.") {
 
 /* ── HERO BANNER UPDATE ── */
 function updateHeroBanner(songs) {
-  if (!songs || !songs.length) return;
+  if (!songs || !songs.length) {
+    if (heroTitle) heroTitle.textContent = isOfflineFilterActive() ? "Offline Library" : "Immersive Soundscapes";
+    if (heroDesc) heroDesc.textContent = isOfflineFilterActive()
+      ? "Save tracks by tapping the download icon on any song while online."
+      : "Experience seamless crossfade, studio equalizer, and gapless high-fidelity streaming.";
+    if (heroImg) heroImg.src = "assets/logo.png";
+    if (heroPlayBtn) {
+      heroPlayBtn.onclick = () => {
+        const off = getOfflineSongs();
+        if (off.length > 0) {
+          player.setPlaylist(off, 0);
+          player.playSong(off[0], off, 0, true);
+        } else {
+          player.showToast("No downloaded songs available offline yet.", 3000);
+        }
+      };
+    }
+    return;
+  }
   const topSong = songs[0];
   if (heroTitle) heroTitle.textContent = topSong.title || "Immersive Soundscapes";
   if (heroDesc) heroDesc.textContent = `Trending in ${topSong.genre?.toUpperCase() || "HINDI"} — Featuring ${topSong.artist || "Top Artists"}`;
@@ -1814,28 +1852,47 @@ onAuthStateChanged(auth, (user) => {
 
     grid.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading catalogue...</div>';
 
-    // 1. If completely offline on launch, render downloaded songs in their respective sections
-    if (!navigator.onLine) {
-      rebuildAllCatalogues();
-      renderGenre(DEFAULT_GENRE);
-      player.showToast("✈️ Offline Mode: Showing downloaded songs in their sections", 3500);
-      return;
-    }
-
-    // 2. Load all 5 JSON catalogues immediately
+    // 1. Load all 6 JSON catalogues immediately (via network or offline storage)
     await Promise.allSettled([
       loadRawJson("hindi"),
       loadRawJson("punjabi"),
       loadRawJson("haryanvi"),
       loadRawJson("rap"),
-      loadRawJson("bhojpuri")
+      loadRawJson("bhojpuri"),
+      loadRawJson("vibe")
     ]);
-    // 3. Connect Firestore sync and load cached/custom songs
-    await subscribeToFirestoreSongs();
 
-    // 4. Build initial catalogue & render immediately
+    // 2. Connect Firestore sync if online, or load cached
+    if (navigator.onLine) {
+      await subscribeToFirestoreSongs();
+    } else {
+      loadCachedFirestoreSongs();
+    }
+
+    // 3. Build initial catalogue
     rebuildAllCatalogues();
-    renderGenre(DEFAULT_GENRE);
+
+    // 4. Render appropriate section
+    if (!navigator.onLine) {
+      const offList = getOfflineSongs();
+      let targetGenre = DEFAULT_GENRE;
+      if (offList.length > 0) {
+        const counts = {};
+        offList.forEach((s) => {
+          const g = getSongGenre(s);
+          counts[g] = (counts[g] || 0) + 1;
+        });
+        const bestGenre = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+        if (bestGenre && (GENRE_FILES[bestGenre] || bestGenre === "favorites")) {
+          targetGenre = bestGenre;
+        }
+      }
+      selectGenre(targetGenre);
+      renderGenre(targetGenre);
+      player.showToast("✈️ Offline Mode: Showing downloaded songs in their sections", 3500);
+    } else {
+      renderGenre(DEFAULT_GENRE);
+    }
 
   } catch {
     renderGenre(DEFAULT_GENRE);

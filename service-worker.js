@@ -1,11 +1,12 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v102";
+const APP_SHELL_CACHE = "musicsaura-shell-v104";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
   "/",
   "/index.html",
   "/styles/styles.css",
+  "/assets/fonts/material-icons.ttf",
   "/scripts/app.js",
   "/scripts/player.js",
   "/scripts/storage-db.js",
@@ -16,7 +17,13 @@ const PRECACHE_ASSETS = [
   "/scripts/sw-manager.js",
   "/manifest.json",
   "/assets/logo.png",
-  "/assets/favicon.ico"
+  "/assets/favicon.ico",
+  "/jsons/hindi.json",
+  "/jsons/punjabi.json",
+  "/jsons/haryanvi.json",
+  "/jsons/rap.json",
+  "/jsons/bhojpuri.json",
+  "/jsons/vibe.json"
 ];
 
 // ─── INSTALL: PRE-CACHE APP SHELL WITH INDEPENDENT FAULT TOLERANCE ─
@@ -167,15 +174,25 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 2. MATERIAL ICONS FONT (Google Fonts & CDN Fallback)
-  if (url.href.includes("materialicons") || url.pathname.includes("material-icons")) {
+  // 2. MATERIAL ICONS FONT (Google Fonts & CDN Fallback with 100% Offline Delivery)
+  const isMaterialReq =
+    url.href.toLowerCase().includes("material") &&
+    (url.href.toLowerCase().includes("icon") || url.href.toLowerCase().includes("fluh"));
+  if (isMaterialReq || url.pathname.includes("material-icons")) {
     event.respondWith(
       (async () => {
         const cache = await caches.open(APP_SHELL_CACHE);
         const cachedFont =
           (await cache.match("/assets/fonts/material-icons.ttf")) ||
           (await cache.match(new URL("/assets/fonts/material-icons.ttf", self.location.origin).href));
-        if (cachedFont) return cachedFont;
+
+        // If requesting the font file or offline, serve cached TTF
+        if (cachedFont && (!navigator.onLine || request.destination === "font" || url.pathname.endsWith(".ttf") || url.href.includes("flUhRq6"))) {
+          const headers = new Headers(cachedFont.headers);
+          headers.set("Content-Type", "font/ttf");
+          headers.set("Access-Control-Allow-Origin", "*");
+          return new Response(cachedFont.body, { status: 200, headers });
+        }
 
         try {
           const net = await fetch(request);
@@ -184,6 +201,13 @@ self.addEventListener("fetch", (event) => {
             return net;
           }
         } catch {}
+
+        if (cachedFont) {
+          const headers = new Headers(cachedFont.headers);
+          headers.set("Content-Type", "font/ttf");
+          headers.set("Access-Control-Allow-Origin", "*");
+          return new Response(cachedFont.body, { status: 200, headers });
+        }
 
         return (await cache.match(request)) || new Response("", { status: 404 });
       })()

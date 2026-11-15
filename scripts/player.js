@@ -285,11 +285,7 @@ function initAudioContext() {
       applyPresetGains(savedPreset);
     } catch {}
 
-    audioCtx.onstatechange = () => {
-      if (audioCtx.state === "running" && wasInterruptedBySystem && !userPaused && currentSong) {
-        scheduleResumeAfterInterruption(350);
-      }
-    };
+
 
     return audioCtx;
   } catch {
@@ -520,7 +516,7 @@ function getBufferedAhead(deck) {
 }
 
 function startCushionBuffering(deck) {
-  if (userPaused || !currentSong || isStartingPlayback) return;
+  if (userPaused || wasInterruptedBySystem || !currentSong || isStartingPlayback) return;
   isBuffering = true;
   updateUI();
 }
@@ -726,7 +722,7 @@ let streamRetryCount = 0;
 function startStallWatchdog() {
   clearTimeout(stallWatchdogTimer);
   stallWatchdogTimer = setTimeout(async () => {
-    if (isBuffering && !activeDeck.paused && !userPaused && currentSong && !isRecoveringStall) {
+    if (isBuffering && !activeDeck.paused && !userPaused && !wasInterruptedBySystem && currentSong && !isRecoveringStall) {
       stallCount++;
 
       // Check if we have an offline cached blob for this song in storage
@@ -742,7 +738,7 @@ function startStallWatchdog() {
       } catch {}
 
       // If playback is stalling on slow connection, gently request play() to keep the decoder alive
-      if (!activeDeck.paused && !userPaused) {
+      if (!activeDeck.paused && !userPaused && !wasInterruptedBySystem) {
         activeDeck.play().catch(() => {});
       }
     }
@@ -1312,9 +1308,10 @@ function bindDeckEvents(deck) {
   deck.addEventListener("canplay", () => {
     if (deck === activeDeck) {
       clearStallWatchdog();
+      const neededResume = isBuffering && !userPaused && !wasInterruptedBySystem;
       isBuffering = false;
       updateUI();
-      if (!userPaused && deck.paused) {
+      if (neededResume && deck.paused) {
         deck.play().catch(() => {});
       }
     }
@@ -1323,10 +1320,11 @@ function bindDeckEvents(deck) {
   deck.addEventListener("canplaythrough", () => {
     if (deck === activeDeck) {
       stopCushionBuffering();
+      const neededResume = isBuffering && !userPaused && !wasInterruptedBySystem;
       isBuffering = false;
       clearStallWatchdog();
       updateUI();
-      if (!userPaused && deck.paused) {
+      if (neededResume && deck.paused) {
         deck.play().catch(() => {});
       }
     }
@@ -1358,6 +1356,10 @@ function bindDeckEvents(deck) {
         interruptedTrack = currentSong;
         interruptedPosition = deck.currentTime || 0;
         interruptedTimestamp = Date.now();
+        isBuffering = false;
+        stopCushionBuffering();
+        clearStallWatchdog();
+        clearTimeout(resumeDebounceTimer);
       } else if (userPaused) {
         wasInterruptedBySystem = false;
         interruptedTrack = null;
@@ -1384,7 +1386,7 @@ function bindDeckEvents(deck) {
     if (deck === activeDeck) {
       isBuffering = false;
       updateUI();
-      if (!userPaused && deck.paused) {
+      if (!userPaused && !wasInterruptedBySystem && deck.paused && isStartingPlayback) {
         deck.play().catch(() => {});
       }
     }
@@ -1393,7 +1395,7 @@ function bindDeckEvents(deck) {
   deck.addEventListener("progress", () => {
     if (deck === activeDeck && deck.buffered.length > 0) {
       clearStallWatchdog();
-      if (isBuffering && !userPaused && deck.paused) {
+      if (isBuffering && !userPaused && !wasInterruptedBySystem && deck.paused) {
         deck.play().catch(() => {});
       }
     }
@@ -2233,11 +2235,7 @@ document.addEventListener("visibilitychange", () => {
       navigator.mediaSession.playbackState = "playing";
     }
   } else {
-    // If returning to the app from a phone call / system interruption, auto-resume smoothly
-    if (wasInterruptedBySystem && !userPaused && currentSong) {
-      scheduleResumeAfterInterruption(350);
-    }
-
+    // When returning to foreground, update UI state cleanly
     if (!activeDeck.paused) {
       acquireWakeLock();
       updateMediaSession(currentSong);
@@ -2248,8 +2246,8 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("focus", () => {
-  if (wasInterruptedBySystem && !userPaused && currentSong) {
-    scheduleResumeAfterInterruption(350);
+  if (!activeDeck.paused) {
+    updateUI();
   }
 });
 
