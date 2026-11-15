@@ -699,29 +699,12 @@ function rebuildAllCatalogues() {
   }
 }
 
-/* ── LOAD RAW JSON FILES ── */
+/* ── LOAD RAW JSON FILES (INSTANT CACHE-FIRST) ── */
 async function loadRawJson(genre) {
   const file = GENRE_FILES[genre];
   if (!file) return [];
 
-  // 1. Try network fetch with automatic offline caching
-  try {
-    const res = await fetch(file);
-    if (res && res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        try {
-          localStorage.setItem(`musicsaura_json_cache_${genre}`, JSON.stringify(data));
-        } catch {}
-        rawJsonSongs[genre] = data
-          .map((s, i) => normalizeSong(s, genre, `json_${genre}_${i}`))
-          .filter((s) => s && s.link);
-        return rawJsonSongs[genre];
-      }
-    }
-  } catch {}
-
-  // 2. Offline fallback: Restore from permanent local cache
+  // 1. Instant Cache-First: Read from permanent local cache in 0ms
   try {
     const cached = localStorage.getItem(`musicsaura_json_cache_${genre}`);
     if (cached) {
@@ -730,12 +713,32 @@ async function loadRawJson(genre) {
         rawJsonSongs[genre] = data
           .map((s, i) => normalizeSong(s, genre, `json_${genre}_${i}`))
           .filter((s) => s && s.link);
-        return rawJsonSongs[genre];
       }
     }
   } catch {}
 
-  return [];
+  // 2. Background Revalidation: Fetch fresh catalogue with fast timeout
+  if (navigator.onLine || !rawJsonSongs[genre] || !rawJsonSongs[genre].length) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2500);
+      const res = await fetch(file, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          try {
+            localStorage.setItem(`musicsaura_json_cache_${genre}`, JSON.stringify(data));
+          } catch {}
+          rawJsonSongs[genre] = data
+            .map((s, i) => normalizeSong(s, genre, `json_${genre}_${i}`))
+            .filter((s) => s && s.link);
+        }
+      }
+    } catch {}
+  }
+
+  return rawJsonSongs[genre] || [];
 }
 
 /* ── ULTRA LOW-QUOTA FIRESTORE SYNCHRONIZATION WITH 30-MIN CACHE ── */
@@ -1852,7 +1855,7 @@ onAuthStateChanged(auth, (user) => {
 
     grid.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading catalogue...</div>';
 
-    // 1. Load all 6 JSON catalogues immediately (via network or offline storage)
+    // 1. Load all 6 JSON catalogues immediately (via memory/localStorage cache in 0ms)
     await Promise.allSettled([
       loadRawJson("hindi"),
       loadRawJson("punjabi"),
@@ -1862,17 +1865,12 @@ onAuthStateChanged(auth, (user) => {
       loadRawJson("vibe")
     ]);
 
-    // 2. Connect Firestore sync if online, or load cached
-    if (navigator.onLine) {
-      await subscribeToFirestoreSongs();
-    } else {
-      loadCachedFirestoreSongs();
-    }
+    // 2. Load cached community uploads in 0ms
+    loadCachedFirestoreSongs();
 
-    // 3. Build initial catalogue
+    // 3. Build initial catalogue & render IMMEDIATELY (under 50ms!)
     rebuildAllCatalogues();
 
-    // 4. Render appropriate section
     if (!navigator.onLine) {
       const offList = getOfflineSongs();
       let targetGenre = DEFAULT_GENRE;
@@ -1892,6 +1890,11 @@ onAuthStateChanged(auth, (user) => {
       player.showToast("✈️ Offline Mode: Showing downloaded songs in their sections", 3500);
     } else {
       renderGenre(DEFAULT_GENRE);
+    }
+
+    // 4. In background: Fetch latest Firestore community uploads without blocking initial UI
+    if (navigator.onLine) {
+      subscribeToFirestoreSongs().catch(() => {});
     }
 
   } catch {

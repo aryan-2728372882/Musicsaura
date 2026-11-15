@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v104";
+const APP_SHELL_CACHE = "musicsaura-shell-v105";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -220,19 +220,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 3. NAVIGATION REQUESTS (Single-Page App Routing)
+  // 3. NAVIGATION REQUESTS (Instant Offline App Launch)
   if (request.mode === "navigate") {
     event.respondWith(
       (async () => {
-        try {
-          const networkRes = await fetch(request);
-          if (networkRes && networkRes.ok) {
-            const cache = await caches.open(APP_SHELL_CACHE);
-            cache.put(request, networkRes.clone());
-            return networkRes;
-          }
-        } catch {}
-
         const cache = await caches.open(APP_SHELL_CACHE);
         const cached =
           (await cache.match(request, { ignoreSearch: true })) ||
@@ -240,7 +231,22 @@ self.addEventListener("fetch", (event) => {
           (await cache.match("/index.html")) ||
           (await cache.match("/"));
 
-        if (cached) return cached;
+        // If in cache, deliver INSTANTLY without waiting for network timeout!
+        if (cached) {
+          if (navigator.onLine) {
+            fetch(request).then((res) => { if (res && res.ok) cache.put(request, res); }).catch(() => {});
+          }
+          return cached;
+        }
+
+        // Otherwise fetch network
+        try {
+          const networkRes = await fetch(request);
+          if (networkRes && networkRes.ok) {
+            cache.put(request, networkRes.clone());
+            return networkRes;
+          }
+        } catch {}
 
         return new Response("MusicsAura is running offline", {
           status: 200,
@@ -251,21 +257,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 4. STYLESHEET REQUESTS (Guaranteed text/css, NEVER HTML)
+  // 4. STYLESHEET REQUESTS (Instant Cache-First Delivery)
   const isCSS = request.destination === "style" || url.pathname.endsWith(".css");
   if (isCSS) {
     event.respondWith(
       (async () => {
-        try {
-          const networkRes = await fetch(request);
-          if (networkRes && networkRes.ok) {
-            const cache = await caches.open(APP_SHELL_CACHE);
-            cache.put(request, networkRes.clone());
-            cache.put("/styles/styles.css", networkRes.clone());
-            return networkRes;
-          }
-        } catch {}
-
         const cache = await caches.open(APP_SHELL_CACHE);
         const cached =
           (await cache.match(request, { ignoreSearch: true })) ||
@@ -274,17 +270,22 @@ self.addEventListener("fetch", (event) => {
           (await cache.match(new URL("/styles/styles.css", self.location.origin).href));
 
         if (cached) {
-          // Ensure correct stylesheet MIME type to prevent browser dropping styles
+          if (navigator.onLine) {
+            fetch(request).then((res) => { if (res && res.ok) cache.put(request, res); }).catch(() => {});
+          }
           const headers = new Headers(cached.headers);
           headers.set("Content-Type", "text/css; charset=utf-8");
-          return new Response(cached.body, {
-            status: cached.status || 200,
-            statusText: cached.statusText || "OK",
-            headers
-          });
+          return new Response(cached.body, { status: cached.status || 200, statusText: cached.statusText || "OK", headers });
         }
 
-        // Return empty CSS instead of HTML fallback to prevent MIME type parse errors
+        try {
+          const networkRes = await fetch(request);
+          if (networkRes && networkRes.ok) {
+            cache.put(request, networkRes.clone());
+            return networkRes;
+          }
+        } catch {}
+
         return new Response("/* Offline CSS placeholder */", {
           status: 200,
           headers: { "Content-Type": "text/css; charset=utf-8" }
@@ -294,21 +295,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 5. JAVASCRIPT MODULES & SCRIPTS (Guaranteed application/javascript, NEVER HTML)
+  // 5. JAVASCRIPT MODULES & SCRIPTS (Instant Cache-First Delivery)
   const isScript = request.destination === "script" || url.pathname.endsWith(".js");
   if (isScript) {
     event.respondWith(
       (async () => {
-        try {
-          const networkRes = await fetch(request);
-          if (networkRes && networkRes.ok) {
-            const cache = await caches.open(APP_SHELL_CACHE);
-            cache.put(request, networkRes.clone());
-            cache.put(url.pathname, networkRes.clone());
-            return networkRes;
-          }
-        } catch {}
-
         const cache = await caches.open(APP_SHELL_CACHE);
         const cached =
           (await cache.match(request, { ignoreSearch: true })) ||
@@ -316,16 +307,24 @@ self.addEventListener("fetch", (event) => {
           (await cache.match(url.href.split("?")[0], { ignoreSearch: true }));
 
         if (cached) {
+          if (navigator.onLine) {
+            fetch(request).then((res) => { if (res && res.ok) cache.put(request, res); }).catch(() => {});
+          }
           const headers = new Headers(cached.headers);
           headers.set("Content-Type", "application/javascript; charset=utf-8");
-          return new Response(cached.body, {
-            status: cached.status || 200,
-            statusText: cached.statusText || "OK",
-            headers
-          });
+          return new Response(cached.body, { status: cached.status || 200, statusText: cached.statusText || "OK", headers });
         }
 
-        return new Response("console.warn('[SW] Offline script missing:', " + JSON.stringify(url.pathname) + ");", {
+        try {
+          const networkRes = await fetch(request);
+          if (networkRes && networkRes.ok) {
+            cache.put(request, networkRes.clone());
+            cache.put(url.pathname, networkRes.clone());
+            return networkRes;
+          }
+        } catch {}
+
+        return new Response("/* offline fallback */", {
           status: 200,
           headers: { "Content-Type": "application/javascript; charset=utf-8" }
         });
@@ -334,25 +333,29 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 6. ALL OTHER STATIC ASSETS (Images, Manifest, JSONs)
+  // 6. ALL OTHER STATIC ASSETS (Images, Manifest, JSONs - Instant Cache-First)
   event.respondWith(
     (async () => {
-      try {
-        const networkRes = await fetch(request);
-        if (networkRes && networkRes.ok) {
-          const cache = await caches.open(APP_SHELL_CACHE);
-          cache.put(request, networkRes.clone());
-          return networkRes;
-        }
-      } catch {}
-
       const cache = await caches.open(APP_SHELL_CACHE);
       const cached =
         (await cache.match(request, { ignoreSearch: true })) ||
         (await cache.match(url.pathname, { ignoreSearch: true })) ||
         (await cache.match(url.href.split("?")[0], { ignoreSearch: true }));
 
-      if (cached) return cached;
+      if (cached) {
+        if (navigator.onLine) {
+          fetch(request).then((res) => { if (res && res.ok) cache.put(request, res); }).catch(() => {});
+        }
+        return cached;
+      }
+
+      try {
+        const networkRes = await fetch(request);
+        if (networkRes && networkRes.ok) {
+          cache.put(request, networkRes.clone());
+          return networkRes;
+        }
+      } catch {}
 
       return new Response("", { status: 404, statusText: "Offline Not Found" });
     })()

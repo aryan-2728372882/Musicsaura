@@ -287,6 +287,24 @@ function initAudioContext() {
 
 
 
+    audioCtx.onstatechange = () => {
+      // Immediate phone call / telephony focus loss detection:
+      // When incoming or outgoing call begins, mobile OS sets AudioContext state to 'suspended' or 'interrupted'.
+      // Immediately pause activeDeck so playback does not stutter/beep into the phone call!
+      if ((audioCtx.state === "suspended" || audioCtx.state === "interrupted") && !activeDeck.paused && !userPaused && currentSong) {
+        wasInterruptedBySystem = true;
+        interruptedTrack = currentSong;
+        interruptedPosition = activeDeck.currentTime || 0;
+        interruptedTimestamp = Date.now();
+        activeDeck.pause();
+        isBuffering = false;
+        stopCushionBuffering();
+        clearStallWatchdog();
+        clearTimeout(resumeDebounceTimer);
+        updateUI();
+      }
+    };
+
     return audioCtx;
   } catch {
     return null;
@@ -319,20 +337,23 @@ function applyPresetGains(presetName) {
 
 let bothDecksUnlocked = false;
 
-function unlockBothDecks() {
-  unlockAudioContext();
+async function unlockBothDecks() {
+  await unlockAudioContext();
   if (bothDecksUnlocked) return;
   bothDecksUnlocked = true;
 }
 
-function unlockAudioContext() {
+async function unlockAudioContext() {
   if (!audioCtx) initAudioContext();
   if (audioCtx) {
     connectDecksToAudioContext();
     if (audioCtx.state === "suspended" || audioCtx.state === "interrupted") {
-      audioCtx.resume().catch(() => {});
+      try {
+        await audioCtx.resume();
+      } catch {}
     }
   }
+  return audioCtx;
 }
 
 // ─── WAKE LOCK API ────────────────────────────────────────────────
@@ -1193,10 +1214,7 @@ async function recoverAudioPipeline(deck, targetTime = null) {
   const currentSrc = deck.src;
   if (!currentSrc) return;
 
-  if (typeof deck.setSinkId === "function") {
-    try { await deck.setSinkId(""); } catch {}
-  }
-  unlockAudioContext();
+  await unlockAudioContext();
 
   try {
     deck.pause();
@@ -1215,23 +1233,18 @@ async function resumeAfterInterruption() {
 
   const resumePos = interruptedPosition || activeDeck.currentTime || 0;
 
-  // 1. Force audio output sink re-route to system default
-  if (typeof activeDeck.setSinkId === "function") {
-    try { await activeDeck.setSinkId(""); } catch {}
-  }
+  // 1. Unlock/resume Web Audio if suspended (awaits state transition so output pipeline is fully active)
+  await unlockAudioContext();
 
-  // 2. Unlock/resume Web Audio if suspended
-  unlockAudioContext();
-
-  // 3. Ensure volume is at masterVolume
+  // 2. Ensure volume is at masterVolume
   activeDeck.volume = masterVolume;
 
-  // 4. If audio element was invalidated or in an empty network state, re-prime it
+  // 3. If audio element was invalidated or in an empty network state, re-prime it
   if (activeDeck.networkState === HTMLMediaElement.NETWORK_EMPTY || activeDeck.error || !activeDeck.src) {
     await recoverAudioPipeline(activeDeck, resumePos);
   }
 
-  // 5. Attempt single immediate resume on existing buffer
+  // 4. Attempt single immediate resume on existing buffer
   let resumed = false;
   try {
     const playPromise = activeDeck.play();
@@ -1250,10 +1263,11 @@ async function resumeAfterInterruption() {
   } else {
     // If automatic resumption was blocked (e.g. phone call still active or gesture required),
     // stay silently paused and arm a single gesture listener without polling or beeping.
-    const oneTapResume = () => {
+    const oneTapResume = async () => {
       document.removeEventListener("click", oneTapResume);
       document.removeEventListener("touchend", oneTapResume);
       if (activeDeck.paused && !userPaused && currentSong) {
+        await unlockAudioContext();
         activeDeck.play().then(() => {
           wasInterruptedBySystem = false;
           interruptedTrack = null;
@@ -1846,11 +1860,10 @@ export const player = {
     playSessionStart   = Date.now();
   },
 
-  play() {
-    unlockBothDecks();
+  async play() {
+    await unlockBothDecks();
     if (wasInterruptedBySystem) {
-      resumeAfterInterruption();
-      return;
+      return resumeAfterInterruption();
     }
     if (!currentSong) {
       if (userQueue.length > 0) {
@@ -2254,15 +2267,10 @@ window.addEventListener("focus", () => {
 // Bluetooth Earbuds Connect / Disconnect / Call Profile Switch listener
 if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener === "function") {
   navigator.mediaDevices.addEventListener("devicechange", () => {
-    // Force re-route sink to default active output device if supported
-    if (typeof activeDeck.setSinkId === "function") {
-      activeDeck.setSinkId("").catch(() => {});
-    }
-
     // When phone call drops and earbuds switch from HFP back to A2DP media profile
     if (wasInterruptedBySystem && !userPaused && currentSong) {
-      // 400ms delay allows Android OS Bluetooth A2DP handshake to stabilize before pushing audio stream
-      scheduleResumeAfterInterruption(400);
+      // 500ms delay allows Android OS Bluetooth A2DP handshake to stabilize before pushing audio stream
+      scheduleResumeAfterInterruption(500);
     }
   });
 }
