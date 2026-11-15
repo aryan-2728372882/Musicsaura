@@ -2274,3 +2274,27 @@ if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener ===
     }
   });
 }
+
+// Synchronize deletion with active queue & playlist
+window.addEventListener("musicsaura:song-deleted", (e) => {
+  const p = e.detail;
+  if (!p) return;
+  const targetLink = (p.link || "").split("?")[0].toLowerCase().trim();
+  const targetId = p.id ? String(p.id).trim() : "";
+  const targetTitle = (p.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+
+  const isMatching = (s) => {
+    if (!s) return false;
+    const sLink = (s.link || "").split("?")[0].toLowerCase().trim();
+    if (targetLink && sLink && sLink === targetLink) return true;
+    const sId = s.id ? String(s.id).trim() : "";
+    if (targetId && sId && sId === targetId) return true;
+    const sTitle = (s.title || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+    if (targetTitle && sTitle && sTitle === targetTitle) return true;
+    return false;
+  };
+
+  userQueue = userQueue.filter((s) => !isMatching(s));
+  playlist = playlist.filter((s) => !isMatching(s));
+  emitStateChange();
+});

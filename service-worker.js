@@ -1,5 +1,5 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v105";
+const APP_SHELL_CACHE = "musicsaura-shell-v106";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
@@ -362,9 +362,22 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-// ─── MESSAGE: IMMEDIATE ACTIVATION ON UPDATE ──────────────────────
+// ─── MESSAGE: IMMEDIATE ACTIVATION ON UPDATE & CACHE PURGE ─────────
 self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
+  } else if (event.data?.type === "PURGE_JSON_CACHE") {
+    const genre = (event.data?.genre || "").toLowerCase();
+    caches.open(APP_SHELL_CACHE).then((cache) => {
+      if (genre) {
+        cache.delete(`/jsons/${genre}.json`);
+        cache.delete(`jsons/${genre}.json`);
+      } else {
+        ["hindi", "punjabi", "vibe", "haryanvi", "rap", "bhojpuri"].forEach((g) => {
+          cache.delete(`/jsons/${g}.json`);
+          cache.delete(`jsons/${g}.json`);
+        });
+      }
+    }).catch(() => {});
   }
 });
