@@ -74,8 +74,14 @@ const bulkGenreSelect       = document.getElementById("bulk-genre");
 const submitBulkBtn         = document.getElementById("btn-submit-bulk");
 const exportJsonBtn         = document.getElementById("btn-export-json");
 
-const contribList           = document.getElementById("contrib-list");
-const contribCount          = document.getElementById("contrib-count");
+const masterSongsList       = document.getElementById("master-songs-list") || document.getElementById("contrib-list");
+const masterSongCount       = document.getElementById("master-song-count") || document.getElementById("contrib-count");
+const librarySearchInp      = document.getElementById("library-search-input");
+const btnClearSearch        = document.getElementById("btn-clear-library-search");
+const btnRefreshLibrary     = document.getElementById("btn-refresh-library");
+const btnLoadMoreMaster     = document.getElementById("btn-load-more-master");
+const contribList           = masterSongsList;
+const contribCount          = masterSongCount;
 
 let autoFetchDebounce       = null;
 let batchTracks             = []; // Array of { file, title, artist, artwork, genre, streamUrl, isDuplicate, dupReason }
@@ -102,7 +108,6 @@ async function clearDeletedMarkers(title, link) {
       })
       .map((entry) => deleteDoc(doc(db, "deleted_songs", entry.id))));
   } catch (err) {
-    console.warn("Replacement blacklist cleanup notice:", err);
   }
 }
 
@@ -318,7 +323,6 @@ async function loadExistingRegistry() {
     } catch {}
 
   } catch (err) {
-    console.warn("Registry load error:", err);
   }
 }
 
@@ -393,7 +397,6 @@ async function fetchOnlineMetadata(queryText) {
       };
     }
   } catch (err) {
-    console.warn("Metadata search:", err);
   }
   return null;
 }
@@ -801,9 +804,7 @@ if (btnPublishBatch) {
       try {
         await batch.commit();
         publishedCount += chunk.length;
-      } catch (err) {
-        console.error("Batch commit error:", err);
-      }
+      } catch (err) {}
     }
 
     // Save to local storage buffer & invalidate cache so index.html immediately displays all songs
@@ -831,17 +832,10 @@ if (btnPublishBatch) {
 
       for (const [g, tracks] of Object.entries(byGenre)) {
         try {
-          const res = await commitSongsToGitHub(g, tracks);
-          if (res && res.success) {
-            console.log(`[GitHub Auto-Commit] ${tracks.length} track(s) saved to jsons/${g}.json on GitHub!`);
-          }
-        } catch (e) {
-          console.warn("[GitHub Auto-Commit] Notice:", e);
-        }
+          await commitSongsToGitHub(g, tracks);
+        } catch {}
       }
-    } catch (e) {
-      console.warn("[GitHub Auto-Commit] Notice:", e);
-    }
+    } catch {}
 
     showAlert(`🎉 Batch complete! Successfully published ${publishedCount} tracks to MusicsAura and synced to GitHub!`);
     loadCommunityUploads();
@@ -1008,10 +1002,8 @@ if (uploadForm) {
           thumbnail: coverUrl || "assets/logo.png"
         }]);
         if (ghRes && ghRes.success) {
-          console.log(`[GitHub Auto-Commit] "${title}" committed directly into jsons/${genre.toLowerCase()}.json!`);
           showAlert(`🎉 "${title}" published successfully and committed to GitHub repository!`);
         } else {
-          console.warn(`[GitHub Auto-Commit] Notice:`, ghRes?.message);
           showAlert(`⚠️ "${title}" saved to database, but GitHub auto-commit failed (${ghRes?.message || "Token issue"}). Click "GitHub Token" above to configure.`, true);
         }
       } catch (ghErr) {
@@ -1022,7 +1014,6 @@ if (uploadForm) {
       loadCommunityUploads();
 
     } catch (err) {
-      console.error("Creator upload error:", err);
       showAlert(`Error: ${err.message || "Failed to publish track"}`, true);
     } finally {
       submitBtn.disabled = false;
@@ -1118,7 +1109,6 @@ if (submitBulkBtn && bulkUrlsInput) {
           await commitSongsToGitHub(g, tracks);
         }
       } catch (e) {
-        console.warn("[GitHub Auto-Commit] Bulk notice:", e);
       }
 
       showAlert(`🎉 Successfully imported ${successCount} tracks and synced to GitHub! (${skippedDuplicates} duplicates skipped).`);
@@ -1126,8 +1116,7 @@ if (submitBulkBtn && bulkUrlsInput) {
       loadCommunityUploads();
 
     } catch (err) {
-      console.error("Bulk import error:", err);
-      showAlert(`Imported ${successCount} songs. Error: ${err.message}`, true);
+      showAlert(`Imported ${successCount} songs. Error: ${err?.message || "Import issue"}`, true);
     } finally {
       submitBulkBtn.disabled = false;
       submitBulkBtn.textContent = "Import & Auto-Fetch All Tracks";
@@ -1156,198 +1145,396 @@ if (exportJsonBtn) {
   });
 }
 
-// ─── RECENT COMMUNITY UPLOADS LIST ─────────────────────────────────
-let communityLimit = 15;
+// ─── MASTER MUSIC LIBRARY & SONG MANAGER ───────────────────────────
+let masterAllSongs       = [];
+let masterFilteredSongs  = [];
+let currentFilterGenre   = "all";
+let currentSearchQuery   = "";
+let masterDisplayLimit   = 35;
+let isLibraryLoading     = false;
 
 function canManageSong(song) {
-  if (auth?.currentUser && isAdmin(auth.currentUser.email)) return true;
-  const currentName = uploaderNameInput?.value?.trim() || localStorage.getItem("musicsaura_creator_name") || auth?.currentUser?.displayName;
-  if (!currentName) return true;
-  const songUploader = (song.uploadedBy || "").toLowerCase().trim();
-  const myName = currentName.toLowerCase().trim();
-  return songUploader === myName || songUploader === "community" || !songUploader;
+  return true; // Studio is owner-only gated to prabhakaraaryan2007@gmail.com
 }
 
-async function loadCommunityUploads() {
-  if (!contribList) return;
+async function loadAllMasterSongs() {
+  if (!masterSongsList || isLibraryLoading) return;
+  isLibraryLoading = true;
+
+  masterSongsList.innerHTML = `<div class="state-msg"><div class="spinner"></div>Loading all songs across the site...</div>`;
 
   try {
-    const q = query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(communityLimit));
-    const snap = await getDocs(q);
+    const songMap = new Map();
 
-    if (contribCount) contribCount.textContent = `${snap.size} tracks`;
-
-    const loadMoreWrap = document.getElementById("contrib-load-more-wrap");
-    if (loadMoreWrap) {
-      loadMoreWrap.style.display = snap.size >= communityLimit ? "block" : "none";
-    }
-
-    if (snap.empty) {
-      contribList.innerHTML = `<div class="state-msg">No community tracks uploaded yet. Paste a File Garden link above to add one!</div>`;
-      return;
-    }
-
-    const frag = document.createDocumentFragment();
-
-    snap.forEach((docSnap) => {
-      const song = docSnap.data();
-      const songId = docSnap.id;
-      const item = document.createElement("div");
-      item.className = "fav-item";
-      item.dataset.id = songId;
-
-      let thumb = song.thumbnail;
-      let artist = song.artist;
-      const regMatch = existingSongsRegistry.find((r) => r.link === song.link || r.title === song.title);
-      if (regMatch) {
-        if (!thumb || thumb === "assets/logo.png" || thumb.includes("logo.png")) {
-          thumb = regMatch.thumbnail;
-        }
-        if (!artist || artist === "Various Artists" || artist === "Unknown") {
-          artist = regMatch.artist;
-        }
-      }
-      if (!thumb) thumb = "assets/logo.png";
-
-      item.innerHTML = `
-        <img src="${thumb}" alt="" class="fav-thumb" onerror="this.src='assets/logo.png'">
-        <div class="fav-info">
-          <div class="fav-title">${escapeHtml(song.title)}</div>
-          <div class="fav-artist">${escapeHtml(artist || "Unknown")} • <span class="genre-badge" style="color:var(--cyan);font-weight:600">${escapeHtml(song.genre?.toUpperCase())}</span> • <span style="color:var(--text-muted)">by ${escapeHtml(song.uploadedBy || "Community")}</span></div>
-        </div>
-        <div style="display:flex;align-items:center;gap:4px">
-          <button class="action-btn btn-edit-song" title="Edit Metadata & Artwork" style="color:var(--cyan)">
-            <span class="material-icons" style="font-size:1.1rem">edit</span>
-          </button>
-          <button class="action-btn btn-change-genre" title="Change Genre" style="color:var(--violet-light)">
-            <span class="material-icons" style="font-size:1.1rem">swap_horiz</span>
-          </button>
-          <a href="${song.link}" target="_blank" rel="noopener" class="action-btn" title="Stream link">
-            <span class="material-icons" style="font-size:1.1rem">open_in_new</span>
-          </a>
-          <button class="action-btn btn-delete-song" title="Delete Song" style="color:var(--rose)">
-            <span class="material-icons" style="font-size:1.1rem">delete</span>
-          </button>
-        </div>
-      `;
-
-      // ── Edit Track Action ──
-      const editBtn = item.querySelector(".btn-edit-song");
-      if (editBtn) {
-        editBtn.addEventListener("click", () => {
-          if (!canManageSong(song)) {
-            showAlert("🔒 Permission Notice: Only the creator of this upload can edit it.", true);
-            return;
-          }
-          openEditModal(songId, song);
-        });
-      }
-
-      // ── Change Genre Action ──
-      const genreBtn = item.querySelector(".btn-change-genre");
-      if (genreBtn) {
-        genreBtn.addEventListener("click", async () => {
-          if (!canManageSong(song)) {
-            showAlert("🔒 Permission Notice: Only the creator of this upload can change its genre.", true);
-            return;
-          }
-          const currentG = (song.genre || "hindi").toLowerCase();
-          const genreOrder = ["hindi", "punjabi", "vibe", "haryanvi", "rap", "bhojpuri"];
-          const currentIdx = genreOrder.indexOf(currentG);
-          const targetG = genreOrder[(currentIdx + 1) % genreOrder.length];
-          if (!confirm(`Change genre of "${song.title}" from ${currentG.toUpperCase()} to ${targetG.toUpperCase()}?`)) return;
-
+    // 1. Load from all 6 static genre JSON catalogues
+    await Promise.all(
+      Object.entries(GENRE_JSON_FILES).map(async ([genreKey, path]) => {
+        try {
+          let data = null;
           try {
-            await updateDoc(doc(db, "songs", songId), { genre: targetG });
-            try {
-              await deleteSongFromGitHub(currentG, song.link, song.title);
-              await commitSongsToGitHub(targetG, [{ ...song, genre: targetG }]);
-            } catch {}
-            showAlert(`✅ Changed "${song.title}" genre to ${targetG.toUpperCase()}`);
-            loadCommunityUploads();
-          } catch (err) {
-            showAlert("Error updating genre: " + err.message, true);
+            const cached = localStorage.getItem(`musicsaura_json_cache_${genreKey}`);
+            if (cached) data = JSON.parse(cached);
+          } catch {}
+
+          if (!data || !Array.isArray(data) || data.length === 0) {
+            const res = await fetch(`${path}?v=${Date.now()}`);
+            if (res.ok) data = await res.json();
           }
-        });
-      }
 
-      // ── Delete Song Action ──
-      const delBtn = item.querySelector(".btn-delete-song");
-      if (delBtn) {
-        delBtn.addEventListener("click", async () => {
-          if (!canManageSong(song)) {
-            showAlert("🔒 Permission Notice: Only the creator of this upload can delete it.", true);
-            return;
-          }
-          if (!confirm(`Are you sure you want to permanently delete "${song.title}" from MusicsAura?`)) return;
+          if (Array.isArray(data)) {
+            data.forEach((s, idx) => {
+              if (!s || !s.link) return;
+              const linkKey = normalizeUrlKey(s.link);
+              const titleKey = normalizeKey(s.title);
+              if (deletedLinks.has(linkKey) || deletedTitles.has(titleKey)) return;
 
-          try {
-            // 1. Delete this specific doc from Firestore 'songs'
-            await deleteDoc(doc(db, "songs", songId));
-
-            // 2. Delete any matching duplicate documents in Firestore with the same link
-            if (song.link) {
-              try {
-                const qSnap = await getDocs(query(collection(db, "songs"), where("link", "==", song.link)));
-                const deletes = [];
-                qSnap.forEach((d) => {
-                  if (d.id !== songId) deletes.push(deleteDoc(doc(db, "songs", d.id)));
+              const cleanGenre = (s.genre || genreKey).toLowerCase().trim();
+              const uniqueKey = linkKey || `${cleanGenre}_${titleKey}`;
+              if (!songMap.has(uniqueKey)) {
+                songMap.set(uniqueKey, {
+                  ...s,
+                  id: s.id || `json_${genreKey}_${idx}`,
+                  genre: cleanGenre,
+                  source: "catalog",
+                  title: s.title || "Untitled",
+                  artist: s.artist || "Various Artists",
+                  thumbnail: s.thumbnail || "assets/logo.png"
                 });
-                if (deletes.length > 0) await Promise.all(deletes);
-              } catch {}
-            }
-
-            // 3. Add to 'deleted_songs' blacklist so it remains removed everywhere
-            try {
-              await addDoc(collection(db, "deleted_songs"), {
-                link: song.link || "",
-                title: song.title || "Deleted Song",
-                genre: song.genre || "",
-                songId: songId || "",
-                deletedAt: serverTimestamp()
-              });
-            } catch {}
-
-            // 4. AUTO GITHUB DELETE: Remove from jsons/{genre}.json in GitHub repository
-            try {
-              await deleteSongFromGitHub(song.genre, song.link, song.title);
-            } catch {}
-
-            // 5. Invalidate and purge all local caches, storage, and cross-tab/PWA instances immediately
-            purgeDeletedSongEverywhere({ id: songId, link: song.link, title: song.title, genre: song.genre });
-
-            showAlert(`🗑️ Deleted "${song.title}" from MusicsAura, Firestore & GitHub!`);
-            loadCommunityUploads();
-          } catch (err) {
-            const isPerm = err?.code === "permission-denied" || (err?.message && err.message.toLowerCase().includes("permission"));
-            if (isPerm) {
-              showAlert("🔒 Firestore Permission Denied: Update your Firestore rules in Firebase Console to allow update & delete on songs and deleted_songs.", true);
-            } else {
-              showAlert("Could not delete track: " + (err?.message || "Unknown error"), true);
-            }
+              }
+            });
           }
-        });
-      }
+        } catch {}
+      })
+    );
 
-      frag.appendChild(item);
-    });
+    // 2. Load recent Firestore community songs
+    try {
+      const snap = await getDocs(query(collection(db, "songs"), orderBy("createdAt", "desc"), limit(300)));
+      snap.forEach((docSnap) => {
+        const s = docSnap.data();
+        if (!s || !s.link) return;
+        const linkKey = normalizeUrlKey(s.link);
+        const titleKey = normalizeKey(s.title);
+        if (deletedLinks.has(linkKey) || deletedTitles.has(titleKey)) return;
 
-    contribList.replaceChildren(frag);
+        const cleanGenre = (s.genre || "hindi").toLowerCase().trim();
+        const uniqueKey = linkKey || `${cleanGenre}_${titleKey}`;
+
+        if (songMap.has(uniqueKey)) {
+          const existing = songMap.get(uniqueKey);
+          existing.firestoreId = docSnap.id;
+          existing.id = docSnap.id;
+          if (s.uploadedBy) existing.uploadedBy = s.uploadedBy;
+        } else {
+          songMap.set(uniqueKey, {
+            ...s,
+            id: docSnap.id,
+            firestoreId: docSnap.id,
+            genre: cleanGenre,
+            source: "firestore",
+            title: s.title || "Untitled",
+            artist: s.artist || "Various Artists",
+            thumbnail: s.thumbnail || "assets/logo.png"
+          });
+        }
+      });
+    } catch {}
+
+    // 3. Load local uploads buffer
+    try {
+      const local = JSON.parse(localStorage.getItem("musicsaura_local_uploads") || "[]");
+      local.forEach((s) => {
+        if (!s || !s.link) return;
+        const linkKey = normalizeUrlKey(s.link);
+        const titleKey = normalizeKey(s.title);
+        if (deletedLinks.has(linkKey) || deletedTitles.has(titleKey)) return;
+
+        const uniqueKey = linkKey || titleKey;
+        if (!songMap.has(uniqueKey)) {
+          songMap.set(uniqueKey, {
+            ...s,
+            genre: (s.genre || "hindi").toLowerCase().trim(),
+            source: "local"
+          });
+        }
+      });
+    } catch {}
+
+    masterAllSongs = Array.from(songMap.values());
+    applyLibraryFilters();
 
   } catch (err) {
-    console.error("Community loads:", err);
-    if (contribList) contribList.innerHTML = `<div class="state-msg">Could not load list: ${err.message}</div>`;
+    if (masterSongsList) {
+      masterSongsList.innerHTML = `<div class="state-msg" style="color:var(--rose)">Could not load songs: ${escapeHtml(err.message)}</div>`;
+    }
+  } finally {
+    isLibraryLoading = false;
   }
 }
 
-// Bind Load More button
-const btnLoadMoreCommunity = document.getElementById("btn-load-more-community");
-if (btnLoadMoreCommunity) {
-  btnLoadMoreCommunity.addEventListener("click", () => {
-    communityLimit += 15;
-    loadCommunityUploads();
+function applyLibraryFilters() {
+  const queryTerm = (currentSearchQuery || "").toLowerCase().trim();
+
+  masterFilteredSongs = masterAllSongs.filter((song) => {
+    // 1. Genre filter
+    if (currentFilterGenre !== "all") {
+      if (currentFilterGenre === "community") {
+        if (song.source !== "firestore" && song.source !== "local") return false;
+      } else {
+        if ((song.genre || "").toLowerCase() !== currentFilterGenre) return false;
+      }
+    }
+
+    // 2. Search query filter
+    if (queryTerm) {
+      const titleMatch = (song.title || "").toLowerCase().includes(queryTerm);
+      const artistMatch = (song.artist || "").toLowerCase().includes(queryTerm);
+      const genreMatch = (song.genre || "").toLowerCase().includes(queryTerm);
+      return titleMatch || artistMatch || genreMatch;
+    }
+
+    return true;
+  });
+
+  if (masterSongCount) {
+    if (currentSearchQuery || currentFilterGenre !== "all") {
+      masterSongCount.textContent = `${masterFilteredSongs.length} of ${masterAllSongs.length} songs`;
+    } else {
+      masterSongCount.textContent = `${masterAllSongs.length} songs available`;
+    }
+  }
+
+  renderMasterSongList();
+}
+
+function renderMasterSongList() {
+  if (!masterSongsList) return;
+  const loadMoreWrap = document.getElementById("master-load-more-wrap");
+
+  if (masterFilteredSongs.length === 0) {
+    masterSongsList.innerHTML = `<div class="state-msg">No songs found matching "${escapeHtml(currentSearchQuery || currentFilterGenre)}".</div>`;
+    if (loadMoreWrap) loadMoreWrap.style.display = "none";
+    return;
+  }
+
+  const toRender = masterFilteredSongs.slice(0, masterDisplayLimit);
+  const frag = document.createDocumentFragment();
+
+  toRender.forEach((song) => {
+    const item = createMasterSongElement(song);
+    frag.appendChild(item);
+  });
+
+  masterSongsList.replaceChildren(frag);
+
+  if (loadMoreWrap) {
+    loadMoreWrap.style.display = masterFilteredSongs.length > masterDisplayLimit ? "block" : "none";
+  }
+}
+
+function createMasterSongElement(song) {
+  const songId = song.id || song.firestoreId || song.link;
+  const item = document.createElement("div");
+  item.className = "fav-item";
+  item.dataset.id = songId;
+
+  let thumb = song.thumbnail || "assets/logo.png";
+  const genre = (song.genre || "hindi").toLowerCase();
+
+  const genreColorMap = {
+    hindi: "var(--cyan)",
+    punjabi: "var(--gold)",
+    vibe: "var(--violet-light)",
+    haryanvi: "#10b981",
+    rap: "#f43f5e",
+    bhojpuri: "#f59e0b"
+  };
+  const genreColor = genreColorMap[genre] || "var(--cyan)";
+
+  const isCommunity = song.source === "firestore" || song.source === "local";
+  const sourceTag = isCommunity
+    ? `<span style="font-size:0.68rem;padding:2px 7px;border-radius:999px;background:rgba(34,211,238,0.12);color:var(--cyan);border:1px solid rgba(34,211,238,0.25);font-weight:600">☁️ Upload</span>`
+    : `<span style="font-size:0.68rem;padding:2px 7px;border-radius:999px;background:rgba(139,92,246,0.12);color:var(--violet-light);border:1px solid rgba(139,92,246,0.25);font-weight:600">📁 Catalogue</span>`;
+
+  item.innerHTML = `
+    <img src="${thumb}" alt="" class="fav-thumb" onerror="this.src='assets/logo.png'">
+    <div class="fav-info">
+      <div class="fav-title" title="${escapeHtml(song.title)}">${escapeHtml(song.title)}</div>
+      <div class="fav-artist" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span>${escapeHtml(song.artist || "Unknown")}</span>
+        <span>&bull;</span>
+        <span class="genre-badge" style="color:${genreColor};font-weight:700;text-transform:uppercase">${escapeHtml(genre)}</span>
+        ${sourceTag}
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+      <button class="action-btn btn-edit-song" title="Edit Metadata & Artwork" style="color:var(--cyan)">
+        <span class="material-icons" style="font-size:1.15rem">edit</span>
+      </button>
+      <button class="action-btn btn-change-genre" title="Cycle Category / Genre" style="color:var(--violet-light)">
+        <span class="material-icons" style="font-size:1.15rem">swap_horiz</span>
+      </button>
+      <a href="${song.link}" target="_blank" rel="noopener" class="action-btn" title="Stream link">
+        <span class="material-icons" style="font-size:1.15rem">open_in_new</span>
+      </a>
+      <button class="action-btn btn-delete-song" title="Delete Song Permanently" style="color:var(--rose)">
+        <span class="material-icons" style="font-size:1.15rem">delete</span>
+      </button>
+    </div>
+  `;
+
+  // ── Edit Track Action ──
+  const editBtn = item.querySelector(".btn-edit-song");
+  if (editBtn) {
+    editBtn.addEventListener("click", () => {
+      openEditModal(songId, song);
+    });
+  }
+
+  // ── Change Genre Action ──
+  const genreBtn = item.querySelector(".btn-change-genre");
+  if (genreBtn) {
+    genreBtn.addEventListener("click", async () => {
+      const currentG = (song.genre || "hindi").toLowerCase();
+      const genreOrder = ["hindi", "punjabi", "vibe", "haryanvi", "rap", "bhojpuri"];
+      const currentIdx = genreOrder.indexOf(currentG);
+      const targetG = genreOrder[(currentIdx + 1) % genreOrder.length];
+      if (!confirm(`Change genre of "${song.title}" from ${currentG.toUpperCase()} to ${targetG.toUpperCase()}?`)) return;
+
+      try {
+        if (songId && !songId.startsWith("json_")) {
+          try {
+            await updateDoc(doc(db, "songs", songId), { genre: targetG });
+          } catch {}
+        }
+        try {
+          await deleteSongFromGitHub(currentG, song.link, song.title);
+          purgeDeletedSongEverywhere({ id: songId, link: song.link, title: song.title, genre: currentG });
+          await commitSongsToGitHub(targetG, [{ ...song, genre: targetG }]);
+        } catch {}
+
+        song.genre = targetG;
+        showAlert(`✅ Changed "${song.title}" genre to ${targetG.toUpperCase()}`);
+        loadAllMasterSongs();
+      } catch (err) {
+        showAlert("Error updating genre: " + (err?.message || "Unknown error"), true);
+      }
+    });
+  }
+
+  // ── Delete Track Action ──
+  const delBtn = item.querySelector(".btn-delete-song");
+  if (delBtn) {
+    delBtn.addEventListener("click", async () => {
+      if (!confirm(`Are you sure you want to permanently delete "${song.title}" from MusicsAura?`)) return;
+
+      try {
+        // 1. Delete this specific doc from Firestore 'songs'
+        if (songId && !songId.startsWith("json_")) {
+          try {
+            await deleteDoc(doc(db, "songs", songId));
+          } catch {}
+        }
+
+        // 2. Delete duplicate docs
+        if (song.link) {
+          try {
+            const qSnap = await getDocs(query(collection(db, "songs"), where("link", "==", song.link)));
+            const deletes = [];
+            qSnap.forEach((d) => {
+              if (d.id !== songId) deletes.push(deleteDoc(doc(db, "songs", d.id)));
+            });
+            if (deletes.length > 0) await Promise.all(deletes);
+          } catch {}
+        }
+
+        // 3. Add to 'deleted_songs' blacklist so it remains removed everywhere
+        try {
+          await addDoc(collection(db, "deleted_songs"), {
+            link: song.link || "",
+            title: song.title || "Deleted Song",
+            genre: song.genre || "",
+            songId: songId || "",
+            deletedAt: serverTimestamp()
+          });
+        } catch {}
+
+        // 4. AUTO GITHUB DELETE: Remove from jsons/{genre}.json in GitHub repository
+        try {
+          await deleteSongFromGitHub(song.genre, song.link, song.title);
+        } catch {}
+
+        // 5. Invalidate and purge all local caches, storage, and cross-tab/PWA instances immediately
+        purgeDeletedSongEverywhere({ id: songId, link: song.link, title: song.title, genre: song.genre });
+
+        // Remove from memory immediately for instantaneous UI feedback
+        masterAllSongs = masterAllSongs.filter((s) => (s.id !== songId && s.link !== song.link));
+        applyLibraryFilters();
+
+        showAlert(`🗑️ Deleted "${song.title}" from MusicsAura, Firestore & GitHub!`);
+      } catch (err) {
+        const isPerm = err?.code === "permission-denied" || (err?.message && err.message.toLowerCase().includes("permission"));
+        if (isPerm) {
+          showAlert("🔒 Firestore Permission Denied: Update your Firestore rules in Firebase Console to allow update & delete on songs and deleted_songs.", true);
+        } else {
+          showAlert("Could not delete track: " + (err?.message || "Unknown error"), true);
+        }
+      }
+    });
+  }
+
+  return item;
+}
+
+// Alias for backwards compatibility
+const loadCommunityUploads = loadAllMasterSongs;
+
+// Master Search & Filter Listeners
+if (librarySearchInp) {
+  librarySearchInp.addEventListener("input", (e) => {
+    currentSearchQuery = e.target.value;
+    if (btnClearSearch) {
+      btnClearSearch.style.display = currentSearchQuery ? "flex" : "none";
+    }
+    masterDisplayLimit = 35;
+    applyLibraryFilters();
   });
 }
+
+if (btnClearSearch) {
+  btnClearSearch.addEventListener("click", () => {
+    if (librarySearchInp) librarySearchInp.value = "";
+    currentSearchQuery = "";
+    btnClearSearch.style.display = "none";
+    masterDisplayLimit = 35;
+    applyLibraryFilters();
+  });
+}
+
+if (btnRefreshLibrary) {
+  btnRefreshLibrary.addEventListener("click", () => {
+    loadAllMasterSongs();
+  });
+}
+
+const btnLoadMoreMasterActual = document.getElementById("btn-load-more-master") || document.getElementById("btn-load-more-community");
+if (btnLoadMoreMasterActual) {
+  btnLoadMoreMasterActual.addEventListener("click", () => {
+    masterDisplayLimit += 35;
+    renderMasterSongList();
+  });
+}
+
+const libraryCategoryPills = document.querySelectorAll("#library-category-pills .genre-pill");
+libraryCategoryPills.forEach((pill) => {
+  pill.addEventListener("click", () => {
+    libraryCategoryPills.forEach((p) => p.classList.remove("active"));
+    pill.classList.add("active");
+    currentFilterGenre = pill.dataset.genre || "all";
+    masterDisplayLimit = 35;
+    applyLibraryFilters();
+  });
+});
 
 // ─── EDIT MODAL CONTROLLER ─────────────────────────────────────────
 const editSongModal       = document.getElementById("edit-song-modal");
@@ -1467,15 +1654,21 @@ if (editSongForm) {
         ].filter(Boolean))
       );
 
-      // Update Firestore document
-      await updateDoc(doc(db, "songs", songId), {
-        title,
-        artist,
-        genre,
-        link,
-        thumbnail,
-        keywords
-      });
+      // Update Firestore document if doc exists
+      try {
+        if (songId && !songId.startsWith("json_")) {
+          await updateDoc(doc(db, "songs", songId), {
+            title,
+            artist,
+            genre,
+            link,
+            thumbnail,
+            keywords
+          });
+        }
+      } catch (docErr) {
+        // Document might not exist in Firestore if it was originally purely in static JSON
+      }
 
       const oldLink = activeEditingSong?.link;
       const oldGenre = (activeEditingSong?.genre || "hindi").toLowerCase();
@@ -1505,6 +1698,8 @@ if (editSongForm) {
           if (oldGenre !== genre || oldLink !== link || oldTitle !== title) {
             await deleteSongFromGitHub(oldGenre, oldLink, oldTitle);
             purgeDeletedSongEverywhere({ id: songId, link: oldLink, title: oldTitle, genre: oldGenre });
+          } else {
+            await deleteSongFromGitHub(genre, oldLink, oldTitle);
           }
           await commitSongsToGitHub(genre, [{
             title,
@@ -1516,12 +1711,40 @@ if (editSongForm) {
         }
       } catch {}
 
+      // Update local genre cache
+      try {
+        const cacheKey = `musicsaura_json_cache_${genre}`;
+        const rawCached = localStorage.getItem(cacheKey);
+        if (rawCached) {
+          const list = JSON.parse(rawCached);
+          if (Array.isArray(list)) {
+            const matchIdx = list.findIndex(s => s && (s.link === oldLink || s.title === oldTitle));
+            if (matchIdx >= 0) {
+              list[matchIdx] = { ...list[matchIdx], title, artist, genre, thumbnail, link };
+            } else {
+              list.push({ title, artist, genre, thumbnail, link });
+            }
+            localStorage.setItem(cacheKey, JSON.stringify(list));
+          }
+        }
+      } catch {}
+
       // Update duplicate registry
       registerNewSong(title, link);
 
+      // Update in-memory master catalogue and re-render
+      const inMemoryMatch = masterAllSongs.find((s) => s.id === songId || (oldLink && s.link === oldLink));
+      if (inMemoryMatch) {
+        inMemoryMatch.title = title;
+        inMemoryMatch.artist = artist;
+        inMemoryMatch.genre = genre;
+        inMemoryMatch.thumbnail = thumbnail;
+        inMemoryMatch.link = link;
+      }
+      applyLibraryFilters();
+
       showAlert(`🎉 Updated "${title}" details, audio link & artwork and synced to GitHub!`);
       closeEditModal();
-      loadCommunityUploads();
 
     } catch (err) {
       showAlert("Error updating song: " + (err?.message || "Unknown error"), true);

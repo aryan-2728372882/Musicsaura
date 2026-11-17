@@ -280,19 +280,59 @@
       </div>
     </section>
 
-    <!-- RECENTLY CONTRIBUTED TRACKS -->
-    <section class="section-card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
-        <h3>🎉 Community Published Library</h3>
-        <span id="contrib-count" class="genre-tag">0 tracks</span>
+    <!-- MASTER MUSIC LIBRARY & SONG MANAGER (ALL SITE SONGS) -->
+    <section class="section-card" id="master-library-section" style="box-shadow:0 16px 40px rgba(0,0,0,0.5)">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.6rem;margin-bottom:1rem">
+        <div>
+          <h2 style="font-family:'Syne',sans-serif;font-size:1.3rem;font-weight:800;display:flex;align-items:center;gap:8px">
+            <span class="material-icons" style="color:var(--cyan)">library_music</span>
+            <span>Master Song Library & Manager</span>
+          </h2>
+          <p style="font-size:0.84rem;color:var(--text-secondary);margin-top:3px">
+            Search across all songs on MusicsAura to edit metadata, switch categories, or permanently delete tracks.
+          </p>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="master-song-count" class="genre-tag" style="font-weight:700">0 songs available</span>
+          <button type="button" id="btn-refresh-library" class="action-btn" title="Refresh library" style="color:var(--cyan)">
+            <span class="material-icons">refresh</span>
+          </button>
+        </div>
       </div>
-      <div id="contrib-list" style="display:flex;flex-direction:column;gap:0.5rem">
-        <div class="state-msg">Loading shared songs...</div>
+
+      <!-- SEARCH BAR & FILTER ROW -->
+      <div style="display:flex;flex-direction:column;gap:0.8rem;margin-bottom:1.2rem">
+        <div style="position:relative;display:flex;align-items:center">
+          <span class="material-icons" style="position:absolute;left:14px;color:var(--cyan);font-size:1.25rem;pointer-events:none">search</span>
+          <input type="text" id="library-search-input" class="form-input" placeholder="Search any song by title, artist, or genre..." style="padding-left:2.8rem;padding-right:2.8rem;font-size:0.92rem;border-radius:var(--radius-full);background:var(--surface-raised)">
+          <button type="button" id="btn-clear-library-search" class="action-btn" style="position:absolute;right:10px;display:none;color:var(--text-muted)" title="Clear search">
+            <span class="material-icons" style="font-size:1.15rem">close</span>
+          </button>
+        </div>
+
+        <!-- CATEGORY FILTER PILLS -->
+        <div id="library-category-pills" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch">
+          <button type="button" class="genre-pill active" data-genre="all">All Songs</button>
+          <button type="button" class="genre-pill" data-genre="hindi">Hindi</button>
+          <button type="button" class="genre-pill" data-genre="punjabi">Punjabi</button>
+          <button type="button" class="genre-pill" data-genre="vibe">Vibe / Dance</button>
+          <button type="button" class="genre-pill" data-genre="haryanvi">Haryanvi</button>
+          <button type="button" class="genre-pill" data-genre="rap">Desi Rap</button>
+          <button type="button" class="genre-pill" data-genre="bhojpuri">Bhojpuri</button>
+          <button type="button" class="genre-pill" data-genre="community">Cloud Uploads</button>
+        </div>
       </div>
-      <div id="contrib-load-more-wrap" style="display:none;text-align:center;margin-top:1rem">
-        <button type="button" id="btn-load-more-community" class="genre-pill" style="padding:0.6rem 1.5rem;font-size:0.85rem;cursor:pointer">
-          <span class="material-icons" style="font-size:1rem;vertical-align:middle;margin-right:4px">expand_more</span>
-          View More Tracks
+
+      <!-- SONG LIST CONTAINER -->
+      <div id="master-songs-list" style="display:flex;flex-direction:column;gap:0.6rem;min-height:120px">
+        <div class="state-msg"><div class="spinner"></div>Loading all songs across the site...</div>
+      </div>
+
+      <!-- LOAD MORE BUTTON -->
+      <div id="master-load-more-wrap" style="display:none;text-align:center;margin-top:1.2rem">
+        <button type="button" id="btn-load-more-master" class="genre-pill" style="padding:0.65rem 1.8rem;font-size:0.88rem;cursor:pointer">
+          <span class="material-icons" style="font-size:1.1rem;vertical-align:middle;margin-right:4px">expand_more</span>
+          Load More Songs
         </button>
       </div>
     </section>
@@ -378,7 +418,7 @@
 
   <div id="toast" class="toast"></div>
 
-  <script src="scripts/sw-manager.js?v=20261115-2330" defer></script>
-  <script type="module" src="scripts/upload.js?v=20261115-2330"></script>
+  <script src="scripts/sw-manager.js?v=20261117-2035" defer></script>
+  <script type="module" src="scripts/upload.js?v=20261117-2035"></script>
 </body>
 </html>
