@@ -1222,7 +1222,6 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
       }, 20);
     });
   }
-  }
 
   // Finalize switch
   if (thisSession === transitionSessionId && isTransitioning) {
