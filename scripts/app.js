@@ -309,7 +309,6 @@ async function processDownloadQueue() {
       }
 
       if (!blob) {
-        console.error(`[DownloadQueue] Failed to download "${song.title}" after ${maxAttempts} attempts.`);
         updateOfflineIcons(song, "not-downloaded");
         player.showToast(`❌ Failed to download "${song.title}". Please check connection.`, 4000);
         return; // will execute finally block below, clearing activeDownloads
@@ -351,7 +350,6 @@ async function processDownloadQueue() {
         player.showToast(`🎉 Saved "${song.title}"! Ready for offline listening.`);
       }
     } catch (saveErr) {
-      console.error(`[DownloadQueue] Error saving "${song.title}":`, saveErr);
       updateOfflineIcons(song, "not-downloaded");
       player.showToast(`❌ Could not save "${song.title}": ${saveErr.message}`, 3500);
     } finally {
@@ -889,12 +887,8 @@ function rebuildAllCatalogues() {
   }
 }
 
-/* ── LOAD RAW JSON FILES (INSTANT CACHE-FIRST) ── */
-async function loadRawJson(genre) {
-  const file = GENRE_FILES[genre];
-  if (!file) return [];
-
-  // 1. Instant Cache-First: Read from permanent local cache in 0ms
+/* ── LOAD RAW JSON FILES (0MS SYNCHRONOUS HYDRATION & ASYNC BACKGROUND REVALIDATION) ── */
+function hydrateGenreFromCache(genre) {
   try {
     const cached = localStorage.getItem(`musicsaura_json_cache_${genre}`);
     if (cached) {
@@ -903,33 +897,49 @@ async function loadRawJson(genre) {
         rawJsonSongs[genre] = data
           .map((s, i) => normalizeSong(s, genre, `json_${genre}_${i}`))
           .filter((s) => s && s.link && !isDeletedSong(s));
+        return rawJsonSongs[genre].length > 0;
       }
     }
   } catch {}
+  return false;
+}
 
-  // 2. Background Revalidation: Fetch fresh catalogue with fast timeout
-  if (navigator.onLine || !rawJsonSongs[genre] || !rawJsonSongs[genre].length) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2500);
-      const res = await fetch(file, { signal: controller.signal });
-      clearTimeout(timeout);
-      if (res && res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          const cleanData = data.filter((s) => s && !isDeletedSong(s));
+async function fetchAndRevalidateCatalogue(genre) {
+  const file = GENRE_FILES[genre];
+  if (!file) return [];
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1800);
+    const res = await fetch(file, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (res && res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const cleanData = data.filter((s) => s && !isDeletedSong(s));
+        const oldCached = localStorage.getItem(`musicsaura_json_cache_${genre}`);
+        const newStr = JSON.stringify(cleanData);
+        if (oldCached !== newStr) {
           try {
-            localStorage.setItem(`musicsaura_json_cache_${genre}`, JSON.stringify(cleanData));
+            localStorage.setItem(`musicsaura_json_cache_${genre}`, newStr);
           } catch {}
           rawJsonSongs[genre] = cleanData
             .map((s, i) => normalizeSong(s, genre, `json_${genre}_${i}`))
             .filter((s) => s && s.link && !isDeletedSong(s));
+          rebuildAllCatalogues();
         }
       }
-    } catch {}
-  }
-
+    }
+  } catch {}
   return rawJsonSongs[genre] || [];
+}
+
+async function loadRawJson(genre) {
+  hydrateGenreFromCache(genre);
+  if (!rawJsonSongs[genre] || !rawJsonSongs[genre].length) {
+    return await fetchAndRevalidateCatalogue(genre);
+  }
+  fetchAndRevalidateCatalogue(genre).catch(() => {});
+  return rawJsonSongs[genre];
 }
 
 /* ── ULTRA LOW-QUOTA FIRESTORE SYNCHRONIZATION WITH 30-MIN CACHE ── */
@@ -2037,49 +2047,40 @@ onAuthStateChanged(auth, (user) => {
   }
 });
 
-/* ── INITIALIZATION ── */
+/* ── INITIALIZATION (INSTANT <20MS RENDERING ONLINE/OFFLINE) ── */
 (async () => {
   try {
     setupContainerClickHandler(grid);
     setupContainerClickHandler(searchGrid);
     updateDownloadBadge();
 
-    grid.innerHTML = '<div class="state-msg"><div class="spinner"></div>Loading catalogue...</div>';
-
     // 0. Load deleted songs blacklist from localStorage in 0ms & scrub cached catalogues
     loadLocalDeletedSongs();
     scrubAllLocalCachesForDeletedSongs();
 
-    // 1. Load all 6 JSON catalogues immediately (via memory/localStorage cache in 0ms)
-    await Promise.allSettled([
-      loadRawJson("hindi"),
-      loadRawJson("punjabi"),
-      loadRawJson("haryanvi"),
-      loadRawJson("rap"),
-      loadRawJson("bhojpuri"),
-      loadRawJson("vibe")
-    ]);
+    // 1. Instant 0ms Synchronous Cache Hydration across all 6 catalogues
+    const allGenres = ["hindi", "punjabi", "haryanvi", "rap", "bhojpuri", "vibe"];
+    const missingGenres = [];
+    allGenres.forEach((g) => {
+      const ok = hydrateGenreFromCache(g);
+      if (!ok) missingGenres.push(g);
+    });
 
     // 2. Load cached community uploads in 0ms
     loadCachedFirestoreSongs();
 
-    // 3. Build initial catalogue & render IMMEDIATELY (under 50ms!)
+    // 3. Build initial catalogue & render IMMEDIATELY (under 15ms!)
     rebuildAllCatalogues();
 
-    if (!navigator.onLine) {
-      const offList = getOfflineSongs();
-      let targetGenre = DEFAULT_GENRE;
-      if (offList.length > 0) {
-        const counts = {};
-        offList.forEach((s) => {
-          const g = getSongGenre(s);
-          counts[g] = (counts[g] || 0) + 1;
-        });
-        const bestGenre = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
-        if (bestGenre && (GENRE_FILES[bestGenre] || bestGenre === "favorites")) {
-          targetGenre = bestGenre;
-        }
-      }
+    const offList = getOfflineSongs();
+    if (!navigator.onLine && offList.length > 0) {
+      const counts = {};
+      offList.forEach((s) => {
+        const g = getSongGenre(s);
+        counts[g] = (counts[g] || 0) + 1;
+      });
+      const bestGenre = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+      const targetGenre = (bestGenre && (GENRE_FILES[bestGenre] || bestGenre === "favorites")) ? bestGenre : DEFAULT_GENRE;
       selectGenre(targetGenre);
       renderGenre(targetGenre);
       player.showToast("✈️ Offline Mode: Showing downloaded songs in their sections", 3500);
@@ -2087,10 +2088,27 @@ onAuthStateChanged(auth, (user) => {
       renderGenre(DEFAULT_GENRE);
     }
 
-    // 4. In background: Fetch latest deleted songs blacklist & Firestore community uploads
+    // 4. If any genre wasn't in cache (e.g. first app open), fetch immediately in background
+    if (missingGenres.length > 0) {
+      Promise.allSettled(missingGenres.map((g) => fetchAndRevalidateCatalogue(g))).then(() => {
+        rebuildAllCatalogues();
+        if (activeGenre && missingGenres.includes(activeGenre)) {
+          renderGenre(activeGenre);
+        }
+      });
+    }
+
+    // 5. In background: Asynchronously revalidate all genres & Firestore community uploads
     if (navigator.onLine) {
-      loadDeletedSongLinks().catch(() => {});
-      subscribeToFirestoreSongs().catch(() => {});
+      setTimeout(() => {
+        allGenres.forEach((g) => {
+          if (!missingGenres.includes(g)) {
+            fetchAndRevalidateCatalogue(g).catch(() => {});
+          }
+        });
+        loadDeletedSongLinks().catch(() => {});
+        subscribeToFirestoreSongs().catch(() => {});
+      }, 400);
     }
 
   } catch {

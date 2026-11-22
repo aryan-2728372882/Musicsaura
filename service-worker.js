@@ -1,12 +1,15 @@
 // service-worker.js — MusicsAura 3.0 Offline-First PWA Engine (100% Airplane Mode Immune)
-const APP_SHELL_CACHE = "musicsaura-shell-v106";
+const APP_SHELL_CACHE = "musicsaura-shell-v107";
 const OFFLINE_PWA_STORAGE = "musicsaura-pwa-storage-v2";
 
 const PRECACHE_ASSETS = [
   "/",
   "/index.html",
+  "index.html",
   "/styles/styles.css",
+  "styles/styles.css",
   "/assets/fonts/material-icons.ttf",
+  "assets/fonts/material-icons.ttf",
   "/scripts/app.js",
   "/scripts/player.js",
   "/scripts/storage-db.js",
@@ -210,6 +213,51 @@ self.addEventListener("fetch", (event) => {
         }
 
         return (await cache.match(request)) || new Response("", { status: 404 });
+      })()
+    );
+    return;
+  }
+
+  // 2b. GOOGLE FONTS (Prevent 10-Second DNS Timeout When Offline)
+  if (url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com") {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(APP_SHELL_CACHE);
+        // If requesting material icons font:
+        if (url.href.includes("material") || url.href.includes("flUhRq6")) {
+          const cachedFont =
+            (await cache.match("/assets/fonts/material-icons.ttf")) ||
+            (await cache.match("assets/fonts/material-icons.ttf")) ||
+            (await cache.match(new URL("/assets/fonts/material-icons.ttf", self.location.origin).href));
+          if (cachedFont) {
+            const h = new Headers(cachedFont.headers);
+            h.set("Content-Type", "font/ttf");
+            h.set("Access-Control-Allow-Origin", "*");
+            return new Response(cachedFont.body, { status: 200, headers: h });
+          }
+        }
+
+        const cached = await cache.match(request);
+        if (cached) return cached;
+
+        if (navigator.onLine) {
+          try {
+            const controller = new AbortController();
+            const tid = setTimeout(() => controller.abort(), 1200);
+            const netRes = await fetch(request, { signal: controller.signal });
+            clearTimeout(tid);
+            if (netRes && netRes.ok) {
+              cache.put(request, netRes.clone());
+              return netRes;
+            }
+          } catch {}
+        }
+
+        // Return instant 0ms offline CSS response so browser never hangs 10s
+        return new Response("/* Offline Google Fonts Fallback */", {
+          status: 200,
+          headers: { "Content-Type": "text/css; charset=utf-8" }
+        });
       })()
     );
     return;

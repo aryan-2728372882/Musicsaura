@@ -555,7 +555,7 @@ function stopCushionBuffering() {
 function emitStateChange() {
   const state = player.getState();
   stateListeners.forEach((fn) => {
-    try { fn(state); } catch (e) { console.error(e); }
+    try { fn(state); } catch {}
   });
 }
 
@@ -1060,7 +1060,9 @@ function finalizeTransitionImmediately() {
 // ─── APPLE MUSIC EQUAL-POWER CROSSFADE & GAPLESS ENGINE ───────────
 // Equal-Power Sine/Cosine Curve: Constant acoustic energy: cos²(p*π/2) + sin²(p*π/2) = 1
 async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedNextIndex = null, forcedNextPlaylist = null, forcedNextGenre = null, forcedIsUserQueue = false) {
-  if (isTransitioning) return;
+  if (isTransitioning) {
+    finalizeTransitionImmediately();
+  }
 
   let targetSong = forcedNextSong;
   let targetIndex = forcedNextIndex;
@@ -1111,7 +1113,7 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
   }
 
   const durationSec = Math.max(0, fadeSec);
-  const isCrossfade = durationSec >= 1.0 && !outgoingDeck.paused;
+  const isCrossfade = durationSec >= 0.8 && !outgoingDeck.paused;
 
   // Initial volume setup:
   // If crossfading: incoming begins at 0 volume and smoothly blends in
@@ -1131,6 +1133,32 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
 
   // Apple Music Equal-Power Crossfade Animation
   if (isCrossfade) {
+    // Wait until incomingDeck has actually buffered audio frames (or max 280ms) before fading out outgoingDeck
+    await new Promise((readyResolve) => {
+      if (incomingDeck.readyState >= 2 && !incomingDeck.paused && incomingDeck.currentTime > 0) {
+        readyResolve();
+        return;
+      }
+      let resolved = false;
+      const onPlaying = () => {
+        if (!resolved) {
+          resolved = true;
+          incomingDeck.removeEventListener("playing", onPlaying);
+          readyResolve();
+        }
+      };
+      incomingDeck.addEventListener("playing", onPlaying, { once: true });
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          incomingDeck.removeEventListener("playing", onPlaying);
+          readyResolve();
+        }
+      }, 280);
+    });
+
+    if (thisSession !== transitionSessionId || !isTransitioning) return;
+
     const startTime = performance.now();
     const fadeDurationMs = durationSec * 1000;
     let switchedMetaAtMidpoint = false;
@@ -1193,6 +1221,7 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
         }
       }, 20);
     });
+  }
   }
 
   // Finalize switch
@@ -1779,9 +1808,11 @@ export const player = {
       currentIndex = index;
     }
 
-    // Only crossfade if NOT a direct user card click and already playing
-    if (!isDirectSelection && !activeDeck.paused && activeDeck.currentTime > 1.2 && crossfadeSeconds > 0 && !isTransitioning) {
-      triggerDeckTransition(Math.min(crossfadeSeconds, 3.0), song, currentIndex);
+    // Apple Music Equal-Power DJ Crossfade Transition on song selection when already playing
+    const canCrossfadeOnSelect = crossfadeSeconds > 0 && !activeDeck.paused && activeDeck.currentTime > 0.8;
+    if (canCrossfadeOnSelect) {
+      const mixDuration = Math.min(crossfadeSeconds, 2.0);
+      triggerDeckTransition(mixDuration, song, currentIndex, playlistContext);
       return;
     }
 
