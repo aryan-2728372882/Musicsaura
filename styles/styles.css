@@ -2207,3 +2207,92 @@ tr:hover td {
   text-decoration: underline;
   margin-left: 4px;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   SMART TV & ULTRA-PERFORMANCE MODE (ZERO-LAG HARDWARE PROFILES)
+   ═══════════════════════════════════════════════════════════════ */
+body.tv-mode .ambient-aura-canvas,
+@media (prefers-reduced-motion: reduce) {
+  .ambient-aura-canvas {
+    display: none !important;
+  }
+}
+
+body.tv-mode {
+  background-color: #07070e !important;
+}
+
+body.tv-mode *,
+body.tv-mode *::before,
+body.tv-mode *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+body.tv-mode .top-bar {
+  background: #090914 !important;
+  border-bottom: 1px solid rgba(138, 92, 246, 0.25) !important;
+}
+
+body.tv-mode .player-bar {
+  background: #090914 !important;
+  border-top: 2px solid var(--violet-dark) !important;
+  box-shadow: none !important;
+}
+
+body.tv-mode .hero-vibe-banner {
+  background: #111122 !important;
+  border: 1px solid rgba(138, 92, 246, 0.3) !important;
+}
+
+body.tv-mode .hero-vibe-banner::before,
+body.tv-mode .hero-artwork-glow {
+  display: none !important;
+}
+
+body.tv-mode .song-card {
+  box-shadow: none !important;
+  contain: content !important;
+  transform: none !important;
+  transition: border-color 0.1s ease, outline 0.1s ease !important;
+  background: #131322 !important;
+}
+
+body.tv-mode .song-card:hover {
+  transform: none !important;
+  border-color: var(--violet) !important;
+}
+
+body.tv-mode .song-card:focus,
+body.tv-mode .song-card:focus-visible {
+  border-color: var(--violet-light) !important;
+  outline: 3px solid var(--violet) !important;
+  outline-offset: 2px;
+  background: var(--surface-hover) !important;
+}
+
+body.tv-mode .card-img-wrap img {
+  transition: none !important;
+  transform: none !important;
+}
+
+body.tv-mode .card-play-overlay {
+  display: none !important;
+}
+
+body.tv-mode .genre-pill {
+  transition: none !important;
+}
+
+body.tv-mode .genre-pill:focus,
+body.tv-mode .genre-pill:focus-visible {
+  outline: 2px solid var(--violet-light) !important;
+}
+
+body.tv-mode .action-btn:focus,
+body.tv-mode .player-control-btn:focus,
+body.tv-mode button:focus-visible {
+  outline: 2px solid var(--cyan) !important;
+}

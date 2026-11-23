@@ -14,7 +14,7 @@
 
   <link rel="icon" href="assets/favicon.ico">
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="styles/styles.css?v=20261122-2355">
+  <link rel="stylesheet" href="styles/styles.css?v=20261123-0905">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600;700&display=swap" media="print" onload="this.media='all'" onerror="this.onerror=null;">
@@ -430,6 +430,22 @@
         </div>
       </div>
 
+      <!-- Smart TV & Ultra-Speed Mode (Zero-Lag DSP) -->
+      <div class="fx-section" style="margin-bottom:0.8rem;margin-top:0.8rem">
+        <div class="fx-section-header">
+          <span>📺 Smart TV & Zero-Lag Mode</span>
+          <strong id="tv-mode-val" style="color:var(--violet-light)">Auto</strong>
+        </div>
+        <div class="speed-btn-row" style="margin-top:0.4rem">
+          <button class="tv-mode-btn active" data-tv="auto">Auto-Detect</button>
+          <button class="tv-mode-btn" data-tv="on">Force On 🚀</button>
+          <button class="tv-mode-btn" data-tv="off">Force Off</button>
+        </div>
+        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:5px;line-height:1.4">
+          Bypasses heavy GPU blurs, enables direct native hardware streaming & remote control navigation for Smart TVs.
+        </div>
+      </div>
+
       <!-- Storage & Audio Cache Refresh -->
       <div class="fx-section" style="margin-bottom:0;margin-top:0.9rem;border-top:1px solid rgba(255,255,255,0.08);padding-top:0.75rem">
         <button id="clear-cache-btn" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:11px 16px;font-size:0.88rem;background:linear-gradient(135deg, rgba(168,85,247,0.2), rgba(6,182,212,0.2));border:1px solid rgba(6,182,212,0.4);color:#fff;cursor:pointer;border-radius:10px;font-weight:600;box-shadow:0 4px 15px rgba(6,182,212,0.15);transition:all 0.2s ease">
@@ -495,8 +511,8 @@
   <div id="toast" class="toast"></div>
 
   <!-- SCRIPTS -->
-  <script src="scripts/sw-manager.js?v=20261123-0010" defer></script>
-  <script type="module" src="scripts/player.js?v=20261123-0010"></script>
-  <script type="module" src="scripts/app.js?v=20261123-0010"></script>
+  <script src="scripts/sw-manager.js?v=20261123-0905" defer></script>
+  <script type="module" src="scripts/player.js?v=20261123-0905"></script>
+  <script type="module" src="scripts/app.js?v=20261123-0905"></script>
 </body>
 </html>

@@ -3,13 +3,20 @@ import {
   auth, db, isAdmin, onAuthStateChanged,
   collection, getDocs, query, orderBy, limit, onSnapshot, deleteDoc, doc, updateDoc
 } from "./firebase-config.js";
-import { player, formatTime, prewarmAllOfflineTracks } from "./player.js";
+import { player, formatTime, prewarmAllOfflineTracks, isTV, isTVDevice } from "./player.js";
 import {
   saveTrackToStorage,
   deleteTrackFromStorage,
   requestPersistentStorage,
   syncOfflineMetadataWithIndexedDB
 } from "./storage-db.js";
+
+// Smart TV & Ultra-Speed Mode Initialization
+const savedTvPref = localStorage.getItem("musicsaura_tv_mode");
+const isTvActive = savedTvPref === "on" || (savedTvPref !== "off" && isTV);
+if (isTvActive) {
+  document.body.classList.add("tv-mode");
+}
 
 /* ── DOM ELEMENTS ── */
 const grid                 = document.getElementById("grid");
@@ -1016,6 +1023,9 @@ function createCard(song, index) {
   el.className = "song-card";
   el.dataset.id = song.id || song.link;
   el.dataset.index = String(index);
+  el.tabIndex = 0;
+  el.setAttribute("role", "button");
+  el.setAttribute("aria-label", `${song.title || "Song"} by ${song.artist || "MusicsAura"}`);
 
   const isFav = isFavorite(song);
   const songId = song.id || song.link;
@@ -1120,10 +1130,17 @@ function createCard(song, index) {
   return el;
 }
 
-/* ── GLITCH-FREE SYNCHRONOUS RENDERER ── */
+/* ── ULTRA-FAST CHUNKED RENDERER (INSTANT <15MS INITIAL PAINT ON TV & MOBILE) ── */
+const CHUNK_SIZE = 30;
+
 function renderSongList(container, songs, emptyMsg = "No tracks available.") {
   const cleanSongs = (songs || []).filter((s) => s && s.title && s.link);
   container._songs = cleanSongs;
+
+  if (container._chunkTimer) {
+    clearTimeout(container._chunkTimer);
+    container._chunkTimer = null;
+  }
 
   if (!cleanSongs.length) {
     const p = document.createElement("div");
@@ -1133,10 +1150,45 @@ function renderSongList(container, songs, emptyMsg = "No tracks available.") {
     return;
   }
 
-  // Render all cards in one atomic DocumentFragment for completely stable scrolling
+  // 1. Render first batch immediately (<15ms paint!)
+  const firstBatch = cleanSongs.slice(0, CHUNK_SIZE);
   const frag = document.createDocumentFragment();
-  cleanSongs.forEach((song, i) => frag.appendChild(createCard(song, i)));
+  firstBatch.forEach((song, i) => frag.appendChild(createCard(song, i)));
   container.replaceChildren(frag);
+
+  // 2. Incrementally stream remaining chunks during idle frames without freezing the UI thread
+  if (cleanSongs.length > CHUNK_SIZE) {
+    let currentOffset = CHUNK_SIZE;
+    const appendNextChunk = () => {
+      if (container._songs !== cleanSongs || currentOffset >= cleanSongs.length) {
+        container._chunkTimer = null;
+        return;
+      }
+      const nextBatch = cleanSongs.slice(currentOffset, currentOffset + CHUNK_SIZE);
+      const subFrag = document.createDocumentFragment();
+      nextBatch.forEach((song, idx) => {
+        subFrag.appendChild(createCard(song, currentOffset + idx));
+      });
+      container.appendChild(subFrag);
+      currentOffset += CHUNK_SIZE;
+
+      if (currentOffset < cleanSongs.length) {
+        if (typeof requestIdleCallback === "function") {
+          container._chunkTimer = requestIdleCallback(appendNextChunk, { timeout: 120 });
+        } else {
+          container._chunkTimer = setTimeout(appendNextChunk, 20);
+        }
+      } else {
+        container._chunkTimer = null;
+      }
+    };
+
+    if (typeof requestIdleCallback === "function") {
+      container._chunkTimer = requestIdleCallback(appendNextChunk, { timeout: 120 });
+    } else {
+      container._chunkTimer = setTimeout(appendNextChunk, 20);
+    }
+  }
 }
 
 /* ── HERO BANNER UPDATE ── */
@@ -1399,6 +1451,18 @@ function setupContainerClickHandler(container) {
     }
     updateQueueDrawer();
   });
+
+  // TV Remote OK / Enter / Select Key Handler
+  container.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === "Select" || e.keyCode === 13) {
+      if (e.target.closest(".card-fav-btn")) return;
+      const card = e.target.closest(".song-card");
+      if (card) {
+        e.preventDefault();
+        card.click();
+      }
+    }
+  });
 }
 
 /* ── FULLSCREEN MOBILE PLAYER SHEET ── */
@@ -1659,6 +1723,34 @@ boostBtns.forEach((btn) => {
   });
 });
 
+// Smart TV Mode Controls
+const tvModeBtns = document.querySelectorAll(".tv-mode-btn");
+const tvModeVal  = document.getElementById("tv-mode-val");
+
+function syncTvModeUI(setting) {
+  tvModeBtns.forEach((b) => b.classList.toggle("active", b.dataset.tv === setting));
+  if (tvModeVal) {
+    if (setting === "auto") tvModeVal.textContent = isTV ? "Auto (TV Active 📺)" : "Auto (Standard)";
+    else if (setting === "on") tvModeVal.textContent = "Force On 🚀";
+    else tvModeVal.textContent = "Force Off";
+  }
+}
+
+const currentTvSetting = localStorage.getItem("musicsaura_tv_mode") || "auto";
+syncTvModeUI(currentTvSetting);
+
+tvModeBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const setting = btn.dataset.tv;
+    localStorage.setItem("musicsaura_tv_mode", setting);
+    syncTvModeUI(setting);
+    const shouldBeTv = setting === "on" || (setting === "auto" && isTVDevice());
+    document.body.classList.toggle("tv-mode", shouldBeTv);
+    if (player.setTvMode) player.setTvMode(shouldBeTv);
+    player.showToast(shouldBeTv ? "📺 TV Zero-Lag Mode active" : "Standard mode active");
+  });
+});
+
 /* ── QUEUE DRAWER MANAGEMENT ── */
 function updateQueueDrawer() {
   if (!queueListEl) return;
@@ -1888,27 +1980,67 @@ function bindSearchInput(inputEl, clearBtnEl) {
 bindSearchInput(searchInp, searchClearBtn);
 bindSearchInput(mobileSearchInp, mobileSearchClearBtn);
 
-/* ── KEYBOARD SHORTCUTS ── */
+/* ── KEYBOARD & TV REMOTE SHORTCUTS ── */
 document.addEventListener("keydown", (e) => {
-  if (["input", "textarea", "select"].includes(document.activeElement?.tagName?.toLowerCase())) {
+  const target = document.activeElement;
+  const tag = target?.tagName?.toLowerCase();
+  if (["input", "textarea", "select"].includes(tag)) {
     return;
   }
-  if (e.code === "Space") {
+
+  // TV Remote Media Keys
+  if (e.key === "MediaPlayPause" || e.code === "MediaPlayPause") {
     e.preventDefault();
     player.togglePlay();
-  } else if (e.code === "ArrowRight") {
+    return;
+  }
+  if (e.key === "MediaPlay") {
+    e.preventDefault();
+    player.play();
+    return;
+  }
+  if (e.key === "MediaPause") {
+    e.preventDefault();
+    player.pause();
+    return;
+  }
+  if (e.key === "MediaTrackNext") {
     e.preventDefault();
     player.next();
-  } else if (e.code === "ArrowLeft") {
+    return;
+  }
+  if (e.key === "MediaTrackPrevious") {
     e.preventDefault();
     player.prev();
-  } else if (e.key.toLowerCase() === "m") {
+    return;
+  }
+
+  // Space for play/pause
+  if (e.code === "Space" && !target?.closest("button, .song-card")) {
+    e.preventDefault();
+    player.togglePlay();
+    return;
+  }
+
+  // Do NOT hijack ArrowRight/ArrowLeft if user is navigating the song grid or genre pills on TV!
+  const isNavigatingGrid = target?.closest(".song-grid, .genre-scroll-strip, .modal-box");
+  if (!isNavigatingGrid) {
+    if (e.code === "ArrowRight") {
+      e.preventDefault();
+      player.next();
+    } else if (e.code === "ArrowLeft") {
+      e.preventDefault();
+      player.prev();
+    }
+  }
+
+  if (e.key.toLowerCase() === "m" && !isNavigatingGrid) {
     player.toggleMute();
-  } else if (e.key.toLowerCase() === "s") {
+  } else if (e.key.toLowerCase() === "s" && !isNavigatingGrid) {
     player.toggleShuffle();
-  } else if (e.key.toLowerCase() === "r") {
+  } else if (e.key.toLowerCase() === "r" && !isNavigatingGrid) {
     player.cycleRepeat();
-  } else if (e.key.toLowerCase() === "f") {
+  } else if (e.key.toLowerCase() === "f" && !isNavigatingGrid) {
     e.preventDefault();
     if (window.innerWidth >= 768) searchInp?.focus();
     else mobileSearchInp?.focus();

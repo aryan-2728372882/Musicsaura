@@ -12,21 +12,44 @@ import { getTrackBlobFromStorage, saveTrackToStorage, getAllPersistedTracks } fr
 // Silent 1-sample 44.1kHz mono WAV (44 bytes) to pre-unlock both media channels on mobile browsers
 const SILENT_AUDIO_WAV = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
+export function isTVDevice() {
+  if (typeof navigator === "undefined") return false;
+  const ua = (navigator.userAgent || "").toLowerCase();
+  if (/smart-tv|smarttv|googletv|appletv|hbbtv|pov_tv|netcast|viera|bravia|tizen|webos|android tv|crkey|aft[sbm]|firetv|roku|silk|boxee|kylo|mi tv|mitv|hisense|vidaa/i.test(ua)) {
+    return true;
+  }
+  if (typeof window !== "undefined" && window.screen) {
+    const isLarge = window.screen.width >= 1280 && window.screen.height >= 720;
+    const noTouch = !("ontouchstart" in window) && (navigator.maxTouchPoints === 0 || navigator.maxTouchPoints === undefined);
+    const isTVPlatform = /linux|android|crkey/i.test(ua) && !/windows|macintosh|iphone|ipad/i.test(ua);
+    if (isLarge && noTouch && isTVPlatform) {
+      return true;
+    }
+  }
+  if (typeof localStorage !== "undefined" && localStorage.getItem("musicsaura_tv_mode") === "true") {
+    return true;
+  }
+  return false;
+}
+
+export let isTV = isTVDevice();
+
 const deckA = new Audio();
 const deckB = new Audio();
 
+deckA.preload = "auto";
+deckB.preload = isTV ? "none" : "auto";
 [deckA, deckB].forEach((d) => {
-  d.preload = "auto";
   d.setAttribute("playsinline", "");
   d.setAttribute("webkit-playsinline", "");
 });
 
 // Resilient CORS Audio Loader: Sets crossOrigin="anonymous" for Web Audio Equalizer & Volume Booster,
-// while skipping crossOrigin for local/blob URLs to prevent browser security mismatches.
+// while skipping crossOrigin for local/blob URLs and Smart TVs to prevent browser security mismatches & 206 stalls.
 function prepareDeckSource(deck, src) {
   if (!src) return;
   const isLocalOrBlob = src.startsWith("blob:") || src.startsWith("data:") || src.startsWith(location.origin);
-  if (isLocalOrBlob) {
+  if (isLocalOrBlob || isTV) {
     if (deck.hasAttribute("crossOrigin") || deck.crossOrigin) {
       deck.removeAttribute("crossOrigin");
       deck.crossOrigin = null;
@@ -202,6 +225,7 @@ let sourceA = null;
 let sourceB = null;
 
 function connectDecksToAudioContext() {
+  if (isTV) return; // Smart TVs: bypass Web Audio graph for direct hardware DSP decoding
   if (!audioCtx) initAudioContext();
   if (!audioCtx || !subBassFilter) return;
 
@@ -338,6 +362,7 @@ function applyPresetGains(presetName) {
 let bothDecksUnlocked = false;
 
 async function unlockBothDecks() {
+  if (isTV) return;
   await unlockAudioContext();
   if (bothDecksUnlocked) return;
   bothDecksUnlocked = true;
@@ -901,7 +926,7 @@ let standbyIndex = -1;
 let standbyIsUserQueue = false;
 
 async function armStandbyDeck() {
-  if (isTransitioning) return;
+  if (isTV || isTransitioning) return;
   const candidate = getNextTrackCandidate();
   if (!candidate || !candidate.song) {
     standbySong = null;
@@ -1060,6 +1085,17 @@ function finalizeTransitionImmediately() {
 // ─── APPLE MUSIC EQUAL-POWER CROSSFADE & GAPLESS ENGINE ───────────
 // Equal-Power Sine/Cosine Curve: Constant acoustic energy: cos²(p*π/2) + sin²(p*π/2) = 1
 async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedNextIndex = null, forcedNextPlaylist = null, forcedNextGenre = null, forcedIsUserQueue = false) {
+  if (isTV) {
+    // Smart TV Single-Decoder Architecture: Direct track swap without concurrent dual-stream contention
+    const target = forcedNextSong || getNextTrackCandidate()?.song;
+    if (!target) {
+      player.pause();
+      return;
+    }
+    player.playSong(target, forcedNextPlaylist, forcedNextIndex);
+    return;
+  }
+
   if (isTransitioning) {
     finalizeTransitionImmediately();
   }
@@ -1808,7 +1844,7 @@ export const player = {
     }
 
     // Apple Music Equal-Power DJ Crossfade Transition on song selection when already playing
-    const canCrossfadeOnSelect = crossfadeSeconds > 0 && !activeDeck.paused && activeDeck.currentTime > 0.8;
+    const canCrossfadeOnSelect = !isTV && crossfadeSeconds > 0 && !activeDeck.paused && activeDeck.currentTime > 0.8;
     if (canCrossfadeOnSelect) {
       const mixDuration = Math.min(crossfadeSeconds, 2.0);
       triggerDeckTransition(mixDuration, song, currentIndex, playlistContext);
@@ -2220,6 +2256,21 @@ export const player = {
 
   onSectionChange(fn) {
     onSectionChangeHandler = typeof fn === "function" ? fn : null;
+  },
+
+  setTvMode(enabled) {
+    isTV = !!enabled;
+    if (isTV) {
+      deckA.removeAttribute("crossOrigin");
+      deckA.crossOrigin = null;
+      deckB.removeAttribute("crossOrigin");
+      deckB.crossOrigin = null;
+      deckB.preload = "none";
+    }
+  },
+
+  isTVMode() {
+    return isTV;
   },
 
   unlockBothDecks
