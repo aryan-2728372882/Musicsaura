@@ -453,32 +453,54 @@ function releaseWakeLock() {
 }
 
 // ─── MEDIA SESSION API (SPOTIFY-GRADE LOCKSCREEN & NOTIFICATIONS) ──
-function initMediaSession() {
+let lastPositionStateSyncAt = 0;
+
+function safeSetMediaAction(action, handler) {
+  try {
+    navigator.mediaSession.setActionHandler(action, handler);
+  } catch {}
+}
+
+function registerMediaSessionActions() {
   if (!("mediaSession" in navigator)) return;
 
-  navigator.mediaSession.setActionHandler("play", () => {
+  safeSetMediaAction("play", () => {
     if (wasInterruptedBySystem || needsSinkResetAfterCall || routeChangedDuringInterruption) {
       resumeAfterInterruption();
     } else {
       player.play();
     }
   });
-  navigator.mediaSession.setActionHandler("pause", () => player.pause());
-  navigator.mediaSession.setActionHandler("previoustrack", () => player.prev());
-  navigator.mediaSession.setActionHandler("nexttrack", () => player.next());
+  safeSetMediaAction("pause", () => player.pause());
+  safeSetMediaAction("previoustrack", () => player.prev());
+  safeSetMediaAction("nexttrack", () => player.next());
 
-  try {
-    navigator.mediaSession.setActionHandler("seekto", (d) => {
-      if (d.seekTime !== undefined && d.seekTime !== null) player.seek(d.seekTime);
-    });
-    navigator.mediaSession.setActionHandler("seekforward", () => player.seek((audio.currentTime || 0) + 10));
-    navigator.mediaSession.setActionHandler("seekbackward", () => player.seek((audio.currentTime || 0) - 10));
-    navigator.mediaSession.setActionHandler("stop", () => player.pause());
-  } catch {}
+  // Always register seekto independently so Android SystemUI displays the lockscreen seek bar
+  safeSetMediaAction("seekto", (d) => {
+    if (!d || d.seekTime === undefined || d.seekTime === null) return;
+    if (d.fastSeek && typeof activeDeck.fastSeek === "function") {
+      try { activeDeck.fastSeek(d.seekTime); } catch {}
+    }
+    player.seek(d.seekTime);
+  });
+  safeSetMediaAction("seekbackward", (d) => {
+    const offset = (d && Number.isFinite(d.seekOffset)) ? d.seekOffset : 10;
+    player.seek((activeDeck.currentTime || 0) - offset);
+  });
+  safeSetMediaAction("seekforward", (d) => {
+    const offset = (d && Number.isFinite(d.seekOffset)) ? d.seekOffset : 10;
+    player.seek((activeDeck.currentTime || 0) + offset);
+  });
+}
+
+function initMediaSession() {
+  registerMediaSessionActions();
 }
 
 function updateMediaSession(song) {
   if (!("mediaSession" in navigator) || !song) return;
+
+  registerMediaSessionActions();
 
   const artworkUrl = toAbsoluteUrl(song.thumbnail);
   const artworkList = [
@@ -499,20 +521,29 @@ function updateMediaSession(song) {
     });
   } catch {}
 
-  navigator.mediaSession.playbackState = !activeDeck.paused ? "playing" : "paused";
-  updatePositionState();
+  navigator.mediaSession.playbackState = (!activeDeck.paused && !userPaused && !wasInterruptedBySystem) ? "playing" : "paused";
+  updatePositionState(true);
 }
 
-function updatePositionState() {
+function updatePositionState(force = false) {
   if (!("mediaSession" in navigator) || !("setPositionState" in navigator.mediaSession)) return;
+  const now = Date.now();
+  if (!force && now - lastPositionStateSyncAt < 5000) return;
+
+  const dur = activeDeck?.duration;
+  if (!Number.isFinite(dur) || dur <= 0) return;
+
+  const rawPos = Number.isFinite(activeDeck?.currentTime) ? activeDeck.currentTime : 0;
+  const pos = clamp(rawPos, 0, dur);
+  const rate = (Number.isFinite(activeDeck?.playbackRate) && activeDeck.playbackRate > 0) ? activeDeck.playbackRate : 1;
+
   try {
-    if (Number.isFinite(activeDeck.duration) && activeDeck.duration > 0) {
-      navigator.mediaSession.setPositionState({
-        duration: activeDeck.duration,
-        playbackRate: activeDeck.playbackRate || 1,
-        position: clamp(activeDeck.currentTime, 0, activeDeck.duration)
-      });
-    }
+    navigator.mediaSession.setPositionState({
+      duration: dur,
+      playbackRate: rate,
+      position: pos
+    });
+    lastPositionStateSyncAt = now;
   } catch {}
 }
 
@@ -1550,6 +1581,24 @@ function bindDeckEvents(deck) {
     }
   });
 
+  deck.addEventListener("loadedmetadata", () => {
+    if (deck._disposed || deck !== activeDeck) return;
+    updateProgress();
+    if (currentSong) updateMediaSession(currentSong);
+    else updatePositionState(true);
+  });
+
+  deck.addEventListener("durationchange", () => {
+    if (deck._disposed || deck !== activeDeck) return;
+    updateProgress();
+    updatePositionState(true);
+  });
+
+  deck.addEventListener("ratechange", () => {
+    if (deck._disposed || deck !== activeDeck) return;
+    updatePositionState(true);
+  });
+
   deck.addEventListener("waiting", () => {
     if (deck._disposed) return;
     if (deck === activeDeck && !wasInterruptedBySystem && !userPaused) {
@@ -1617,6 +1666,7 @@ function bindDeckEvents(deck) {
       playSessionStart = Date.now();
       acquireWakeLock();
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
+      updatePositionState(true);
       updateUI();
 
       // If Android OS auto-resumed via AUDIOFOCUS_GAIN after a call/BT route change,
@@ -1646,6 +1696,7 @@ function bindDeckEvents(deck) {
       clearStallWatchdog();
       capturePlaySeconds();
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
+      updatePositionState(true);
       updateUI();
       if (userPaused) releaseWakeLock();
     }
@@ -1663,6 +1714,7 @@ function bindDeckEvents(deck) {
     if (deck._disposed) return;
     if (deck === activeDeck) {
       isBuffering = false;
+      updatePositionState(true);
       updateUI();
       if (!userPaused && !wasInterruptedBySystem && deck.paused && isStartingPlayback && !isRebuildingPipeline) {
         deck.play().catch(() => {});
@@ -1683,7 +1735,7 @@ function bindDeckEvents(deck) {
   deck.addEventListener("timeupdate", () => {
     if (deck._disposed || deck !== activeDeck) return;
     updateProgress();
-    updatePositionState();
+    updatePositionState(false);
 
     if (crossfadeSeconds === -1 || wasInterruptedBySystem || userPaused) {
       // Crossfade/gapless disabled or playback interrupted/paused — do not pre-arm or transition
@@ -2281,6 +2333,7 @@ export const player = {
     if (activeDeck.currentTime > 3.5) {
       activeDeck.currentTime = 0;
       updateProgress();
+      updatePositionState(true);
       return;
     }
     if (!playlist.length) return;
@@ -2293,7 +2346,7 @@ export const player = {
     cancelAnyTransition();
     activeDeck.volume = masterVolume;
 
-    const wasPlaying = !activeDeck.paused && !userPaused;
+    const wasPlaying = !activeDeck.paused && !userPaused && !wasInterruptedBySystem;
     const clamped = clamp(seconds, 0, activeDeck.duration);
 
     isBuffering = true;
@@ -2301,9 +2354,9 @@ export const player = {
 
     activeDeck.currentTime = clamped;
     updateProgress();
-    updatePositionState();
+    updatePositionState(true);
 
-    if (wasPlaying || !userPaused) {
+    if ((wasPlaying || !userPaused) && !wasInterruptedBySystem) {
       userPaused = false;
       const playPromise = activeDeck.play();
       if (playPromise !== undefined) {
@@ -2607,7 +2660,9 @@ document.addEventListener("visibilitychange", () => {
       finalizeTransitionImmediately();
     }
     if (!activeDeck.paused && "mediaSession" in navigator) {
+      if (currentSong) updateMediaSession(currentSong);
       navigator.mediaSession.playbackState = "playing";
+      updatePositionState(true);
     }
   } else {
     // When returning to foreground, update UI state cleanly
