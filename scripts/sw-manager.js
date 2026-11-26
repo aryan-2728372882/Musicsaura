@@ -11,7 +11,7 @@
 
   if (!("serviceWorker" in navigator) || !isSecureContext) return;
 
-  const SW_URL = "/service-worker.js?build=109";
+  const SW_URL = "/service-worker.js?build=110";
 
   window.addEventListener("load", async () => {
     try {

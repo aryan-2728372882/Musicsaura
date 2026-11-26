@@ -34,15 +34,32 @@ export function isTVDevice() {
 
 export let isTV = isTVDevice();
 
-const deckA = new Audio();
-const deckB = new Audio();
+if (typeof navigator !== "undefined" && "audioSession" in navigator) {
+  try {
+    navigator.audioSession.type = "playback";
+  } catch {}
+}
 
-deckA.preload = "auto";
-deckB.preload = isTV ? "none" : "auto";
-[deckA, deckB].forEach((d) => {
+function createAudioElement(preloadMode = "auto") {
+  const d = new Audio();
+  d.preload = preloadMode;
   d.setAttribute("playsinline", "");
   d.setAttribute("webkit-playsinline", "");
-});
+  return d;
+}
+
+function disposeAudioElement(d) {
+  if (!d) return;
+  d._disposed = true;
+  try {
+    d.pause();
+    d.removeAttribute("src");
+    d.load();
+  } catch {}
+}
+
+let deckA = createAudioElement("auto");
+let deckB = createAudioElement(isTV ? "none" : "auto");
 
 // Resilient CORS Audio Loader: Sets crossOrigin="anonymous" for Web Audio Equalizer & Volume Booster,
 // while skipping crossOrigin for local/blob URLs and Smart TVs to prevent browser security mismatches & 206 stalls.
@@ -220,12 +237,44 @@ function toAbsoluteUrl(url) {
 
 }
 
-// ─── EQUALIZER & AUDIO CONTEXT ─────────────────────────────────────
+// ─── EQUALIZER & AUDIO CONTEXT (LAZY DSP + ZERO-SILENCE RECOVERY) ───
 let sourceA = null;
 let sourceB = null;
+let customEqActive = false;
+let customEqGains = { subBass: 0, bass: 0, mid: 0, presence: 0, treble: 0 };
+
+function isDspActive() {
+  if (isTV) return false;
+  if (volumeBoostPercent > 100) return true;
+  if (customEqActive) return true;
+  try {
+    const preset = (localStorage.getItem(EQ_PRESET_KEY) || "flat").toLowerCase();
+    if (preset !== "flat") return true;
+  } catch {}
+  return false;
+}
+
+function teardownWebAudio() {
+  if (audioCtx) {
+    const oldCtx = audioCtx;
+    audioCtx = null;
+    try { oldCtx.onstatechange = null; } catch {}
+    try { oldCtx.close().catch(() => {}); } catch {}
+  }
+  sourceA = null;
+  sourceB = null;
+  subBassFilter = null;
+  bassFilter = null;
+  midFilter = null;
+  presenceFilter = null;
+  trebleFilter = null;
+  boostGainNode = null;
+  peakLimiterNode = null;
+  analyserNode = null;
+}
 
 function connectDecksToAudioContext() {
-  if (isTV) return; // Smart TVs: bypass Web Audio graph for direct hardware DSP decoding
+  if (isTV || !isDspActive()) return; // Native hardware audio pipeline unless user enables EQ/Boost DSP
   if (!audioCtx) initAudioContext();
   if (!audioCtx || !subBassFilter) return;
 
@@ -304,28 +353,27 @@ function initAudioContext() {
     // Connect both physical decks directly to the equalizer filter chain
     connectDecksToAudioContext();
 
-    try {
-      const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
-      applyPresetGains(savedPreset);
-    } catch {}
-
-
+    if (customEqActive) {
+      subBassFilter.gain.value  = clamp(customEqGains.subBass, -15, 15);
+      bassFilter.gain.value     = clamp(customEqGains.bass, -15, 15);
+      midFilter.gain.value      = clamp(customEqGains.mid, -15, 15);
+      presenceFilter.gain.value = clamp(customEqGains.presence, -15, 15);
+      trebleFilter.gain.value   = clamp(customEqGains.treble, -15, 15);
+    } else {
+      try {
+        const savedPreset = localStorage.getItem(EQ_PRESET_KEY) || "flat";
+        applyPresetGains(savedPreset);
+      } catch {}
+    }
 
     audioCtx.onstatechange = () => {
+      if (!audioCtx) return;
       // Immediate phone call / telephony focus loss detection:
       // When incoming or outgoing call begins, mobile OS sets AudioContext state to 'suspended' or 'interrupted'.
-      // Immediately pause activeDeck so playback does not stutter/beep into the phone call!
-      if ((audioCtx.state === "suspended" || audioCtx.state === "interrupted") && !activeDeck.paused && !userPaused && currentSong) {
-        wasInterruptedBySystem = true;
-        interruptedTrack = currentSong;
-        interruptedPosition = activeDeck.currentTime || 0;
-        interruptedTimestamp = Date.now();
-        activeDeck.pause();
-        isBuffering = false;
-        stopCushionBuffering();
-        clearStallWatchdog();
-        clearTimeout(resumeDebounceTimer);
-        updateUI();
+      if ((audioCtx.state === "suspended" || audioCtx.state === "interrupted") && !wasInterruptedBySystem && !userPaused && currentSong) {
+        if (!activeDeck.paused || isTransitioning) {
+          handleSystemInterruption(activeDeck.currentTime || 0);
+        }
       }
     };
 
@@ -362,16 +410,20 @@ function applyPresetGains(presetName) {
 let bothDecksUnlocked = false;
 
 async function unlockBothDecks() {
-  if (isTV) return;
+  if (isTV || wasInterruptedBySystem || !isDspActive()) return;
   await unlockAudioContext();
   if (bothDecksUnlocked) return;
   bothDecksUnlocked = true;
 }
 
-async function unlockAudioContext() {
+async function unlockAudioContext(forceConnect = false) {
+  if (isTV || wasInterruptedBySystem) return null;
+  if (!forceConnect && !isDspActive()) return null;
   if (!audioCtx) initAudioContext();
   if (audioCtx) {
-    connectDecksToAudioContext();
+    if (isDspActive() || forceConnect) {
+      connectDecksToAudioContext();
+    }
     if (audioCtx.state === "suspended" || audioCtx.state === "interrupted") {
       try {
         await audioCtx.resume();
@@ -405,7 +457,7 @@ function initMediaSession() {
   if (!("mediaSession" in navigator)) return;
 
   navigator.mediaSession.setActionHandler("play", () => {
-    if (wasInterruptedBySystem) {
+    if (wasInterruptedBySystem || needsSinkResetAfterCall || routeChangedDuringInterruption) {
       resumeAfterInterruption();
     } else {
       player.play();
@@ -611,18 +663,18 @@ function updateUI() {
   }
 
   if (playBtnIcon) {
-    if (isBuffering && !userPaused) {
+    if (isBuffering && !userPaused && !wasInterruptedBySystem) {
       playBtnIcon.textContent = "refresh";
       if (playBtnEl) playBtnEl.classList.add("is-buffering");
     } else {
-      playBtnIcon.textContent = (!activeDeck.paused && !userPaused) ? "pause" : "play_arrow";
+      playBtnIcon.textContent = (!activeDeck.paused && !userPaused && !wasInterruptedBySystem) ? "pause" : "play_arrow";
       if (playBtnEl) playBtnEl.classList.remove("is-buffering");
     }
   }
 
   const liveWave = document.querySelector(".live-wave-visualizer");
   if (liveWave) {
-    liveWave.classList.toggle("is-buffering", isBuffering && !userPaused);
+    liveWave.classList.toggle("is-buffering", isBuffering && !userPaused && !wasInterruptedBySystem);
   }
 
   if (repeatIcon && repeatBtnEl) {
@@ -764,9 +816,11 @@ function isSongStoredOffline(song) {
 // ─── ULTRA-SLOW NETWORK RESILIENT STALL WATCHDOG ──────────────────
 let isRecoveringStall = false;
 let streamRetryCount = 0;
+let streamRetryTimer = null;
 
 function startStallWatchdog() {
   clearTimeout(stallWatchdogTimer);
+  if (wasInterruptedBySystem || userPaused || !currentSong) return;
   stallWatchdogTimer = setTimeout(async () => {
     if (isBuffering && !activeDeck.paused && !userPaused && !wasInterruptedBySystem && currentSong && !isRecoveringStall) {
       stallCount++;
@@ -774,6 +828,7 @@ function startStallWatchdog() {
       // Check if we have an offline cached blob for this song in storage
       try {
         const offlineUrl = await getOfflineAudioBlobUrl(currentSong);
+        if (wasInterruptedBySystem || userPaused) return;
         if (offlineUrl && activeDeck.src !== offlineUrl) {
           const cur = activeDeck.currentTime || 0;
           activeDeck.src = offlineUrl;
@@ -793,6 +848,8 @@ function startStallWatchdog() {
 
 function clearStallWatchdog() {
   clearTimeout(stallWatchdogTimer);
+  clearTimeout(streamRetryTimer);
+  streamRetryTimer = null;
   stallCount = 0;
   isRecoveringStall = false;
 }
@@ -1133,7 +1190,7 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
 
   // Make sure incomingDeck has the resolved source
   const targetSrc = await resolveAudioSource(targetSong);
-  if (thisSession !== transitionSessionId) return;
+  if (thisSession !== transitionSessionId || wasInterruptedBySystem || userPaused) return;
 
   if (incomingDeck.src !== targetSrc) {
     prepareDeckSource(incomingDeck, targetSrc);
@@ -1165,7 +1222,7 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
     }
   } catch {}
 
-  if (thisSession !== transitionSessionId) return;
+  if (thisSession !== transitionSessionId || wasInterruptedBySystem || userPaused) return;
 
   // Apple Music Equal-Power Crossfade Animation
   if (isCrossfade) {
@@ -1266,19 +1323,137 @@ async function triggerDeckTransition(fadeSec = 0, forcedNextSong = null, forcedN
 }
 
 // ─── AUDIO FOCUS & BLUETOOTH / CALL INTERRUPTION RECOVERY ────────
-let wasInterruptedBySystem = false;
-let interruptedTrack       = null;
-let interruptedPosition    = 0;
-let interruptedTimestamp   = 0;
-let resumeDebounceTimer    = null;
-let isResumingFromInterruption = false;
+let wasInterruptedBySystem       = false;
+let needsSinkResetAfterCall      = false;
+let routeChangedDuringInterruption = false;
+let interruptedTrack             = null;
+let interruptedPosition          = 0;
+let interruptedTimestamp         = 0;
+let lastResumeTimestamp          = 0;
+let resumeDebounceTimer          = null;
+let rebindRouteTimer             = null;
+let isResumingFromInterruption   = false;
+let isRebuildingPipeline         = false;
+
+function handleSystemInterruption(pos = null) {
+  const capturedPos = (pos !== null && pos > 0) ? pos : (activeDeck.currentTime || interruptedPosition || 0);
+  wasInterruptedBySystem = true;
+  needsSinkResetAfterCall = true;
+  interruptedTrack = currentSong;
+  interruptedPosition = capturedPos;
+  interruptedTimestamp = Date.now();
+  isStartingPlayback = false;
+  isBuffering = false;
+  advancingTrack = false;
+
+  clearTimeout(resumeDebounceTimer);
+  clearTimeout(rebindRouteTimer);
+  clearStallWatchdog();
+  stopCushionBuffering();
+  if (endApproachingTicker) {
+    clearInterval(endApproachingTicker);
+    endApproachingTicker = null;
+  }
+  cancelAnyTransition();
+
+  try { activeDeck.pause(); } catch {}
+  try { standbyDeck.pause(); } catch {}
+  if (audioCtx && audioCtx.state === "running") {
+    try { audioCtx.suspend().catch(() => {}); } catch {}
+  }
+
+  capturePlaySeconds();
+  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
+  updateUI();
+}
+
+function rebuildDecksAndPipelineSync(targetSrc = "", resumePos = 0) {
+  isRebuildingPipeline = true;
+
+  // Destroy any wedged pre-call AudioContext sink (AAudio/OpenSL bound to stale HFP/A2DP session)
+  teardownWebAudio();
+
+  const wasActiveA = (activeDeck === deckA);
+  disposeAudioElement(deckA);
+  disposeAudioElement(deckB);
+
+  deckA = createAudioElement("auto");
+  deckB = createAudioElement(isTV ? "none" : "auto");
+  deckA.volume = masterVolume;
+  deckB.volume = masterVolume;
+  bindDeckEvents(deckA);
+  bindDeckEvents(deckB);
+
+  activeDeck = wasActiveA ? deckA : deckB;
+  standbyDeck = wasActiveA ? deckB : deckA;
+  audio = activeDeck;
+  window._musicsaura_audio = activeDeck;
+
+  standbySong = null;
+  standbyIndex = -1;
+  standbyIsUserQueue = false;
+
+  if (typeof activeDeck.setSinkId === "function") {
+    try { activeDeck.setSinkId("").catch(() => {}); } catch {}
+  }
+
+  if (isDspActive() && !isTV) {
+    initAudioContext();
+    if (audioCtx && (audioCtx.state === "suspended" || audioCtx.state === "interrupted")) {
+      try { audioCtx.resume().catch(() => {}); } catch {}
+    }
+  }
+
+  if (targetSrc) {
+    prepareDeckSource(activeDeck, targetSrc);
+    activeDeck.playbackRate = playbackRate;
+    activeDeck.volume = masterVolume;
+    if (resumePos > 0.5) {
+      activeDeck.addEventListener("loadedmetadata", () => {
+        try { activeDeck.currentTime = resumePos; } catch {}
+      }, { once: true });
+      try { activeDeck.currentTime = resumePos; } catch {}
+    }
+  }
+
+  isRebuildingPipeline = false;
+  return activeDeck;
+}
+
+function rebindPlayingAudioRoute(delayMs = 350) {
+  clearTimeout(rebindRouteTimer);
+  rebindRouteTimer = setTimeout(() => {
+    rebindRouteTimer = null;
+    if (wasInterruptedBySystem || userPaused || !currentSong || activeDeck.paused || isTransitioning) {
+      return;
+    }
+
+    const pos = activeDeck.currentTime || interruptedPosition || 0;
+    const src = activeDeck.src || resolveAudioSourceSync(currentSong);
+    if (!src) return;
+
+    const fresh = rebuildDecksAndPipelineSync(src, pos);
+    try {
+      const p = fresh.play();
+      if (p !== undefined) {
+        p.then(() => {
+          if (pos > 0.5 && Math.abs((fresh.currentTime || 0) - pos) > 2.5) {
+            try { fresh.currentTime = pos; } catch {}
+          }
+        }).catch(() => {});
+      }
+    } catch {}
+  }, delayMs);
+}
 
 async function recoverAudioPipeline(deck, targetTime = null) {
   const pos = targetTime !== null && targetTime > 0 ? targetTime : (deck.currentTime || 0);
   const currentSrc = deck.src;
   if (!currentSrc) return;
 
-  await unlockAudioContext();
+  if (isDspActive() && !wasInterruptedBySystem) {
+    await unlockAudioContext();
+  }
 
   try {
     deck.pause();
@@ -1291,74 +1466,84 @@ async function recoverAudioPipeline(deck, targetTime = null) {
   } catch {}
 }
 
-async function resumeAfterInterruption() {
-  if (!wasInterruptedBySystem || userPaused || !currentSong || isResumingFromInterruption) return;
+function resumeAfterInterruption() {
+  if (userPaused || !currentSong || isResumingFromInterruption) return;
+  if (!wasInterruptedBySystem && !needsSinkResetAfterCall && !routeChangedDuringInterruption) return;
   isResumingFromInterruption = true;
 
   const resumePos = interruptedPosition || activeDeck.currentTime || 0;
+  const targetSrc = activeDeck.src || resolveAudioSourceSync(currentSong);
+  const shouldRebuild = needsSinkResetAfterCall || routeChangedDuringInterruption || !!audioCtx || !!sourceA || !!sourceB || activeDeck.networkState === HTMLMediaElement.NETWORK_EMPTY || !!activeDeck.error || !activeDeck.src;
 
-  // 1. Unlock/resume Web Audio if suspended (awaits state transition so output pipeline is fully active)
-  await unlockAudioContext();
+  wasInterruptedBySystem = false;
+  needsSinkResetAfterCall = false;
+  routeChangedDuringInterruption = false;
+  lastResumeTimestamp = Date.now();
+  clearTimeout(resumeDebounceTimer);
+  clearTimeout(rebindRouteTimer);
 
-  // 2. Ensure volume is at masterVolume
-  activeDeck.volume = masterVolume;
-
-  // 3. If audio element was invalidated or in an empty network state, re-prime it
-  if (activeDeck.networkState === HTMLMediaElement.NETWORK_EMPTY || activeDeck.error || !activeDeck.src) {
-    await recoverAudioPipeline(activeDeck, resumePos);
+  let deckToPlay = activeDeck;
+  if (shouldRebuild && targetSrc) {
+    deckToPlay = rebuildDecksAndPipelineSync(targetSrc, resumePos);
+  } else {
+    deckToPlay.volume = masterVolume;
+    deckToPlay.playbackRate = playbackRate;
+    if (isDspActive()) {
+      unlockAudioContext();
+    }
   }
 
-  // 4. Attempt single immediate resume on existing buffer
-  let resumed = false;
   try {
-    const playPromise = activeDeck.play();
+    const playPromise = deckToPlay.play();
     if (playPromise !== undefined) {
-      await playPromise;
-      resumed = true;
+      playPromise.then(() => {
+        interruptedTrack = null;
+        if (resumePos > 0.5 && Math.abs((deckToPlay.currentTime || 0) - resumePos) > 2.5) {
+          try { deckToPlay.currentTime = resumePos; } catch {}
+        }
+        updateMediaSession(currentSong);
+        updateUI();
+      }).catch(() => {
+        // Stay cleanly paused if OS still holds telephony call focus — never attach full-screen tap hijacks
+        wasInterruptedBySystem = true;
+        needsSinkResetAfterCall = true;
+        isBuffering = false;
+        clearStallWatchdog();
+        updateUI();
+      });
     }
-  } catch {}
+  } catch {
+    wasInterruptedBySystem = true;
+    needsSinkResetAfterCall = true;
+    isBuffering = false;
+    clearStallWatchdog();
+  }
 
-  if (resumed) {
-    wasInterruptedBySystem = false;
-    interruptedTrack = null;
-    clearTimeout(resumeDebounceTimer);
-    updateMediaSession(currentSong);
-    updateUI();
-  } else {
-    // If automatic resumption was blocked (e.g. phone call still active or gesture required),
-    // stay silently paused and arm a single gesture listener without polling or beeping.
-    const oneTapResume = async () => {
-      document.removeEventListener("click", oneTapResume);
-      document.removeEventListener("touchend", oneTapResume);
-      if (activeDeck.paused && !userPaused && currentSong) {
-        await unlockAudioContext();
-        activeDeck.play().then(() => {
-          wasInterruptedBySystem = false;
-          interruptedTrack = null;
-          clearTimeout(resumeDebounceTimer);
-          updateMediaSession(currentSong);
-          updateUI();
-        }).catch(() => {});
+  // If song wasn't in memory blob cache sync, asynchronously upgrade if stored offline
+  if (targetSrc && !targetSrc.startsWith("blob:") && isSongStoredOffline(currentSong)) {
+    const resumingSong = currentSong;
+    getOfflineAudioBlobUrl(resumingSong).then((blobUrl) => {
+      if (blobUrl && !wasInterruptedBySystem && !userPaused && activeDeck.src !== blobUrl && (currentSong?.id || currentSong?.link) === (resumingSong.id || resumingSong.link)) {
+        const curTime = activeDeck.currentTime || resumePos || 0;
+        const wasPlaying = !activeDeck.paused;
+        prepareDeckSource(activeDeck, blobUrl);
+        if (curTime > 0.5) {
+          activeDeck.addEventListener("loadedmetadata", () => {
+            try { activeDeck.currentTime = curTime; } catch {}
+          }, { once: true });
+        }
+        if (wasPlaying) activeDeck.play().catch(() => {});
       }
-    };
-    document.addEventListener("click", oneTapResume, { once: true });
-    document.addEventListener("touchend", oneTapResume, { once: true });
+    }).catch(() => {});
   }
 
   isResumingFromInterruption = false;
 }
 
-function scheduleResumeAfterInterruption(delay = 350) {
-  if (!wasInterruptedBySystem || userPaused || !currentSong) return;
-  clearTimeout(resumeDebounceTimer);
-  resumeDebounceTimer = setTimeout(() => {
-    resumeAfterInterruption();
-  }, delay);
-}
-
 // ─── PERSISTENT DUAL-DECK AUDIO EVENT BINDINGS ─────────────────────
 function bindDeckEvents(deck) {
   deck.addEventListener("loadstart", () => {
+    if (deck._disposed) return;
     if (deck === activeDeck) {
       isBuffering = true;
       updateUI();
@@ -1366,7 +1551,8 @@ function bindDeckEvents(deck) {
   });
 
   deck.addEventListener("waiting", () => {
-    if (deck === activeDeck) {
+    if (deck._disposed) return;
+    if (deck === activeDeck && !wasInterruptedBySystem && !userPaused) {
       isBuffering = true;
       updateUI();
       startCushionBuffering(deck);
@@ -1375,7 +1561,8 @@ function bindDeckEvents(deck) {
   });
 
   deck.addEventListener("stalled", () => {
-    if (deck === activeDeck) {
+    if (deck._disposed) return;
+    if (deck === activeDeck && !wasInterruptedBySystem && !userPaused) {
       isBuffering = true;
       updateUI();
       startCushionBuffering(deck);
@@ -1384,34 +1571,43 @@ function bindDeckEvents(deck) {
   });
 
   deck.addEventListener("canplay", () => {
+    if (deck._disposed) return;
     if (deck === activeDeck) {
       clearStallWatchdog();
       const neededResume = isBuffering && !userPaused && !wasInterruptedBySystem;
       isBuffering = false;
       updateUI();
-      if (neededResume && deck.paused) {
+      if (neededResume && deck.paused && !isRebuildingPipeline) {
         deck.play().catch(() => {});
       }
     }
   });
 
   deck.addEventListener("canplaythrough", () => {
+    if (deck._disposed) return;
     if (deck === activeDeck) {
       stopCushionBuffering();
       const neededResume = isBuffering && !userPaused && !wasInterruptedBySystem;
       isBuffering = false;
       clearStallWatchdog();
       updateUI();
-      if (neededResume && deck.paused) {
+      if (neededResume && deck.paused && !isRebuildingPipeline) {
         deck.play().catch(() => {});
       }
     }
   });
 
   deck.addEventListener("playing", () => {
+    if (deck._disposed) return;
     if (deck === activeDeck) {
+      const resumedFromOSFocus = !isRebuildingPipeline && (wasInterruptedBySystem || needsSinkResetAfterCall || routeChangedDuringInterruption);
+      const shouldRebindRoute = resumedFromOSFocus && (routeChangedDuringInterruption || !!audioCtx || !!sourceA || !!sourceB);
+
       wasInterruptedBySystem = false;
+      needsSinkResetAfterCall = false;
+      routeChangedDuringInterruption = false;
       interruptedTrack = null;
+      lastResumeTimestamp = Date.now();
       clearTimeout(resumeDebounceTimer);
       advancingTrack = false;
       isBuffering = false;
@@ -1422,29 +1618,31 @@ function bindDeckEvents(deck) {
       acquireWakeLock();
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
       updateUI();
+
+      // If Android OS auto-resumed via AUDIOFOCUS_GAIN after a call/BT route change,
+      // rebind the output sink so sound plays cleanly in earbuds/speaker instead of a silent zombie sink.
+      if (shouldRebindRoute) {
+        rebindPlayingAudioRoute(350);
+      }
     }
   });
 
   deck.addEventListener("pause", () => {
-    if (deck === activeDeck && !isTransitioning) {
-      if (!userPaused && currentSong && !deck.ended) {
+    if (deck._disposed) return;
+    if (deck === activeDeck) {
+      if (!userPaused && currentSong && !deck.ended && !isRebuildingPipeline) {
         // Paused by external interruption (incoming phone call / audio focus loss)
-        // Record interruption state and stay silently paused without polling or beeping
-        wasInterruptedBySystem = true;
-        interruptedTrack = currentSong;
-        interruptedPosition = deck.currentTime || 0;
-        interruptedTimestamp = Date.now();
-        isBuffering = false;
-        stopCushionBuffering();
-        clearStallWatchdog();
-        clearTimeout(resumeDebounceTimer);
-      } else if (userPaused) {
+        // Lock down all timers, AudioContext, and standby deck immediately so zero beeps occur during the call.
+        handleSystemInterruption(deck.currentTime || 0);
+        return;
+      }
+
+      if (userPaused) {
         wasInterruptedBySystem = false;
         interruptedTrack = null;
         clearTimeout(resumeDebounceTimer);
+        advancingTrack = false;
       }
-
-      if (userPaused) advancingTrack = false;
       clearStallWatchdog();
       capturePlaySeconds();
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
@@ -1454,6 +1652,7 @@ function bindDeckEvents(deck) {
   });
 
   deck.addEventListener("seeking", () => {
+    if (deck._disposed) return;
     if (deck === activeDeck) {
       isBuffering = true;
       updateUI();
@@ -1461,32 +1660,33 @@ function bindDeckEvents(deck) {
   });
 
   deck.addEventListener("seeked", () => {
+    if (deck._disposed) return;
     if (deck === activeDeck) {
       isBuffering = false;
       updateUI();
-      if (!userPaused && !wasInterruptedBySystem && deck.paused && isStartingPlayback) {
+      if (!userPaused && !wasInterruptedBySystem && deck.paused && isStartingPlayback && !isRebuildingPipeline) {
         deck.play().catch(() => {});
       }
     }
   });
 
   deck.addEventListener("progress", () => {
+    if (deck._disposed) return;
     if (deck === activeDeck && deck.buffered.length > 0) {
       clearStallWatchdog();
-      if (isBuffering && !userPaused && !wasInterruptedBySystem && deck.paused) {
+      if (isBuffering && !userPaused && !wasInterruptedBySystem && deck.paused && !isRebuildingPipeline) {
         deck.play().catch(() => {});
       }
     }
   });
 
   deck.addEventListener("timeupdate", () => {
-    if (deck !== activeDeck) return;
+    if (deck._disposed || deck !== activeDeck) return;
     updateProgress();
     updatePositionState();
 
-    if (crossfadeSeconds === -1) {
-      // Crossfade and gapless are both completely disabled by user
-      // Track will play to 100% natural end and advance on 'ended' event
+    if (crossfadeSeconds === -1 || wasInterruptedBySystem || userPaused) {
+      // Crossfade/gapless disabled or playback interrupted/paused — do not pre-arm or transition
       return;
     }
 
@@ -1506,7 +1706,7 @@ function bindDeckEvents(deck) {
       }
     }
 
-    if (Number.isFinite(dur) && dur > 10 && !isTransitioning && !userPaused && !advancingTrack) {
+    if (Number.isFinite(dur) && dur > 10 && !isTransitioning && !userPaused && !wasInterruptedBySystem && !advancingTrack) {
       if (repeatMode === "one") {
         if (dur - cur <= 0.25) {
           deck.currentTime = 0;
@@ -1546,7 +1746,7 @@ function bindDeckEvents(deck) {
       // When 1.5 seconds remain, poll every 20ms so we never miss the exact track boundary
       if (fadeSec === 0 && remaining <= 1.5 && cur >= (dur * 0.95) && remaining > 0.15 && !endApproachingTicker && !isTransitioning) {
         endApproachingTicker = setInterval(() => {
-          if (!activeDeck || activeDeck.paused || isTransitioning || isAppHidden) {
+          if (!activeDeck || activeDeck.paused || isTransitioning || isAppHidden || wasInterruptedBySystem || userPaused) {
             clearInterval(endApproachingTicker);
             endApproachingTicker = null;
             return;
@@ -1571,7 +1771,7 @@ function bindDeckEvents(deck) {
   });
 
   deck.addEventListener("ended", () => {
-    if (deck !== activeDeck) return;
+    if (deck._disposed || deck !== activeDeck) return;
 
     if (crossfadeTimer) {
       clearInterval(crossfadeTimer);
@@ -1586,11 +1786,19 @@ function bindDeckEvents(deck) {
       return;
     }
 
+    if (wasInterruptedBySystem || userPaused) {
+      clearStallWatchdog();
+      isBuffering = false;
+      advancingTrack = false;
+      updateUI();
+      return;
+    }
+
     // Guard against premature network stream truncation
     const dur = deck.duration;
     const cur = deck.currentTime;
     const isPremature = Number.isFinite(dur) && dur > 10 && cur < (dur - 4.0);
-    if (isPremature && !userPaused) {
+    if (isPremature && !userPaused && !wasInterruptedBySystem) {
       deck.load();
       try { deck.currentTime = cur; } catch {}
       deck.play().catch(() => {});
@@ -1624,6 +1832,8 @@ function bindDeckEvents(deck) {
   });
 
   deck.addEventListener("error", async () => {
+    if (deck._disposed) return;
+
     // Opportunistic CORS Fallback
     if (deck.hasAttribute("crossOrigin") || deck.crossOrigin) {
       deck.removeAttribute("crossOrigin");
@@ -1631,7 +1841,7 @@ function bindDeckEvents(deck) {
       const retrySrc = deck.src;
       if (retrySrc) {
         deck.load();
-        if (deck === activeDeck && !userPaused) {
+        if (deck === activeDeck && !userPaused && !wasInterruptedBySystem) {
           deck.play().catch(() => {});
         }
         return;
@@ -1644,16 +1854,23 @@ function bindDeckEvents(deck) {
     isBuffering = false;
     clearStallWatchdog();
 
+    // Never retry network/blob playback while interrupted by a phone call or paused by user
+    if (wasInterruptedBySystem || userPaused) {
+      updateUI();
+      return;
+    }
+
     // Offline storage recovery: If server fails, check if we have a locally downloaded offline blob
     if (currentSong) {
       try {
         const offlineUrl = await getOfflineAudioBlobUrl(currentSong);
+        if (wasInterruptedBySystem || userPaused) return;
         if (offlineUrl && deck.src !== offlineUrl) {
           deck.removeAttribute("crossOrigin");
           deck.crossOrigin = null;
           deck.src = offlineUrl;
           deck.load();
-          if (!userPaused) {
+          if (!userPaused && !wasInterruptedBySystem) {
             deck.play().catch(() => {});
           }
           player.showToast(`📱 Playing "${currentSong.title}" from offline storage`, 2500);
@@ -1664,11 +1881,13 @@ function bindDeckEvents(deck) {
     }
 
     // Transient network glitch retry (up to 2 automatic retries on slow connections)
-    if (streamRetryCount < 2 && currentSong && !userPaused) {
+    if (streamRetryCount < 2 && currentSong && !userPaused && !wasInterruptedBySystem) {
       streamRetryCount++;
       player.showToast("🔄 Re-connecting audio stream...", 2000);
-      setTimeout(() => {
-        if (!userPaused && currentSong) {
+      clearTimeout(streamRetryTimer);
+      streamRetryTimer = setTimeout(() => {
+        streamRetryTimer = null;
+        if (!userPaused && !wasInterruptedBySystem && currentSong && deck === activeDeck && !deck._disposed) {
           deck.load();
           deck.play().catch(() => {});
         }
@@ -1804,7 +2023,7 @@ export const player = {
 
             if (currentSong && (currentSong.id || currentSong.link) === (song.id || song.link)) {
               const curTime = activeDeck.currentTime || 0;
-              const wasPlaying = !activeDeck.paused;
+              const wasPlaying = !activeDeck.paused && !wasInterruptedBySystem && !userPaused;
               activeDeck.src = newBlobUrl;
               if (curTime > 0 && curTime < (activeDeck.duration || 9999)) {
                 activeDeck.currentTime = curTime;
@@ -1828,6 +2047,19 @@ export const player = {
       userQueue.splice(qIdx, 1);
     }
 
+    const needPostCallReset = wasInterruptedBySystem || needsSinkResetAfterCall || routeChangedDuringInterruption;
+    wasInterruptedBySystem = false;
+    needsSinkResetAfterCall = false;
+    routeChangedDuringInterruption = false;
+    interruptedTrack = null;
+    clearTimeout(resumeDebounceTimer);
+    clearTimeout(rebindRouteTimer);
+    clearStallWatchdog();
+
+    if (needPostCallReset) {
+      rebuildDecksAndPipelineSync("", 0);
+    }
+
     unlockBothDecks();
 
     const requestGeneration = ++playbackGeneration;
@@ -1844,7 +2076,7 @@ export const player = {
     }
 
     // Apple Music Equal-Power DJ Crossfade Transition on song selection when already playing
-    const canCrossfadeOnSelect = !isTV && crossfadeSeconds > 0 && !activeDeck.paused && activeDeck.currentTime > 0.8;
+    const canCrossfadeOnSelect = !isTV && !needPostCallReset && crossfadeSeconds > 0 && !activeDeck.paused && activeDeck.currentTime > 0.8;
     if (canCrossfadeOnSelect) {
       const mixDuration = Math.min(crossfadeSeconds, 2.0);
       triggerDeckTransition(mixDuration, song, currentIndex, playlistContext);
@@ -1856,6 +2088,7 @@ export const player = {
 
     currentSong = song;
     userPaused = false;
+    lastResumeTimestamp = Date.now();
     prewarmedTrackUrl = null;
     transitionTriggeredForSongId = null; // CRITICAL: Reset for the new song!
     streamRetryCount = 0;
@@ -1871,12 +2104,12 @@ export const player = {
     // Asynchronous offline blob verification: If the track is stored in downloads, swap to verified local blob
     if (!src.startsWith("blob:") && isSongStoredOffline(song)) {
       getOfflineAudioBlobUrl(song).then((blobUrl) => {
-        if (blobUrl && activeDeck.src !== blobUrl && (currentSong?.id || currentSong?.link) === (song.id || song.link)) {
+        if (blobUrl && !wasInterruptedBySystem && !userPaused && activeDeck.src !== blobUrl && (currentSong?.id || currentSong?.link) === (song.id || song.link)) {
           const curTime = activeDeck.currentTime || 0;
           const wasPlaying = !activeDeck.paused;
           prepareDeckSource(activeDeck, blobUrl);
           if (curTime > 0) activeDeck.currentTime = curTime;
-          if (wasPlaying || !userPaused) {
+          if ((wasPlaying || !userPaused) && !wasInterruptedBySystem) {
             activeDeck.play().catch(() => {});
           }
         }
@@ -1927,9 +2160,12 @@ export const player = {
   },
 
   async play() {
-    await unlockBothDecks();
-    if (wasInterruptedBySystem) {
+    if (wasInterruptedBySystem || needsSinkResetAfterCall || routeChangedDuringInterruption) {
+      userPaused = false;
       return resumeAfterInterruption();
+    }
+    if (isDspActive()) {
+      await unlockBothDecks();
     }
     if (!currentSong) {
       if (userQueue.length > 0) {
@@ -1947,11 +2183,16 @@ export const player = {
     }
     userPaused = false;
     wasInterruptedBySystem = false;
+    needsSinkResetAfterCall = false;
+    routeChangedDuringInterruption = false;
+    lastResumeTimestamp = Date.now();
 
     // If audio element has no source or encountered an error, recover pipeline before playing
     if (!activeDeck.src || activeDeck.error) {
       recoverAudioPipeline(activeDeck).then(() => {
-        activeDeck.play().catch(() => {});
+        if (!wasInterruptedBySystem && !userPaused) {
+          activeDeck.play().catch(() => {});
+        }
         updateUI();
       });
       return;
@@ -1967,11 +2208,18 @@ export const player = {
   pause() {
     userPaused = true;
     wasInterruptedBySystem = false;
+    interruptedTrack = null;
     clearTimeout(resumeDebounceTimer);
+    clearTimeout(rebindRouteTimer);
+    clearStallWatchdog();
     stopCushionBuffering();
     cancelAnyTransition();
     activeDeck.pause();
+    try { standbyDeck.pause(); } catch {}
     activeDeck.volume = masterVolume;
+    if (audioCtx && audioCtx.state === "running") {
+      try { audioCtx.suspend().catch(() => {}); } catch {}
+    }
     updateUI();
   },
 
@@ -1985,7 +2233,10 @@ export const player = {
 
   next(isAuto = false) {
     if (!playlist.length && !userQueue.length) return;
-    if (!isAuto) userPaused = false;
+    if (!isAuto) {
+      userPaused = false;
+      wasInterruptedBySystem = false;
+    }
 
     if (repeatMode === "off" && !sectionAdvancer && currentIndex >= playlist.length - 1 && userQueue.length === 0 && isAuto) {
       player.pause();
@@ -1996,9 +2247,11 @@ export const player = {
     const candidate = getNextTrackCandidate();
     if (!candidate || !candidate.song) return;
 
+    const canFade = !needsSinkResetAfterCall && !routeChangedDuringInterruption && !activeDeck.paused && activeDeck.currentTime > 1.0 && crossfadeSeconds > 0 && !isTransitioning;
+
     if (candidate.isUserQueue) {
       const queuedSong = userQueue.shift();
-      if (!activeDeck.paused && activeDeck.currentTime > 1.0 && crossfadeSeconds > 0 && !isTransitioning) {
+      if (canFade) {
         triggerDeckTransition(Math.min(crossfadeSeconds, 2.5), queuedSong, currentIndex, null, null, true);
       } else {
         player.playSong(queuedSong, null, currentIndex);
@@ -2010,7 +2263,7 @@ export const player = {
     const nextIdx = candidate.index;
     const nextPlaylist = candidate.nextPlaylist || null;
 
-    if (!activeDeck.paused && activeDeck.currentTime > 1.0 && crossfadeSeconds > 0 && !isTransitioning) {
+    if (canFade) {
       triggerDeckTransition(Math.min(crossfadeSeconds, 2.5), nextSong, nextIdx, nextPlaylist, candidate.nextGenre);
     } else {
       if (nextPlaylist && Array.isArray(nextPlaylist) && nextPlaylist.length > 0) {
@@ -2085,10 +2338,13 @@ export const player = {
   },
 
   setVolumeBoost(percent) {
-    unlockAudioContext();
     const clamped = clamp(parseInt(percent, 10) || 100, 100, 500);
     volumeBoostPercent = clamped;
     localStorage.setItem(BOOST_STORAGE_KEY, String(volumeBoostPercent));
+
+    if ((volumeBoostPercent > 100 || audioCtx) && !wasInterruptedBySystem) {
+      unlockAudioContext(true);
+    }
 
     if (boostGainNode && audioCtx) {
       try {
@@ -2133,11 +2389,19 @@ export const player = {
   },
 
   setEqualizerPreset(presetName) {
-    unlockAudioContext();
-    if (!subBassFilter || !bassFilter || !midFilter || !presenceFilter || !trebleFilter) return;
-
     localStorage.setItem(EQ_PRESET_KEY, presetName);
-    applyPresetGains(presetName);
+    customEqActive = presetName.toLowerCase() !== "flat";
+    if (customEqActive) {
+      customEqGains = { subBass: 0, bass: 0, mid: 0, presence: 0, treble: 0 };
+    }
+
+    if ((isDspActive() || audioCtx) && !wasInterruptedBySystem) {
+      unlockAudioContext(true);
+    }
+
+    if (subBassFilter && bassFilter && midFilter && presenceFilter && trebleFilter) {
+      applyPresetGains(presetName);
+    }
 
     switch (presetName.toLowerCase()) {
       case "bass":
@@ -2162,14 +2426,31 @@ export const player = {
   },
 
   setEqualizerCustom(subBass, bass, mid, presence, treble) {
-    unlockAudioContext();
+    customEqGains = {
+      subBass: clamp(subBass, -15, 15),
+      bass: clamp(bass, -15, 15),
+      mid: clamp(mid, -15, 15),
+      presence: clamp(presence, -15, 15),
+      treble: clamp(treble, -15, 15)
+    };
+    customEqActive = (
+      customEqGains.subBass !== 0 ||
+      customEqGains.bass !== 0 ||
+      customEqGains.mid !== 0 ||
+      customEqGains.presence !== 0 ||
+      customEqGains.treble !== 0
+    );
+
+    if ((isDspActive() || audioCtx) && !wasInterruptedBySystem) {
+      unlockAudioContext(true);
+    }
     if (!subBassFilter || !bassFilter || !midFilter || !presenceFilter || !trebleFilter) return;
 
-    subBassFilter.gain.value  = clamp(subBass, -15, 15);
-    bassFilter.gain.value     = clamp(bass, -15, 15);
-    midFilter.gain.value      = clamp(mid, -15, 15);
-    presenceFilter.gain.value = clamp(presence, -15, 15);
-    trebleFilter.gain.value   = clamp(treble, -15, 15);
+    subBassFilter.gain.value  = customEqGains.subBass;
+    bassFilter.gain.value     = customEqGains.bass;
+    midFilter.gain.value      = customEqGains.mid;
+    presenceFilter.gain.value = customEqGains.presence;
+    trebleFilter.gain.value   = customEqGains.treble;
   },
 
   cycleRepeat() {
@@ -2348,10 +2629,20 @@ window.addEventListener("focus", () => {
 // Bluetooth Earbuds Connect / Disconnect / Call Profile Switch listener
 if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener === "function") {
   navigator.mediaDevices.addEventListener("devicechange", () => {
-    // When phone call drops and earbuds switch from HFP back to A2DP media profile
-    if (wasInterruptedBySystem && !userPaused && currentSong) {
-      // 500ms delay allows Android OS Bluetooth A2DP handshake to stabilize before pushing audio stream
-      scheduleResumeAfterInterruption(500);
+    // NEVER start/resume audio inside devicechange while interrupted by a call:
+    // Switching A2DP -> HFP fires devicechange when calls start/renegotiate, which causes call beeps.
+    if (wasInterruptedBySystem || userPaused || !currentSong) {
+      if (wasInterruptedBySystem) {
+        routeChangedDuringInterruption = true;
+        needsSinkResetAfterCall = true;
+      }
+      return;
+    }
+
+    // If audio is actively playing when Bluetooth/earbuds finish switching profiles (e.g. HFP -> A2DP),
+    // wait briefly for the OS route handshake to settle, verify no call paused playback, then rebind output sink.
+    if (!activeDeck.paused && (audioCtx !== null || Date.now() - lastResumeTimestamp < 15000 || typeof activeDeck.setSinkId === "function")) {
+      rebindPlayingAudioRoute(450);
     }
   });
 }
